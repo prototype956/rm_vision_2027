@@ -1,5 +1,5 @@
 # ============================================================================
-# 依赖查找配置 - 使用系统包 (不再使用 vcpkg)
+# 依赖查找配置 - 使用系统包
 # ============================================================================
 
 message(STATUS "Finding dependencies from system packages...")
@@ -27,20 +27,14 @@ message(STATUS "  ✓ spdlog found: ${spdlog_VERSION}")
 find_package(yaml-cpp REQUIRED)
 message(STATUS "  ✓ yaml-cpp found")
 
-# nlohmann_json - JSON 解析
-find_package(nlohmann_json 3.10 REQUIRED)
-message(STATUS "  ✓ nlohmann_json found")
-
-# Eigen3 - 线性代数
-find_package(Eigen3 REQUIRED)
-message(STATUS "  ✓ Eigen3 found: ${Eigen3_VERSION}")
-
-# TBB - 并行计算
-find_package(TBB REQUIRED)
-message(STATUS "  ✓ TBB found")
-
-# OpenCV - 计算机视觉
-find_package(OpenCV REQUIRED)
+# OpenCV - 当前应用、HAL 与测试所需组件
+find_package(OpenCV REQUIRED COMPONENTS
+    core
+    imgproc
+    imgcodecs
+    highgui
+    videoio
+)
 message(STATUS "  ✓ OpenCV found: ${OpenCV_VERSION}")
 message(STATUS "    OpenCV modules: ${OpenCV_LIBS}")
 
@@ -48,7 +42,7 @@ message(STATUS "    OpenCV modules: ${OpenCV_LIBS}")
 # 检查关键 OpenCV 模块
 # ----------------------------------------------------------------------------
 set(REQUIRED_OPENCV_COMPONENTS 
-    core imgproc imgcodecs highgui videoio calib3d dnn
+    core imgproc imgcodecs highgui videoio
 )
 
 foreach(component ${REQUIRED_OPENCV_COMPONENTS})
@@ -57,4 +51,4 @@ foreach(component ${REQUIRED_OPENCV_COMPONENTS})
     endif()
 endforeach()
 
-message(STATUS "All vcpkg dependencies found successfully!")
+message(STATUS "All required dependencies found successfully!")

@@ -8,15 +8,12 @@
 #   MindVisionCamera — 工业相机（USE_MINDVISION_SDK=ON 时编译完整版，
 #                       否则编译为"始终返回 false"的桩）
 #
-# 【为什么 MindVision 的桩也要编译进来？】
-#   这样工厂注册表可以无条件注册 "mindvision" 类型，
-#   运行时如果没有硬件，Open() 返回 false 并打印日志，
-#   而不是在编译期因 #ifdef 导致工厂里缺少该类型而崩溃。
+# MindVision 的桩始终保留相同的类和链接接口，使项目可以在未启用 SDK
+# 的环境中完成编译；此时 Open() 会明确返回失败。
 
 add_library(mv-hal-camera STATIC
     opencv_camera.cpp
     mindvision_camera.cpp
-    sim_camera.cpp
 )
 
 target_include_directories(mv-hal-camera
@@ -27,13 +24,12 @@ target_include_directories(mv-hal-camera
 
 target_link_libraries(mv-hal-camera
     PUBLIC
-        mv-core               # 依赖 Logger 和 ConfigManager
+        mv-core               # 依赖 Logger 和 ConfigLoader
         opencv_core           # cv::Mat 类型（接口中使用，故 PUBLIC）
         yaml-cpp
     PRIVATE
         opencv_videoio        # cv::VideoCapture（仅 .cpp 使用，故 PRIVATE）
         opencv_imgproc        # cv::cvarrToMat（仅 .cpp 使用）
-        opencv_imgcodecs      # SimCamera::Grab() 中 JPEG 解码
 )
 
 # MindVision SDK 条件编译

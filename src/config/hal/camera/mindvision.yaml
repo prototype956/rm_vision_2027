@@ -1,0 +1,19 @@
+schema_version: 1
+
+device:
+  index: 0
+
+output:
+  width: 1280
+  height: 720
+  pixel_format: bgr8
+
+roi:
+  centered: true
+
+exposure:
+  auto: false
+  time_us: 2500
+
+capture:
+  timeout_ms: 100

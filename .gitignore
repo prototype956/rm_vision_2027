@@ -62,5 +62,7 @@ compile_commands.json
 # Runtime logs
 # =============================================================================
 logs/*.log
+artifacts/camera_test/
+Camera/
 
 .worktrees/

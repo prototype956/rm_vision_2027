@@ -1,22 +1,9 @@
-/**
- * @file opencv_camera.cpp
- * @brief OpenCV VideoCapture 相机 Pimpl 实现
- *
- * 【source 字段的双重语义】
- *   YAML 中 `source` 可以是整数（设备索引）或字符串（文件路径 / RTSP URL）。
- *   yaml-cpp 没有联合类型，我们用 try-as-int 先尝试解析为整数，
- *   失败则当字符串处理，兼顾两种用例而不需要在配置中区分字段名。
- *
- * 【为什么设置 CAP_PROP_BUFFERCOUNT = 1？】
- *   默认 V4L2 会缓冲 4 帧，cap.read() 实际返回的是最老的那帧，
- *   导致自瞄看到的是约 4 帧前的图像（~66ms @ 60fps），目标已经移走了。
- *   设置 buffer=1 后，每次 read() 都会丢弃旧帧、取最新帧，
- *   代价是偶尔掉帧（buffer 太小会来不及 DMA），实测 60fps 下稳定。
- */
-
 #include "opencv_camera.hpp"
 
+#include "../../core/config.hpp"
 #include "../../core/logger.hpp"
+
+#include <chrono>
 
 #include <opencv2/videoio.hpp>
 
@@ -29,6 +16,8 @@ namespace mv::hal {
 struct OpenCvCamera::Impl {
   cv::VideoCapture cap;
   bool is_open{false};
+  CameraInfo info;
+  uint64_t sequence{0};
 };
 
 // ============================================================================
@@ -53,6 +42,31 @@ bool OpenCvCamera::Open(const YAML::Node& config) {
     return true;
   }
 
+  try {
+    ConfigLoader::RejectUnknownKeys(config, {"schema_version", "source", "output", "fps"},
+                                    "OpenCV camera config");
+    if (ConfigLoader::Require<int>(config, "schema_version", "OpenCV camera config") != 1) {
+      throw ConfigError("OpenCV camera config schema_version must be 1");
+    }
+    ConfigLoader::RequireMap(config["output"], "OpenCV camera config.output");
+    ConfigLoader::RejectUnknownKeys(config["output"], {"width", "height", "pixel_format"},
+                                    "OpenCV camera config.output");
+    impl_->info.output_width =
+        ConfigLoader::Require<int>(config["output"], "width", "OpenCV camera config.output");
+    impl_->info.output_height =
+        ConfigLoader::Require<int>(config["output"], "height", "OpenCV camera config.output");
+    const auto pixel_format = ConfigLoader::Require<std::string>(
+        config["output"], "pixel_format", "OpenCV camera config.output");
+    if (impl_->info.output_width <= 0 || impl_->info.output_height <= 0 ||
+        pixel_format != "bgr8") {
+      throw ConfigError("OpenCV camera requires positive output size and pixel_format=bgr8");
+    }
+    impl_->info.pixel_format = PixelFormat::BGR8;
+  } catch (const std::exception& error) {
+    MV_LOG_ERROR("HAL.Camera.OpenCV", "invalid config: {}", error.what());
+    return false;
+  }
+
   // source 字段：先尝试解析为 int（设备索引），否则当字符串（路径/URL）
   const YAML::Node SRC_NODE = config["source"];
 
@@ -63,6 +77,7 @@ bool OpenCvCamera::Open(const YAML::Node& config) {
         MV_LOG_ERROR("HAL.Camera.OpenCV", "failed to open device index {}", DEVICE_IDX);
         return false;
       }
+      impl_->info.device_name = "opencv:" + std::to_string(DEVICE_IDX);
       MV_LOG_INFO("HAL.Camera.OpenCV", "opened device index {}", DEVICE_IDX);
     } catch (const YAML::BadConversion&) {
       const auto DEVICE_PATH = SRC_NODE.as<std::string>();
@@ -70,6 +85,7 @@ bool OpenCvCamera::Open(const YAML::Node& config) {
         MV_LOG_ERROR("HAL.Camera.OpenCV", "failed to open '{}'", DEVICE_PATH);
         return false;
       }
+      impl_->info.device_name = DEVICE_PATH;
       MV_LOG_INFO("HAL.Camera.OpenCV", "opened '{}'", DEVICE_PATH);
     }
   } else {
@@ -78,12 +94,8 @@ bool OpenCvCamera::Open(const YAML::Node& config) {
   }
 
   // 设置分辨率和帧率（仅作 hint，硬件可能调整到最近支持的值）
-  if (const int FRAME_WIDTH = config["width"].as<int>(0); FRAME_WIDTH > 0) {
-    impl_->cap.set(cv::CAP_PROP_FRAME_WIDTH, FRAME_WIDTH);
-  }
-  if (const int FRAME_HEIGHT = config["height"].as<int>(0); FRAME_HEIGHT > 0) {
-    impl_->cap.set(cv::CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT);
-  }
+  impl_->cap.set(cv::CAP_PROP_FRAME_WIDTH, impl_->info.output_width);
+  impl_->cap.set(cv::CAP_PROP_FRAME_HEIGHT, impl_->info.output_height);
   if (const int TARGET_FPS = config["fps"].as<int>(0); TARGET_FPS > 0) {
     impl_->cap.set(cv::CAP_PROP_FPS, TARGET_FPS);
   }
@@ -91,6 +103,18 @@ bool OpenCvCamera::Open(const YAML::Node& config) {
   // 减少 V4L2 帧缓冲数，获取最新帧（原因见文件头注释）
   impl_->cap.set(cv::CAP_PROP_BUFFERSIZE, 1);
 
+  const int actual_width = static_cast<int>(impl_->cap.get(cv::CAP_PROP_FRAME_WIDTH));
+  const int actual_height = static_cast<int>(impl_->cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+  impl_->info.sensor_width = actual_width;
+  impl_->info.sensor_height = actual_height;
+  if (actual_width != impl_->info.output_width || actual_height != impl_->info.output_height) {
+    MV_LOG_ERROR("HAL.Camera.OpenCV", "requested {}x{} but backend selected {}x{}",
+                 impl_->info.output_width, impl_->info.output_height, actual_width, actual_height);
+    impl_->cap.release();
+    return false;
+  }
+
+  impl_->sequence = 0;
   impl_->is_open = true;
   return true;
 }
@@ -104,21 +128,33 @@ void OpenCvCamera::Close() {
   MV_LOG_INFO("HAL.Camera.OpenCV", "closed");
 }
 
-bool OpenCvCamera::Grab(cv::Mat& frame) {
+GrabStatus OpenCvCamera::Grab(CameraFrame& frame) {
   if (!impl_->is_open) {
     MV_LOG_WARN("HAL.Camera.OpenCV", "Grab called on closed camera");
-    return false;
+    return GrabStatus::DISCONNECTED;
   }
 
   // cv::VideoCapture::read() 是阻塞调用，超时由驱动决定
-  if (!impl_->cap.read(frame)) {
+  cv::Mat image;
+  if (!impl_->cap.read(image)) {
     // 视频文件播放完毕或设备断开
     MV_LOG_WARN("HAL.Camera.OpenCV", "cap.read() returned false (EOF or device error)");
     impl_->is_open = false;
-    return false;
+    return GrabStatus::DISCONNECTED;
   }
 
-  return !frame.empty();
+  if (image.empty() || image.cols != impl_->info.output_width ||
+      image.rows != impl_->info.output_height || image.type() != CV_8UC3) {
+    return GrabStatus::INVALID_FRAME;
+  }
+  frame.image = std::move(image);
+  frame.timestamp = std::chrono::steady_clock::now();
+  frame.sequence = impl_->sequence++;
+  return GrabStatus::OK;
+}
+
+CameraInfo OpenCvCamera::Info() const {
+  return impl_->info;
 }
 
 bool OpenCvCamera::IsOpen() const {

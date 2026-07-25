@@ -1,5 +1,5 @@
 # ============================================================================
-# mv-core — 基础设施库（ConfigManager + Logger）
+# mv-core — 基础设施库（ConfigLoader + Logger）
 # ============================================================================
 # 作为静态库，其他所有模块通过 target_link_libraries(... mv-core) 使用
 
@@ -10,20 +10,20 @@ add_library(mv-core STATIC
 
 target_link_libraries(mv-core
     PUBLIC
-        yaml-cpp        # ConfigManager 使用（接口暴露到外部，故用 PUBLIC）
+        yaml-cpp        # ConfigLoader 使用（接口暴露到外部，故用 PUBLIC）
         spdlog::spdlog  # Logger 使用
         fmt::fmt
 )
 
 target_include_directories(mv-core
     PUBLIC
-        # 构建时：让所有 include "src/core/xxx.hpp" 的目标找到此目录
+        # 构建时：让所有 include "core/xxx.hpp" 的目标找到此目录
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
         $<INSTALL_INTERFACE:include>
 )
 
-# C++20 及以上，shared_mutex 需要线程库
+# Logger 和 spdlog 使用线程同步
 target_link_libraries(mv-core PUBLIC Threads::Threads)
 
 # 供诊断使用：打印此库包含的源文件
-message(STATUS "    + mv-core (ConfigManager, Logger)")
+message(STATUS "    + mv-core (ConfigLoader, Logger)")

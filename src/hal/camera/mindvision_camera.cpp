@@ -1,29 +1,7 @@
-/**
- * @file mindvision_camera.cpp
- * @brief MindVision 工业相机 Pimpl 实现
- *
- * 此文件是唯一需要 include CameraApi.h 的地方。
- * 通过 CMake 的 target_compile_definitions 在有 SDK 时定义 MV_HAS_MVSDK，
- * 无 SDK 时（CI / 开发机）编译为"始终返回失败"的桩实现，
- * 保证整个项目在无硬件环境下仍可编译通过。
- *
- * 【帧获取流程（有 SDK 时）】
- *   CameraGetImageBuffer()  → 阻塞等待 DMA 帧完成
- *   CameraImageProcess()    → SDK 内部去马赛克 / 白平衡
- *   cvCreateImageHeader()   → 包装为 IplImage（SDK 遗留接口）
- *   cv::cvarrToMat()        → 转为 cv::Mat（深拷贝，释放 SDK buffer）
- *   CameraReleaseImageBuffer() → 归还 DMA buffer，允许 SDK 继续采集
- *
- * 【为什么深拷贝而不是零拷贝？】
- *   SDK 的 DMA buffer 数量有限（通常 2-3 个），
- *   如果上层处理太慢不归还，SDK 会丢帧并报 CAMERA_STATUS_BUFFER_FAILED。
- *   深拷贝到 cv::Mat 后立即归还 buffer，
- *   把"SDK buffer 占用时间"压缩到最短（几微秒），代价是一次内存拷贝。
- *   对于 1280x800 BGR 图像约 3MB，现代 CPU 拷贝耗时 ~0.5ms，可接受。
- */
-
 #include "mindvision_camera.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -35,6 +13,7 @@
 #endif
 
 #include "../../core/logger.hpp"
+#include "../../core/config.hpp"
 
 namespace mv::hal {
 
@@ -47,9 +26,12 @@ struct MindVisionCamera::Impl {
 
   // 图像参数
   int width{1280};
-  int height{800};
+  int height{720};
   int exposure_us{5000};
+  int grab_timeout_ms{100};
   int channel{3};
+  uint64_t sequence{0};
+  CameraInfo info{};
 
 #ifdef MV_HAS_MVSDK
   int h_camera{0};
@@ -94,47 +76,85 @@ bool MindVisionCamera::Open(const YAML::Node& config) {
     return true;  // 幂等：已打开则直接返回
   }
 
-  // 从 YAML 读取参数，兼容两种分辨率写法：
-  //   1) resolution: "1280x800"
-  //   2) resolution: { width: 1280, height: 800 }
-  impl_->exposure_us = config["exposure_us"].as<int>(config["exposure"].as<int>(5000));
-
-  impl_->width = 1280;
-  impl_->height = 800;
-  YAML::Node resolution_node = config["resolution"];
-  if (resolution_node) {
-    if (resolution_node.IsMap()) {
-      impl_->width = resolution_node["width"].as<int>(1280);
-      impl_->height = resolution_node["height"].as<int>(800);
-    } else if (resolution_node.IsScalar()) {
-      auto resolution_text = resolution_node.as<std::string>();
-      std::size_t separator_pos = resolution_text.find('x');
-      if (separator_pos != std::string::npos) {
-        try {
-          impl_->width = std::stoi(resolution_text.substr(0, separator_pos));
-          impl_->height = std::stoi(resolution_text.substr(separator_pos + 1));
-        } catch (const std::exception&) {
-          MV_LOG_WARN("HAL.Camera.MV", "invalid resolution '{}', fallback to 1280x800",
-                      resolution_text);
-        }
-      } else {
-        MV_LOG_WARN("HAL.Camera.MV", "invalid resolution '{}', fallback to 1280x800",
-                    resolution_text);
-      }
+  int device_index = 0;
+  bool centered_roi = true;
+  bool auto_exposure = false;
+  try {
+    ConfigLoader::RejectUnknownKeys(
+        config, {"schema_version", "device", "output", "roi", "exposure", "capture"},
+        "MindVision camera config");
+    if (ConfigLoader::Require<int>(config, "schema_version", "MindVision camera config") != 1) {
+      throw ConfigError("MindVision camera config schema_version must be 1");
     }
-  }
 
-  // channel 由 ISP 输出格式决定；读取该字段仅为兼容旧配置。
-  (void)config["channel"];
+    const auto device = config["device"];
+    ConfigLoader::RequireMap(device, "MindVision camera config.device");
+    ConfigLoader::RejectUnknownKeys(device, {"index"}, "MindVision camera config.device");
+    device_index = ConfigLoader::Require<int>(device, "index", "MindVision camera config.device");
+
+    const auto output = config["output"];
+    ConfigLoader::RequireMap(output, "MindVision camera config.output");
+    ConfigLoader::RejectUnknownKeys(output, {"width", "height", "pixel_format"},
+                                    "MindVision camera config.output");
+    impl_->width =
+        ConfigLoader::Require<int>(output, "width", "MindVision camera config.output");
+    impl_->height =
+        ConfigLoader::Require<int>(output, "height", "MindVision camera config.output");
+    const auto pixel_format = ConfigLoader::Require<std::string>(
+        output, "pixel_format", "MindVision camera config.output");
+    if (pixel_format != "bgr8") {
+      throw ConfigError("MindVision camera currently requires output.pixel_format=bgr8");
+    }
+
+    const auto roi = config["roi"];
+    ConfigLoader::RequireMap(roi, "MindVision camera config.roi");
+    ConfigLoader::RejectUnknownKeys(roi, {"centered"}, "MindVision camera config.roi");
+    centered_roi =
+        ConfigLoader::Require<bool>(roi, "centered", "MindVision camera config.roi");
+    if (!centered_roi) {
+      throw ConfigError("MindVision camera currently requires roi.centered=true");
+    }
+
+    const auto exposure = config["exposure"];
+    ConfigLoader::RequireMap(exposure, "MindVision camera config.exposure");
+    ConfigLoader::RejectUnknownKeys(exposure, {"auto", "time_us"},
+                                    "MindVision camera config.exposure");
+    auto_exposure =
+        ConfigLoader::Require<bool>(exposure, "auto", "MindVision camera config.exposure");
+    impl_->exposure_us =
+        ConfigLoader::Require<int>(exposure, "time_us", "MindVision camera config.exposure");
+
+    const auto capture = config["capture"];
+    ConfigLoader::RequireMap(capture, "MindVision camera config.capture");
+    ConfigLoader::RejectUnknownKeys(capture, {"timeout_ms"},
+                                    "MindVision camera config.capture");
+    impl_->grab_timeout_ms =
+        ConfigLoader::Require<int>(capture, "timeout_ms", "MindVision camera config.capture");
+
+    if (device_index < 0 || impl_->width <= 0 || impl_->height <= 0 ||
+        impl_->exposure_us <= 0 || impl_->grab_timeout_ms <= 0) {
+      throw ConfigError("MindVision device index and numeric camera parameters must be positive");
+    }
+  } catch (const std::exception& error) {
+    MV_LOG_ERROR("HAL.Camera.MV", "invalid config: {}", error.what());
+    return false;
+  }
 
   CameraSdkInit(1);
 
-  int camera_count = 1;
-  int status = CameraEnumerateDevice(&impl_->dev_info, &camera_count);
-  if (camera_count == 0) {
+  std::vector<tSdkCameraDevInfo> devices(8);
+  int camera_count = static_cast<int>(devices.size());
+  int status = CameraEnumerateDevice(devices.data(), &camera_count);
+  if (status != CAMERA_STATUS_SUCCESS || camera_count <= 0) {
     MV_LOG_ERROR("HAL.Camera.MV", "no device found (CameraEnumerateDevice returned {})", status);
     return false;
   }
+  if (device_index >= camera_count) {
+    MV_LOG_ERROR("HAL.Camera.MV", "device.index={} out of range; {} camera(s) found", device_index,
+                 camera_count);
+    return false;
+  }
+  impl_->dev_info = devices[static_cast<std::size_t>(device_index)];
 
   status = CameraInit(&impl_->dev_info, -1, -1, &impl_->h_camera);
   if (status != CAMERA_STATUS_SUCCESS) {
@@ -142,15 +162,39 @@ bool MindVisionCamera::Open(const YAML::Node& config) {
     return false;
   }
 
-  CameraGetCapability(impl_->h_camera, &impl_->capability);
+  status = CameraGetCapability(impl_->h_camera, &impl_->capability);
+  if (status != CAMERA_STATUS_SUCCESS) {
+    MV_LOG_ERROR("HAL.Camera.MV", "CameraGetCapability failed, status={}", status);
+    CameraUnInit(impl_->h_camera);
+    return false;
+  }
 
   // 显式固定 ISP 输出格式，避免 SDK 默认格式与上层 BGR 假设不一致。
   if (impl_->capability.sIspCapacity.bMonoSensor) {
-    impl_->channel = 1;
-    CameraSetIspOutFormat(impl_->h_camera, CAMERA_MEDIA_TYPE_MONO8);
-  } else {
-    impl_->channel = 3;
-    CameraSetIspOutFormat(impl_->h_camera, CAMERA_MEDIA_TYPE_BGR8);
+    MV_LOG_ERROR("HAL.Camera.MV", "selected camera is monochrome but BGR8 was requested");
+    CameraUnInit(impl_->h_camera);
+    return false;
+  }
+  impl_->channel = 3;
+  status = CameraSetIspOutFormat(impl_->h_camera, CAMERA_MEDIA_TYPE_BGR8);
+  if (status != CAMERA_STATUS_SUCCESS) {
+    MV_LOG_ERROR("HAL.Camera.MV", "CameraSetIspOutFormat(BGR8) failed, status={}", status);
+    CameraUnInit(impl_->h_camera);
+    return false;
+  }
+
+  const int sensor_width = impl_->capability.sResolutionRange.iWidthMax;
+  const int sensor_height = impl_->capability.sResolutionRange.iHeightMax;
+  const int sensor_min_width = impl_->capability.sResolutionRange.iWidthMin;
+  const int sensor_min_height = impl_->capability.sResolutionRange.iHeightMin;
+  if (impl_->width < sensor_min_width || impl_->width > sensor_width ||
+      impl_->height < sensor_min_height || impl_->height > sensor_height) {
+    MV_LOG_ERROR("HAL.Camera.MV",
+                 "requested {}x{} outside camera ROI capability width=[{},{}] height=[{},{}]",
+                 impl_->width, impl_->height, sensor_min_width, sensor_width, sensor_min_height,
+                 sensor_height);
+    CameraUnInit(impl_->h_camera);
+    return false;
   }
 
   // 分配 RGB 缓冲区（大小取相机支持的最大分辨率，避免反复 realloc）
@@ -165,21 +209,107 @@ bool MindVisionCamera::Open(const YAML::Node& config) {
   }
 
   // 设置分辨率
-  CameraGetImageResolution(impl_->h_camera, &impl_->resolution);
+  status = CameraGetImageResolution(impl_->h_camera, &impl_->resolution);
+  if (status != CAMERA_STATUS_SUCCESS) {
+    MV_LOG_ERROR("HAL.Camera.MV", "CameraGetImageResolution failed, status={}", status);
+    CameraUnInit(impl_->h_camera);
+    return false;
+  }
   impl_->resolution.iIndex = 0xFF;  // 0xFF = 自定义分辨率
+  impl_->resolution.uBinSumMode = 0;
+  impl_->resolution.uBinAverageMode = 0;
+  impl_->resolution.uSkipMode = 0;
+  impl_->resolution.uResampleMask = 0;
+  impl_->resolution.iHOffsetFOV = std::max(0, (sensor_width - impl_->width) / 2);
+  impl_->resolution.iVOffsetFOV = std::max(0, (sensor_height - impl_->height) / 2);
+  // Most MindVision sensors require even ROI offsets.
+  impl_->resolution.iHOffsetFOV -= impl_->resolution.iHOffsetFOV % 2;
+  impl_->resolution.iVOffsetFOV -= impl_->resolution.iVOffsetFOV % 2;
   impl_->resolution.iWidthFOV = impl_->width;
   impl_->resolution.iHeightFOV = impl_->height;
-  CameraSetImageResolution(impl_->h_camera, &impl_->resolution);
+  impl_->resolution.iWidth = impl_->width;
+  impl_->resolution.iHeight = impl_->height;
+  impl_->resolution.iWidthZoomHd = 0;
+  impl_->resolution.iHeightZoomHd = 0;
+  impl_->resolution.iWidthZoomSw = 0;
+  impl_->resolution.iHeightZoomSw = 0;
+  status = CameraSetImageResolution(impl_->h_camera, &impl_->resolution);
+  if (status != CAMERA_STATUS_SUCCESS) {
+    MV_LOG_ERROR(
+        "HAL.Camera.MV",
+        "CameraSetImageResolution {}x{} ROI=({}, {}) failed, status={}; capability "
+        "width=[{},{}] height=[{},{}]",
+        impl_->width, impl_->height, impl_->resolution.iHOffsetFOV,
+        impl_->resolution.iVOffsetFOV, status, sensor_min_width, sensor_width, sensor_min_height,
+        sensor_height);
+    CameraUnInit(impl_->h_camera);
+    return false;
+  }
+
+  tSdkImageResolution actual_resolution{};
+  status = CameraGetImageResolution(impl_->h_camera, &actual_resolution);
+  if (status != CAMERA_STATUS_SUCCESS || actual_resolution.iWidth != impl_->width ||
+      actual_resolution.iHeight != impl_->height) {
+    MV_LOG_ERROR("HAL.Camera.MV", "resolution verification failed: requested {}x{}, actual {}x{}, "
+                                  "status={}",
+                 impl_->width, impl_->height, actual_resolution.iWidth, actual_resolution.iHeight,
+                 status);
+    CameraUnInit(impl_->h_camera);
+    return false;
+  }
+  impl_->resolution = actual_resolution;
 
   // 设置曝光（关闭 AE，手动控制）
-  CameraSetAeState(impl_->h_camera, FALSE);
-  CameraSetExposureTime(impl_->h_camera, static_cast<double>(impl_->exposure_us));
+  status = CameraSetAeState(impl_->h_camera, auto_exposure ? TRUE : FALSE);
+  if (status != CAMERA_STATUS_SUCCESS) {
+    MV_LOG_ERROR("HAL.Camera.MV", "CameraSetAeState failed, status={}", status);
+    CameraUnInit(impl_->h_camera);
+    return false;
+  }
+  if (!auto_exposure) {
+    status = CameraSetExposureTime(impl_->h_camera, static_cast<double>(impl_->exposure_us));
+    if (status != CAMERA_STATUS_SUCCESS) {
+      MV_LOG_ERROR("HAL.Camera.MV", "CameraSetExposureTime failed, status={}", status);
+      CameraUnInit(impl_->h_camera);
+      return false;
+    }
+    double actual_exposure_us = 0.0;
+    status = CameraGetExposureTime(impl_->h_camera, &actual_exposure_us);
+    if (status != CAMERA_STATUS_SUCCESS) {
+      MV_LOG_ERROR("HAL.Camera.MV", "CameraGetExposureTime failed, status={}", status);
+      CameraUnInit(impl_->h_camera);
+      return false;
+    }
+    impl_->exposure_us = static_cast<int>(std::lround(actual_exposure_us));
+  }
 
-  CameraPlay(impl_->h_camera);
+  status = CameraPlay(impl_->h_camera);
+  if (status != CAMERA_STATUS_SUCCESS) {
+    MV_LOG_ERROR("HAL.Camera.MV", "CameraPlay failed, status={}", status);
+    CameraUnInit(impl_->h_camera);
+    return false;
+  }
 
+  impl_->info.device_name =
+      std::string(impl_->dev_info.acProductName) + " sn=" + impl_->dev_info.acSn;
+  impl_->info.sensor_width = sensor_width;
+  impl_->info.sensor_height = sensor_height;
+  impl_->info.output_width = impl_->width;
+  impl_->info.output_height = impl_->height;
+  impl_->info.roi_offset_x = impl_->resolution.iHOffsetFOV;
+  impl_->info.roi_offset_y = impl_->resolution.iVOffsetFOV;
+  impl_->info.exposure_us = impl_->exposure_us;
+  impl_->info.grab_timeout_ms = impl_->grab_timeout_ms;
+  impl_->info.pixel_format = PixelFormat::BGR8;
+  impl_->sequence = 0;
   impl_->is_open = true;
-  MV_LOG_INFO("HAL.Camera.MV", "opened ({}x{}, exposure={}us)", impl_->width, impl_->height,
-              impl_->exposure_us);
+  MV_LOG_INFO("HAL.Camera.MV",
+              "opened '{}' sensor={}x{} requested={}x{} actual={}x{} ROI=({}, {}) BGR8 "
+              "exposure={}us timeout={}ms",
+              impl_->info.device_name, sensor_width, sensor_height, impl_->width, impl_->height,
+              impl_->resolution.iWidth, impl_->resolution.iHeight,
+              impl_->resolution.iHOffsetFOV, impl_->resolution.iVOffsetFOV, impl_->exposure_us,
+              impl_->grab_timeout_ms);
   return true;
 #endif
 }
@@ -190,7 +320,10 @@ void MindVisionCamera::Close() {
     return;  // 幂等
   }
 
-  CameraUnInit(impl_->h_camera);
+  const int status = CameraUnInit(impl_->h_camera);
+  if (status != CAMERA_STATUS_SUCCESS) {
+    MV_LOG_ERROR("HAL.Camera.MV", "CameraUnInit failed, status={}", status);
+  }
 
   impl_->rgb_buffer.clear();
   impl_->rgb_buffer.shrink_to_fit();
@@ -204,29 +337,45 @@ void MindVisionCamera::Close() {
 #endif
 }
 
-bool MindVisionCamera::Grab(cv::Mat& frame) {
+GrabStatus MindVisionCamera::Grab(CameraFrame& frame) {
 #ifndef MV_HAS_MVSDK
   (void)frame;
-  return false;
+  return GrabStatus::FATAL;
 #else
   if (!impl_->is_open) {
     MV_LOG_WARN("HAL.Camera.MV", "Grab called on closed camera");
-    return false;
+    return GrabStatus::DISCONNECTED;
   }
 
-  // 超时设为 1000ms：比正常帧周期长，但不会让调用方卡太久
-  int timeout_ms = 1000;
-  int status =
-      CameraGetImageBuffer(impl_->h_camera, &impl_->frame_head, &impl_->raw_buffer, timeout_ms);
+  int status = CameraGetImageBuffer(impl_->h_camera, &impl_->frame_head, &impl_->raw_buffer,
+                                    impl_->grab_timeout_ms);
 
   if (status != CAMERA_STATUS_SUCCESS) {
     MV_LOG_WARN("HAL.Camera.MV", "CameraGetImageBuffer timeout/error, status={}", status);
-    return false;
+    if (status == CAMERA_STATUS_TIME_OUT) {
+      return GrabStatus::TIMEOUT;
+    }
+    if (status == CAMERA_STATUS_DEVICE_LOST || status == CAMERA_STATUS_NOT_INITIALIZED ||
+        status == CAMERA_STATUS_USB_CONTROL_ERROR || status == CAMERA_STATUS_USB_BULK_ERROR) {
+      return GrabStatus::DISCONNECTED;
+    }
+    return GrabStatus::FATAL;
   }
 
   // SDK 做去马赛克 / 颜色空间转换，结果写入 rgb_buffer
-  CameraImageProcess(impl_->h_camera, impl_->raw_buffer, impl_->rgb_buffer.data(),
-                     &impl_->frame_head);
+  status = CameraImageProcess(impl_->h_camera, impl_->raw_buffer, impl_->rgb_buffer.data(),
+                              &impl_->frame_head);
+  if (status != CAMERA_STATUS_SUCCESS) {
+    const int release_status = CameraReleaseImageBuffer(impl_->h_camera, impl_->raw_buffer);
+    impl_->raw_buffer = nullptr;
+    if (release_status != CAMERA_STATUS_SUCCESS) {
+      MV_LOG_ERROR("HAL.Camera.MV", "CameraReleaseImageBuffer failed after process error, status={}",
+                   release_status);
+      return GrabStatus::FATAL;
+    }
+    MV_LOG_WARN("HAL.Camera.MV", "CameraImageProcess failed, status={}", status);
+    return GrabStatus::INVALID_FRAME;
+  }
 
   // 用 IplImage 头包装 rgb_buffer（零拷贝）
   if (impl_->ipl_image != nullptr) {
@@ -238,13 +387,31 @@ bool MindVisionCamera::Grab(cv::Mat& frame) {
 
   // 深拷贝到 cv::Mat，之后立即归还 DMA buffer
   // 深拷贝原因见文件头注释：尽快释放 SDK buffer 防止丢帧
-  frame = cv::cvarrToMat(impl_->ipl_image, true);
+  cv::Mat image = cv::cvarrToMat(impl_->ipl_image, true);
 
-  CameraReleaseImageBuffer(impl_->h_camera, impl_->raw_buffer);
+  const int release_status = CameraReleaseImageBuffer(impl_->h_camera, impl_->raw_buffer);
   impl_->raw_buffer = nullptr;
+  if (release_status != CAMERA_STATUS_SUCCESS) {
+    MV_LOG_ERROR("HAL.Camera.MV", "CameraReleaseImageBuffer failed, status={}", release_status);
+    return GrabStatus::FATAL;
+  }
 
-  return true;
+  if (image.empty() || image.cols != impl_->width || image.rows != impl_->height ||
+      image.type() != CV_8UC3) {
+    MV_LOG_WARN("HAL.Camera.MV", "invalid frame: {}x{} type={} expected {}x{} CV_8UC3", image.cols,
+                image.rows, image.type(), impl_->width, impl_->height);
+    return GrabStatus::INVALID_FRAME;
+  }
+
+  frame.image = std::move(image);
+  frame.timestamp = std::chrono::steady_clock::now();
+  frame.sequence = impl_->sequence++;
+  return GrabStatus::OK;
 #endif
+}
+
+CameraInfo MindVisionCamera::Info() const {
+  return impl_->info;
 }
 
 bool MindVisionCamera::IsOpen() const {

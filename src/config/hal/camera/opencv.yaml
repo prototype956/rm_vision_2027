@@ -1,0 +1,7 @@
+schema_version: 1
+source: 0
+output:
+  width: 1280
+  height: 720
+  pixel_format: bgr8
+fps: 0

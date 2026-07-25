@@ -17,7 +17,7 @@ Checks: >
   readability-simplify-boolean-expr,
 
 # 只分析当前架构的项目头文件；正向匹配会排除 3rdparty/。
-HeaderFilterRegex: "(^|/)(src|utils)/.*\\.(h|hpp)$"
+HeaderFilterRegex: "(^|/)src/.*\\.(h|hpp)$"
 FormatStyle: file
 
 CheckOptions:

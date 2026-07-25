@@ -2,7 +2,7 @@
 # EX_MiracleVision - BJFU RoboMaster 2026 Vision System
 # ============================================================================
 # 重构日期: 2026-02-11
-# 依赖管理: vcpkg
+# 依赖管理: 系统包 + 仓库内 MindVision SDK
 # 平台支持: Linux only
 # ============================================================================
 
@@ -23,9 +23,6 @@ option(BUILD_MAIN "Build main MiracleVision executable" ON)
 
 # 第三方库选项
 option(USE_MINDVISION_SDK "Enable MindVision Camera SDK (required for real camera)" ON)
-option(USE_FOXGLOVE_SDK "Enable Foxglove WebSocket Publisher (for remote debugging)" ON)
-option(USE_OPENVINO "Enable OpenVINO inference (traditional vision without ONNX)" OFF)
-option(USE_ONNXRUNTIME "Enable ONNX Runtime inference (traditional vision without OpenVINO)" OFF)
 
 # ============================================================================
 # 开发工具配置
@@ -66,7 +63,7 @@ message(STATUS "Loading CMake modules...")
 # 编译器选项
 include(CompilerOptions)
 
-# vcpkg 依赖查找
+# 系统包依赖查找
 include(Dependencies)
 
 # 第三方库配置
@@ -94,8 +91,8 @@ message(STATUS "Configuring project modules...")
 # 核心模块
 add_subdirectory(src)
 
-# 工具库
-add_subdirectory(utils)
+# 独立硬件测试程序（默认构建）
+add_subdirectory(test)
 
 message(STATUS "")
 
@@ -119,9 +116,6 @@ message(STATUS "  BUILD_MAIN:         ${BUILD_MAIN}")
 message(STATUS "")
 message(STATUS "Third-party libraries:")
 message(STATUS "  MindVision SDK:     ${USE_MINDVISION_SDK}")
-message(STATUS "  Foxglove SDK:       ${USE_FOXGLOVE_SDK}")
-message(STATUS "  OpenVINO:           ${USE_OPENVINO}")
-message(STATUS "  ONNX Runtime:       ${USE_ONNXRUNTIME}")
 message(STATUS "")
 message(STATUS "Output directories:")
 message(STATUS "  Executables:        ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
