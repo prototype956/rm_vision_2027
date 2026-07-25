@@ -1,0 +1,117 @@
+system:
+  log_dir: logs
+  log_level: debug
+  log_console: true
+camera:
+  backend: mindvision
+  device_index: 0
+  resolution: 1280x800
+  exposure: 2500
+  video_path: ""
+serial:
+  device: /dev/ttyUSB0
+  baudrate: 115200
+  show_info: false
+auto_aim:
+  enemy_color: red
+  tracker:
+    min_detect_count: 5
+    max_temp_lost_count: 15
+    outpost_max_temp_lost_count: 75
+  aimer:
+    yaw_offset: -2.0
+    pitch_offset: 0.0
+    comming_angle: 60.0
+    leaving_angle: 20.0
+    decision_speed: 8.0
+    high_speed_delay: 0.015
+    low_speed_delay: 0.015
+  shooter:
+    first_tolerance: 3.0
+    second_tolerance: 2.0
+    judge_distance: 2.0
+    auto_fire: true
+    enable_ballistic_compensation: false
+    bullet_speed: 100
+    gravity: 9.80000019
+  ekf_predictor:
+    min_detect_count: 5
+    max_detecting_lost_count: 2
+    max_temp_lost_count: 15
+    outpost_max_temp_lost_count: 30
+    max_dt_sec: 0.1
+    init_radius_small: 0.27
+    init_radius_big: 0.27
+    init_radius_outpost: 0.26
+    process_noise:
+      normal:
+        pos: 100.0
+        ang: 400.0
+      outpost:
+        pos: 10.0
+        ang: 0.1
+    process_noise_pos: 100.0
+    process_noise_ang: 400.0
+    process_noise_outpost_pos: 10.0
+    process_noise_outpost_ang: 0.1
+    divergence_threshold: 1000000
+    p0_diag:
+      default: [1, 1, 1, 1, 1, 1, 1, 1, 0.05, 0.001, 0.001]
+    P0_diag: [1, 1, 1, 1, 1, 1, 1, 1, 0.05, 0.001, 0.001]
+    yaw_offset_deg: 0
+    pitch_offset_deg: 0
+    low_speed_delay_ms: 100
+    high_speed_delay_ms: 70
+    decision_speed: 25
+    max_iter: 10
+    iter_converge_ms: 1.0
+    max_approaching_angle: 1.047
+    max_leaving_angle: 0.349
+    bullet_speed: 23
+  cooldown_voter:
+    auto_fire: true
+    min_lock_frames: 5
+    first_tolerance_rad: 0.050000000000000003
+    fire_tolerate_frame5: 3
+    fire_tolerate_frames: 3
+calibration:
+  camera_matrix: [1823.2, 0.0, 640.6, 0.0, 1827.9, 514.1, 0.0, 0.0, 1.0]
+  distort_coeffs: [-0.0608, 0.3218, 0.0058, 0.0009, 1.0543]
+  R_gimbal_to_imu: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+  R_camera_to_gimbal: [0.986548389054692, 0.161921004986479, -0.02244691956061263, -0.1617560656316138, 0.947131083714861, -0.277087866014544, -0.02360617048513046, 0.2769915132369248, 0.9605823495722505]
+  t_camera_to_gimbal:
+    - 0.12753363076535701
+    - 0.24282713994830479
+    - -1.1448163990733324
+debug:
+  foxglove:
+    stabilize_diff_binary: true
+    prediction_reproj:
+      use_normal_axis: false
+      armor_yaw_offset_deg: 90.0
+      min_stable_tracking_frames: 5
+      suppress_on_radius_diverged: true
+      delta_roll_deg: 0.0
+      delta_pitch_deg: 1.0
+      delta_yaw_deg: 0.0
+      delta_tx_m: 0.0
+      delta_ty_m: 0.0
+      delta_tz_m: 0.0
+  pnp_gate:
+    max_reproj_error_px: 12
+detector:
+  light_thresh: 80
+  green_thresh: 100
+  white_thresh: 0
+  max_light_angle: 90
+  min_armor_ratio: 0
+  max_armor_ratio: 7.625
+  max_angle_diff: 87.8000031
+  max_light_ratio: 30
+  min_light_ratio: 0
+  min_tb_span_ratio: 0.649999976
+  min_area: 10
+armor:
+  small_half_w: 0.0675000027
+  big_half_w: 0.115000002
+  half_h: 0.0274999999

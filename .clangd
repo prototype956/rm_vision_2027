@@ -1,0 +1,64 @@
+# clangd 配置文件 — EX_MiracleVision
+# 兼容版本：clangd 14（Ubuntu 22.04 默认版本）
+# 实际构建编译器：g++-11，此文件仅用于 IDE 静态分析，不影响真实编译结果
+
+# ----------------------------------------------------------------------------
+# 编译标志
+# ----------------------------------------------------------------------------
+CompileFlags:
+  CompilationDatabase: build/
+  Add:
+    - "-std=c++20"
+    - "-Wall"
+    - "-Wextra"
+    - "-I/usr/include/eigen3"
+    - "-I/usr/include/opencv4"
+  Remove:
+    - "-march=*"
+    - "-mtune=*"
+
+# ----------------------------------------------------------------------------
+# 诊断 / 静态分析
+# ----------------------------------------------------------------------------
+Diagnostics:
+  ClangTidy:
+    Add:
+      - google-*
+      - modernize-*
+      - performance-*
+      - readability-*
+      - bugprone-*
+      - cppcoreguidelines-*
+    Remove:
+      - modernize-use-trailing-return-type
+      - cppcoreguidelines-avoid-magic-numbers
+      - readability-magic-numbers
+      - google-readability-todo
+      - cppcoreguidelines-pro-bounds-pointer-arithmetic
+      - cppcoreguidelines-pro-type-reinterpret-cast
+  # Clang 14 解析 GCC 系统头文件时的已知误报，g++ 实际编译均正常
+  # 详见 docs/clangd/Known_False_Positives.md
+  Suppress:
+    - invalid_consteval_call  # libstdc++ <chrono> hh_mm_ss::_S_fractional_width
+    - builtin_definition      # GCC xmmintrin.h 中 _mm_getcsr 等 SSE 内建函数
+
+# ----------------------------------------------------------------------------
+# 索引 / 补全 / 提示
+# ----------------------------------------------------------------------------
+Index:
+  Background: Build
+
+Hover:
+  ShowAKA: Yes
+
+InlayHints:
+  Enabled: Yes
+  ParameterNames: Yes
+  # DeducedTypes: clangd-14 已知 bug：处理 static constexpr 暂展式 + 连锁字符串表达式时
+  # 在 InlayHints 阶段 SIGSEGV。clangd-15+ 已修复，14 下必须关闭。
+  DeducedTypes: No
+  Designators: Yes
+
+Completion:
+  # 代码补全设置
+  AllScopes: Yes

@@ -1,0 +1,35 @@
+enemy_color: "red"
+# enemy_color: "blue"
+
+#####-----tracker参数-----#####
+min_detect_count: 5
+max_temp_lost_count: 15
+outpost_max_temp_lost_count: 75
+
+#####-----aimer参数-----#####
+yaw_offset: -2 # degree
+pitch_offset: 0 # degree
+comming_angle: 60 # degree
+leaving_angle: 20 # degree
+decision_speed: 8 # rad/s
+high_speed_delay_time: 0.015 # s
+low_speed_delay_time: 0.015 # s
+
+#####-----shooter参数-----#####
+first_tolerance: 3 # 近距离射击容差，degree
+second_tolerance: 2 # 远距离射击容差，degree
+judge_distance: 2 #距离判断阈值
+auto_fire: true # 是否由自瞄控制射击
+
+# Camera intrinsic parameters from mv_camera_config_407.xml
+camera_matrix: [1764.0906146917000115, 0, 644.9007547883753659, 
+                0, 1764.2730913327272901, 499.5386779336680547, 
+                0, 0, 1]
+distort_coeffs: [-0.1105688363057670, 0.0788367597121587, -0.0006168322635500, 0.0004632768611468, 0.5536762793309852]
+
+# Gimbal to IMU body rotation matrix (identity for now)
+R_gimbal2imubody: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+
+# Camera to gimbal transformation (identity for now, needs calibration)
+R_camera2gimbal: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+t_camera2gimbal: [0, 0, 0]

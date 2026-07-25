@@ -1,0 +1,37 @@
+# 哨兵模板：持续跟踪、强调稳定发射
+
+camera:
+  exposure: 1500
+
+serial:
+  device: "/dev/ttyUSB2"
+
+auto_aim:
+  enemy_color: "blue"
+
+  cooldown_voter:
+    auto_fire: true
+    min_lock_frames: 6
+    first_tolerance_rad: 0.03
+    fire_tolerate_frames: 5
+
+  shooter:
+    enable_ballistic_compensation: true
+    bullet_speed: 30.0
+    gravity: 9.8
+
+detector:
+  light_thresh: 140
+  green_thresh: 55
+  white_thresh: 255
+  max_light_angle: 45.0
+  min_armor_ratio: 1.0
+  max_armor_ratio: 4.8
+  max_angle_diff: 15.0
+  max_light_ratio: 0.85
+  min_light_ratio: 0.06
+  min_area: 16.0
+
+debug:
+  foxglove:
+    port: 8767

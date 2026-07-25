@@ -1,0 +1,41 @@
+# 步兵模板：适合通用自瞄调试
+
+camera:
+  exposure: 2200
+
+serial:
+  device: "/dev/ttyUSB0"
+
+auto_aim:
+  enemy_color: "blue"
+
+  cooldown_voter:
+    auto_fire: true
+    min_lock_frames: 4
+    first_tolerance_rad: 0.045
+    fire_tolerate_frames: 3
+
+  shooter:
+    enable_ballistic_compensation: false
+    bullet_speed: 15.0
+    gravity: 9.8
+
+detector:
+  light_thresh: 109
+  green_thresh: 81
+  white_thresh: 255
+  max_light_angle: 90.0
+  min_armor_ratio: 0.0
+  max_armor_ratio: 5.5
+  max_angle_diff: 87.8
+  max_light_ratio: 1.0
+  min_light_ratio: 0.0
+  min_area: 10.0
+
+debug:
+  foxglove:
+    port: 8765
+    jpeg_quality: 50
+    display_width: 640
+    display_height: 480
+    target_fps: 30
