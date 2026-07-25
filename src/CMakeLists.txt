@@ -8,8 +8,10 @@ message(STATUS "  Configuring refactored src modules...")
 # 阶段一：基础设施
 add_subdirectory(core)
 
-# 冒烟测试可执行文件
-add_subdirectory(app)
+# 主程序
+if(BUILD_MAIN)
+    add_subdirectory(app)
+endif()
 
 # 阶段二：硬件抽象层（HAL）
 add_subdirectory(hal)
@@ -27,6 +29,3 @@ add_subdirectory(fsm)
 
 # 调试工具库（ParamTuner / ViewRenderer / DebugSession）
 add_subdirectory(tool)
-
-# 测试程序（冒烟测试 + 离线视频测试）
-add_subdirectory(test)

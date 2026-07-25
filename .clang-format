@@ -7,7 +7,7 @@ BasedOnStyle: Google
 
 # 语言设置
 Language: Cpp
-Standard: c++17
+Standard: c++20
 
 # 缩进设置
 IndentWidth: 2
