@@ -17,7 +17,7 @@ sudo ./build/bin/mv-vision-main
 sudo ./build/bin/mv-camera-test
 ```
 
-完整测试按 `Q` 或 `Esc` 可提前退出。结果写入 `artifacts/camera_test/`：
+完整测试按 `Q`、`Esc` 或关闭窗口可提前退出。结果写入 `artifacts/camera_test/`：
 
 - `metrics_*.csv`：每个报告周期的 FPS、帧间隔、CPU、RSS 等；
 - `events_*.jsonl`：取帧失败事件及最后成功帧号；

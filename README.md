@@ -83,7 +83,8 @@ src/config/
 │   ├── hal/
 │   │   ├── camera/        # ICamera、MindVisionCamera、OpenCvCamera
 │   │   └── serial/        # 空目录，等待重新设计
-│   └── modules/           # 空算法目录，等待重新设计
+│   ├── modules/           # 空算法目录，等待重新设计
+│   └── tool/debug/        # 可复用的 OpenCV 调试窗口
 ├── test/                  # MindVision 实机验收程序
 └── 3rdparty/mindvision/   # MindVision SDK
 ```

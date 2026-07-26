@@ -12,7 +12,7 @@ target_link_libraries(mv-camera-test
     PRIVATE
         mv-core
         mv-hal-camera
-        opencv_highgui
+        mv-tool-debug
         opencv_imgproc
         opencv_imgcodecs
 )

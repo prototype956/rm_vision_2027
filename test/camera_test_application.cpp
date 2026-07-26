@@ -1,6 +1,7 @@
 #include "test/camera_test_application.hpp"
 
 #include "core/logger.hpp"
+#include "tool/debug/debug_window.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -12,13 +13,13 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
-#include <opencv2/highgui.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <unistd.h>
@@ -240,6 +241,11 @@ int CameraTestApplication::Run() {
     return 3;
   }
 
+  std::unique_ptr<tool::DebugWindow> preview_window;
+  if (settings_.preview) {
+    preview_window = std::make_unique<tool::DebugWindow>("MiracleVision Camera Test");
+  }
+
   std::ofstream metrics_csv(settings_.output_dir / ("metrics_" + run_id + ".csv"));
   std::ofstream events(settings_.output_dir / ("events_" + run_id + ".jsonl"));
   metrics_csv << "elapsed_sec,total,success,failed,fps,p50_ms,p95_ms,p99_ms,rss_mib,"
@@ -339,14 +345,15 @@ int CameraTestApplication::Run() {
                   hal::GrabStatusName(last_status), metrics.total, last_good_frame.sequence);
     }
 
-    if (settings_.preview && !last_good_frame.image.empty()) {
-      cv::Mat preview = last_good_frame.image.clone();
-      const double report_elapsed = std::max(Seconds(now - report_start), 1e-6);
-      DrawPreview(preview, last_good_frame, info, last_status,
-                  static_cast<double>(report_success) / report_elapsed, Seconds(now - start));
-      cv::imshow("MiracleVision Camera Test", preview);
-      const int key = cv::waitKey(1);
-      if (key == 27 || key == 'q' || key == 'Q') break;
+    if (preview_window) {
+      if (!last_good_frame.image.empty()) {
+        cv::Mat preview = last_good_frame.image.clone();
+        const double report_elapsed = std::max(Seconds(now - report_start), 1e-6);
+        DrawPreview(preview, last_good_frame, info, last_status,
+                    static_cast<double>(report_success) / report_elapsed, Seconds(now - start));
+        preview_window->Show(preview);
+      }
+      if (preview_window->Poll().exit_requested) break;
     }
 
     if (now >= next_report) {
@@ -401,7 +408,6 @@ int CameraTestApplication::Run() {
   }
 
   camera_->Close();
-  if (settings_.preview) cv::destroyAllWindows();
 
   const auto finish = Clock::now();
   const double elapsed = Seconds(finish - start);
