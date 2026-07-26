@@ -53,7 +53,7 @@ sudo ./build/bin/mv-camera-test
 ```
 
 相机预览按 `Q`、`Esc` 或关闭窗口退出。完整实机验收流程见
-[docs/CAMERA_TEST.md](docs/CAMERA_TEST.md)。
+[docs/test/CAMERA_TEST.md](docs/test/CAMERA_TEST.md)。
 
 ## 配置
 
@@ -61,31 +61,34 @@ sudo ./build/bin/mv-camera-test
 
 ```text
 src/config/
-├── apps/camera_test.yaml
 ├── core/logger.yaml
-└── hal/camera/
-    ├── mindvision.yaml
-    └── opencv.yaml
+├── hal/camera/
+│   ├── mindvision.yaml
+│   └── opencv.yaml
+└── test/
+    └── camera_test.yaml
 ```
 
 主程序固定读取 `core/logger.yaml` 和 `hal/camera/mindvision.yaml`。相机测试额外
-读取 `apps/camera_test.yaml` 中的测试参数。
+读取 `test/camera_test.yaml` 中的测试参数。
 
 ## 项目结构
 
 ```text
 .
 ├── cmake/                 # 编译器、系统依赖和 MindVision SDK 配置
-├── docs/                  # 当前有效文档
+├── docs/
+│   └── test/              # 硬件测试与验收文档
 ├── src/
 │   ├── app/               # MindVision 预览入口
 │   ├── core/              # YAML 配置工具和日志
 │   ├── hal/
-│   │   ├── camera/        # ICamera、MindVisionCamera、OpenCvCamera
+│   │   ├── camera/        # ICamera 及按后端分组的 MindVision/OpenCV 驱动
 │   │   └── serial/        # 空目录，等待重新设计
 │   ├── modules/           # 空算法目录，等待重新设计
 │   └── tool/debug/        # 可复用的 OpenCV 调试窗口
-├── test/                  # MindVision 实机验收程序
+├── test/
+│   └── camera/            # MindVision 实机验收程序
 └── 3rdparty/mindvision/   # MindVision SDK
 ```
 

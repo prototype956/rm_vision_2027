@@ -11,7 +11,7 @@ sudo ./build/bin/mv-vision-main
 
 按 `Q`、`Esc` 或关闭窗口退出。该程序不写 CSV、JSON 或样本帧。
 
-完整实机测试固定读取 `src/config/apps/camera_test.yaml`，运行命令为：
+完整实机测试固定读取 `src/config/test/camera_test.yaml`，运行命令为：
 
 ```bash
 sudo ./build/bin/mv-camera-test

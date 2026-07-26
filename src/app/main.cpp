@@ -2,11 +2,12 @@
 
 #include "core/config.hpp"
 #include "core/logger.hpp"
-#include "hal/camera/mindvision_camera.hpp"
+#include "hal/camera/mindvision/mindvision_camera.hpp"
 #include "tool/debug/debug_window.hpp"
 
 #include <cstdio>
 #include <exception>
+
 #include <filesystem>
 
 namespace mv::app {
@@ -20,8 +21,7 @@ int Run() {
   try {
     const std::filesystem::path CONFIG_ROOT = CONFIG_FILE_PATH;
     Logger::Instance().InitFromFile(CONFIG_ROOT / "core/logger.yaml");
-    const auto CAMERA_CONFIG =
-        ConfigLoader::LoadFile(CONFIG_ROOT / "hal/camera/mindvision.yaml");
+    const auto CAMERA_CONFIG = ConfigLoader::LoadFile(CONFIG_ROOT / "hal/camera/mindvision.yaml");
 
     hal::MindVisionCamera camera;
     if (!camera.Open(CAMERA_CONFIG)) {
@@ -36,8 +36,7 @@ int Run() {
 
       if (STATUS == hal::GrabStatus::OK) {
         window.Show(frame.image);
-      } else if (STATUS == hal::GrabStatus::DISCONNECTED ||
-                 STATUS == hal::GrabStatus::FATAL) {
+      } else if (STATUS == hal::GrabStatus::DISCONNECTED || STATUS == hal::GrabStatus::FATAL) {
         MV_LOG_ERROR("App", "camera grab failed: {}", hal::GrabStatusName(STATUS));
         return 3;
       }
