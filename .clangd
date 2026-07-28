@@ -1,6 +1,6 @@
 # rm_vision_2027 clangd 配置（兼容 Ubuntu 22.04 clangd 14）
 CompileFlags:
-  CompilationDatabase: build/
+  CompilationDatabase: build-openvino/
 
 Diagnostics:
   # clangd 14 解析 GCC 11 标准库和 SSE 内建函数时的已知误报。

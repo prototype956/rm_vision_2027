@@ -1,0 +1,5 @@
+schema_version: 1
+
+video_dir: ../../../vedio
+default_video: demo.avi
+preview: true

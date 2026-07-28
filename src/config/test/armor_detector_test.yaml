@@ -1,0 +1,8 @@
+schema_version: 1
+
+duration_sec: 1800
+warmup_sec: 60
+preview: true
+report_interval_sec: 1
+save_sample_interval_sec: 300
+output_dir: ../../../artifacts/armor_detector_test

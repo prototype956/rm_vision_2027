@@ -23,6 +23,13 @@ option(BUILD_MAIN "Build main MiracleVision executable" ON)
 
 # 第三方库选项
 option(USE_MINDVISION_SDK "Enable MindVision Camera SDK (required for real camera)" ON)
+option(USE_OPENVINO "Enable OpenVINO armor detector" ON)
+
+if(BUILD_MAIN AND NOT USE_OPENVINO)
+    message(FATAL_ERROR
+        "BUILD_MAIN requires USE_OPENVINO=ON. "
+        "Use -DBUILD_MAIN=OFF -DUSE_OPENVINO=OFF for camera-only builds.")
+endif()
 
 # ============================================================================
 # 开发工具配置
@@ -80,6 +87,7 @@ set(CONFIG_FILE_PATH "${CMAKE_SOURCE_DIR}/src/config"
 
 message(STATUS "Path configuration:")
 message(STATUS "  Config path: ${CONFIG_FILE_PATH}")
+message(STATUS "  Project root: ${CMAKE_SOURCE_DIR}")
 message(STATUS "")
 
 # ============================================================================
@@ -116,6 +124,7 @@ message(STATUS "  BUILD_MAIN:         ${BUILD_MAIN}")
 message(STATUS "")
 message(STATUS "Third-party libraries:")
 message(STATUS "  MindVision SDK:     ${USE_MINDVISION_SDK}")
+message(STATUS "  OpenVINO:           ${USE_OPENVINO}")
 message(STATUS "")
 message(STATUS "Output directories:")
 message(STATUS "  Executables:        ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")

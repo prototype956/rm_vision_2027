@@ -44,8 +44,10 @@
 # Build directories
 # =============================================================================
 build/
+build-openvino/
 cmake-build-*/
 .cmake/
+/CMakeFiles/
 
 # =============================================================================
 # clangd cache (不应提交到仓库)
@@ -63,6 +65,14 @@ compile_commands.json
 # =============================================================================
 logs/*.log
 artifacts/camera_test/
+artifacts/detector_test/
+artifacts/armor_detector_test/
 Camera/
+
+# Local detector test videos are managed manually and are not committed.
+vedio/
+
+# Local neural-network weights are not redistributed with this repository.
+src/modules/armor_detector/models/*.onnx
 
 .worktrees/

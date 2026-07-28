@@ -1,0 +1,6 @@
+schema_version: 1
+model_path: src/modules/armor_detector/models/0526.onnx
+device: GPU
+enemy_color: blue
+confidence_threshold: 0.65
+nms_iou_threshold: 0.45

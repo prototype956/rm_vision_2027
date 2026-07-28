@@ -38,6 +38,13 @@ find_package(OpenCV REQUIRED COMPONENTS
 message(STATUS "  ✓ OpenCV found: ${OpenCV_VERSION}")
 message(STATUS "    OpenCV modules: ${OpenCV_LIBS}")
 
+if(USE_OPENVINO)
+    find_package(OpenVINO 2024.0 REQUIRED COMPONENTS Runtime)
+    message(STATUS "  ✓ OpenVINO Runtime found: ${OpenVINO_VERSION}")
+else()
+    message(STATUS "  ⊗ OpenVINO disabled")
+endif()
+
 # ----------------------------------------------------------------------------
 # 检查关键 OpenCV 模块
 # ----------------------------------------------------------------------------
