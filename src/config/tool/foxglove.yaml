@@ -1,0 +1,15 @@
+schema_version: 1
+enabled: true
+
+server:
+  host: 0.0.0.0
+  port: 8765
+
+image:
+  frame_id: camera_optical_frame
+  max_fps: 20
+  jpeg_quality: 75
+
+recording:
+  enabled: false
+  output_dir: ../../../artifacts/foxglove

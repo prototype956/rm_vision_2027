@@ -16,6 +16,7 @@ target_link_libraries(mv-armor-detector-test
         mv-modules-armor-detector
         mv-tool-armor-overlay
         mv-tool-debug
+        mv-tool-foxglove
         opencv_imgcodecs
         opencv_imgproc
 )

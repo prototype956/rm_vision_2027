@@ -1,38 +1,52 @@
 # ============================================================================
-# Foxglove WebSocket SDK 配置
-# 用于实时数据可视化和调试
+# Foxglove WebSocket / MCAP SDK 配置
+# 用于实时数据可视化、调试和录制
 # ============================================================================
 
 message(STATUS "    Configuring Foxglove SDK...")
 
-# 创建 INTERFACE 库（header-only + 预编译库）
-add_library(foxglove_sdk INTERFACE)
+set(FOXGLOVE_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/lib")
+set(FOXGLOVE_LIBRARY "${FOXGLOVE_LIB_PATH}/libfoxglove.so")
 
-# 设置头文件路径
-target_include_directories(foxglove_sdk INTERFACE
+if(NOT EXISTS "${FOXGLOVE_LIBRARY}")
+    message(FATAL_ERROR "Foxglove library not found: ${FOXGLOVE_LIBRARY}")
+endif()
+
+# 将预编译动态库放入统一构建输出，可执行程序只依赖 $ORIGIN/../lib。
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+configure_file("${FOXGLOVE_LIBRARY}" "${CMAKE_BINARY_DIR}/lib/libfoxglove.so" COPYONLY)
+
+add_library(foxglove_c SHARED IMPORTED GLOBAL)
+set_target_properties(foxglove_c PROPERTIES
+    IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/lib/libfoxglove.so"
+    IMPORTED_NO_SONAME TRUE
+    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+# libfoxglove.so 提供 C ABI；仓库内 src/ 是与头文件匹配的 C++ 封装层。
+add_library(foxglove_sdk STATIC
+    src/channel.cpp
+    src/cloud_sink.cpp
+    src/context.cpp
+    src/error.cpp
+    src/foxglove.cpp
+    src/mcap.cpp
+    src/schemas.cpp
+    src/server.cpp
+    src/server/connection_graph.cpp
+    src/server/fetch_asset.cpp
+    src/server/parameter.cpp
+    src/server/service.cpp
+)
+
+target_include_directories(foxglove_sdk PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
-# 设置库文件路径
-set(FOXGLOVE_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/lib")
+target_link_libraries(foxglove_sdk PUBLIC foxglove_c)
 
-# 检查库文件是否存在
-if(NOT EXISTS "${FOXGLOVE_LIB_PATH}/libfoxglove.so")
-    message(WARNING "Foxglove library not found: ${FOXGLOVE_LIB_PATH}/libfoxglove.so")
-    message(WARNING "Foxglove SDK may not work properly")
-endif()
-
-# 添加库搜索路径
-link_directories(${FOXGLOVE_LIB_PATH})
-
-# 链接库（使用 -lfoxglove 方式）
-target_link_libraries(foxglove_sdk INTERFACE foxglove)
-
-# 设置 RPATH，确保运行时能找到库
-# BUILD_RPATH: 构建时使用
-# INSTALL_RPATH: 安装后使用
-set(CMAKE_BUILD_RPATH "${CMAKE_BUILD_RPATH};${FOXGLOVE_LIB_PATH}" PARENT_SCOPE)
-set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${FOXGLOVE_LIB_PATH}" PARENT_SCOPE)
+set(CMAKE_BUILD_RPATH "${CMAKE_BUILD_RPATH};$ORIGIN/../lib" PARENT_SCOPE)
+set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_RPATH};$ORIGIN/../lib" PARENT_SCOPE)
 
 message(STATUS "      ✓ Foxglove SDK include: ${CMAKE_CURRENT_SOURCE_DIR}/include")
-message(STATUS "      ✓ Foxglove SDK library: ${FOXGLOVE_LIB_PATH}")
+message(STATUS "      ✓ Foxglove SDK library: ${CMAKE_BINARY_DIR}/lib/libfoxglove.so")

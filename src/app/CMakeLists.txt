@@ -9,6 +9,7 @@ target_link_libraries(mv-vision-main
         mv-modules-armor-detector
         mv-tool-armor-overlay
         mv-tool-debug
+        mv-tool-foxglove
         opencv_imgproc
 )
 

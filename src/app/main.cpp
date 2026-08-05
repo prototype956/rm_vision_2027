@@ -7,9 +7,14 @@
 #include "modules/armor_detector/armor_detector_config.hpp"
 #include "tool/debug/armor_detection_overlay.hpp"
 #include "tool/debug/debug_window.hpp"
+#include "tool/foxglove/armor_debug_publisher.hpp"
+#include "tool/foxglove/foxglove_config.hpp"
 
+#include <csignal>
 #include <cstdio>
 #include <exception>
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include <filesystem>
@@ -20,6 +25,21 @@ namespace mv::app {
 namespace {
 
 constexpr char K_WINDOW_NAME[] = "MiracleVision Camera Preview";
+volatile std::sig_atomic_t g_stop_requested = 0;
+
+void HandleStopSignal(int) noexcept {
+  g_stop_requested = 1;
+}
+
+bool LoadDebugWindowEnabled(const std::filesystem::path& config_path) {
+  constexpr char CONTEXT[] = "debug window config";
+  const auto ROOT = ConfigLoader::LoadFile(config_path);
+  ConfigLoader::RejectUnknownKeys(ROOT, {"schema_version", "enabled"}, CONTEXT);
+  if (ConfigLoader::Require<int>(ROOT, "schema_version", CONTEXT) != 1) {
+    throw ConfigError("debug window config schema_version must be 1");
+  }
+  return ConfigLoader::Require<bool>(ROOT, "enabled", CONTEXT);
+}
 
 void DrawDetections(cv::Mat& image, const std::vector<modules::ArmorDetection>& detections,
                     const modules::DetectorStats& stats) {
@@ -38,6 +58,8 @@ int Run() {
     const std::filesystem::path CONFIG_ROOT = CONFIG_FILE_PATH;
     const std::filesystem::path PROJECT_ROOT = PROJECT_ROOT_PATH;
     Logger::Instance().InitFromFile(CONFIG_ROOT / "core/logger.yaml");
+    std::signal(SIGINT, HandleStopSignal);
+    std::signal(SIGTERM, HandleStopSignal);
 
     modules::YoloArmorDetector detector;
     try {
@@ -56,17 +78,45 @@ int Run() {
       return 3;
     }
 
-    tool::DebugWindow window(K_WINDOW_NAME);
-    while (true) {
+    const bool PREVIEW_ENABLED = LoadDebugWindowEnabled(CONFIG_ROOT / "tool/debug_window.yaml");
+    std::unique_ptr<tool::DebugWindow> window;
+    if (PREVIEW_ENABLED) {
+      window = std::make_unique<tool::DebugWindow>(K_WINDOW_NAME);
+    }
+
+    std::unique_ptr<tool::foxglove::ArmorDebugPublisher> foxglove_publisher;
+    try {
+      const auto FOXGLOVE_PATH = CONFIG_ROOT / "tool/foxglove.yaml";
+      const auto FOXGLOVE_YAML = ConfigLoader::LoadFile(FOXGLOVE_PATH);
+      auto foxglove_config = tool::foxglove::ParseConfig(FOXGLOVE_YAML, FOXGLOVE_PATH);
+      if (foxglove_config.enabled) {
+        foxglove_publisher =
+            std::make_unique<tool::foxglove::ArmorDebugPublisher>(std::move(foxglove_config));
+        if (!foxglove_publisher->IsRunning()) {
+          MV_LOG_WARN("App", "Foxglove configured but no live or recording sink started");
+        }
+      }
+    } catch (const std::exception& error) {
+      MV_LOG_ERROR("App", "Foxglove disabled after initialization failure: {}", error.what());
+      foxglove_publisher.reset();
+    }
+
+    while (g_stop_requested == 0) {
       hal::CameraFrame frame;
       const auto STATUS = camera.Grab(frame);
 
       if (STATUS == hal::GrabStatus::OK) {
         try {
           const auto DETECTIONS = detector.Detect(frame.image);
-          cv::Mat debug_image = frame.image.clone();
-          DrawDetections(debug_image, DETECTIONS, detector.LastStats());
-          window.Show(debug_image);
+          const auto STATS = detector.LastStats();
+          if (foxglove_publisher) {
+            foxglove_publisher->Publish(frame, DETECTIONS, STATS);
+          }
+          if (window) {
+            cv::Mat debug_image = frame.image.clone();
+            DrawDetections(debug_image, DETECTIONS, STATS);
+            window->Show(debug_image);
+          }
         } catch (const std::exception& error) {
           MV_LOG_ERROR("App", "armor detection failed: {}", error.what());
           return 5;
@@ -76,10 +126,12 @@ int Run() {
         return 4;
       }
 
-      if (window.Poll().exit_requested) {
+      if (window && window->Poll().exit_requested) {
         return 0;
       }
     }
+    MV_LOG_INFO("App", "stop signal received");
+    return 0;
   } catch (const std::exception& error) {
     std::fprintf(stderr, "[App] FATAL: %s\n", error.what());
     return 1;

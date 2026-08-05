@@ -33,6 +33,7 @@ cmake --build build-openvino --parallel 4
 - `src/config/core/logger.yaml`
 - `src/config/modules/armor_detector.yaml`
 - `src/config/hal/camera/mindvision.yaml`
+- `src/config/tool/foxglove.yaml`
 - `src/config/test/armor_detector_test.yaml`
 
 默认配置执行 30 分钟测试，前 60 秒用于 GPU 预热和循环帧率基线，不纳入检测延迟
@@ -45,6 +46,11 @@ cmake --build build-openvino --parallel 4
 预览窗口显示帧号、循环 FPS、结果/候选数量、预处理/推理/后处理/总耗时以及检测
 四边形、颜色、标签和 objectness。按 `Q`、`Esc` 或关闭窗口会提前结束，并在最终
 报告中记为未完成。
+
+Foxglove 是该测试的可选调试旁路。`tool/foxglove.yaml` 中 `enabled: true` 时，程序会
+异步发布原图、装甲标注和检测指标；连接、话题及 MCAP 配置见
+[`docs/tool/FOXGLOVE.md`](../tool/FOXGLOVE.md)。配置解析、端口或录制初始化失败只会
+记录日志并禁用对应输出，不改变本测试的退出码和 PASS/FAIL 条件。
 
 结果写入 `artifacts/armor_detector_test/`：
 
@@ -64,7 +70,7 @@ cmake --build build-openvino --parallel 4
 - 没有相机断开或致命错误。
 
 检测数量不参与自动 PASS/FAIL。测试时应让敌方颜色装甲板经过中心、四角和画面边缘，
-通过实时 HUD 和保存样本人工检查颜色、标签、漏检、误检和角点位置。
+通过实时 HUD、Foxglove 或保存样本人工检查颜色、标签、漏检、误检和角点位置。
 
 ## 离线视频
 

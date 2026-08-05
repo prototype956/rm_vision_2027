@@ -5,13 +5,16 @@
 #include "modules/armor_detector/armor_detector.hpp"
 #include "modules/armor_detector/armor_detector_config.hpp"
 #include "test/armor_detector/armor_detector_test_application.hpp"
+#include "tool/foxglove/foxglove_config.hpp"
 
 #include <cstdio>
 #include <exception>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include <filesystem>
+#include <optional>
 
 namespace mv::test {
 namespace {
@@ -71,12 +74,13 @@ ArmorDetectorTestSettings ParseTestSettings(const YAML::Node& root,
  */
 int RunArmorDetectorTest() {
   try {
-    // 四类配置分别控制日志、检测器、相机 HAL 和实机测试策略。
+    // 配置分别控制日志、检测器、相机 HAL、实机测试策略和可选 Foxglove 输出。
     const auto CONFIG_ROOT = std::filesystem::path(CONFIG_FILE_PATH);
     const auto PROJECT_ROOT = std::filesystem::path(PROJECT_ROOT_PATH);
     const auto DETECTOR_PATH = CONFIG_ROOT / "modules/armor_detector.yaml";
     const auto CAMERA_PATH = CONFIG_ROOT / "hal/camera/mindvision.yaml";
     const auto TEST_PATH = CONFIG_ROOT / "test/armor_detector_test.yaml";
+    const auto FOXGLOVE_PATH = CONFIG_ROOT / "tool/foxglove.yaml";
 
     Logger::Instance().InitFromFile(CONFIG_ROOT / "core/logger.yaml");
 
@@ -97,10 +101,25 @@ int RunArmorDetectorTest() {
     MV_LOG_INFO("Config", "camera config: {}", CAMERA_PATH.string());
     MV_LOG_INFO("Config", "armor detector test config: {}", TEST_PATH.string());
 
+    std::optional<tool::foxglove::Config> foxglove_config;
+    try {
+      auto parsed_config =
+          tool::foxglove::ParseConfig(ConfigLoader::LoadFile(FOXGLOVE_PATH), FOXGLOVE_PATH);
+      if (parsed_config.enabled) {
+        foxglove_config = std::move(parsed_config);
+        MV_LOG_INFO("Config", "Foxglove config: {}", FOXGLOVE_PATH.string());
+      } else {
+        MV_LOG_INFO("ArmorDetectorTest", "Foxglove debug output disabled by configuration");
+      }
+    } catch (const std::exception& error) {
+      MV_LOG_WARN("ArmorDetectorTest", "Foxglove configuration ignored: {}", error.what());
+    }
+
     // 通过 ICamera 注入 MindVision 后端，使测试流程只依赖统一相机接口。
     std::unique_ptr<hal::ICamera> camera = std::make_unique<hal::MindVisionCamera>();
     ArmorDetectorTestApplication application(std::move(camera), std::move(detector), CAMERA_CONFIG,
-                                             ParseTestSettings(TEST_CONFIG, TEST_PATH));
+                                             ParseTestSettings(TEST_CONFIG, TEST_PATH),
+                                             std::move(foxglove_config));
     return application.Run();
   } catch (const std::exception& error) {
     std::fprintf(stderr, "[ArmorDetectorTest] FATAL: %s\n", error.what());

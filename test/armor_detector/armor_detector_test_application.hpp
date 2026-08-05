@@ -2,10 +2,12 @@
 
 #include "hal/camera/i_camera.hpp"
 #include "modules/armor_detector/armor_detector.hpp"
+#include "tool/foxglove/foxglove_config.hpp"
 
 #include <memory>
 
 #include <filesystem>
+#include <optional>
 #include <yaml-cpp/yaml.h>
 
 namespace mv::test {
@@ -40,10 +42,12 @@ class ArmorDetectorTestApplication final {
    * @param detector 已完成初始化的检测器，所有权转移给本对象。
    * @param camera_config 传递给 ICamera::Open() 的相机配置。
    * @param settings 已完成校验的测试参数。
+   * @param foxglove_config 可选调试发布配置；缺省时不启动 Foxglove。
    */
   ArmorDetectorTestApplication(std::unique_ptr<hal::ICamera> camera,
                                std::unique_ptr<modules::YoloArmorDetector> detector,
-                               YAML::Node camera_config, ArmorDetectorTestSettings settings);
+                               YAML::Node camera_config, ArmorDetectorTestSettings settings,
+                               std::optional<tool::foxglove::Config> foxglove_config);
   ~ArmorDetectorTestApplication();
 
   /**
@@ -54,10 +58,11 @@ class ArmorDetectorTestApplication final {
   int Run();
 
  private:
-  std::unique_ptr<hal::ICamera> camera_;                  ///< 被测相机实例。
-  std::unique_ptr<modules::YoloArmorDetector> detector_;  ///< 被测检测器实例。
-  YAML::Node camera_config_;                              ///< Open() 使用的相机配置。
-  ArmorDetectorTestSettings settings_;                    ///< 时长及报告参数。
+  std::unique_ptr<hal::ICamera> camera_;                   ///< 被测相机实例。
+  std::unique_ptr<modules::YoloArmorDetector> detector_;   ///< 被测检测器实例。
+  YAML::Node camera_config_;                               ///< Open() 使用的相机配置。
+  ArmorDetectorTestSettings settings_;                     ///< 时长及报告参数。
+  std::optional<tool::foxglove::Config> foxglove_config_;  ///< 可选 Foxglove 调试配置。
 };
 
 }  // namespace mv::test

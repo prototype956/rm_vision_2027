@@ -3,6 +3,7 @@
 #include "core/logger.hpp"
 #include "tool/debug/armor_detection_overlay.hpp"
 #include "tool/debug/debug_window.hpp"
+#include "tool/foxglove/armor_debug_publisher.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -158,11 +159,13 @@ void CountGrabFailure(Metrics& metrics, hal::GrabStatus status) {
 
 ArmorDetectorTestApplication::ArmorDetectorTestApplication(
     std::unique_ptr<hal::ICamera> camera, std::unique_ptr<modules::YoloArmorDetector> detector,
-    YAML::Node camera_config, ArmorDetectorTestSettings settings)
+    YAML::Node camera_config, ArmorDetectorTestSettings settings,
+    std::optional<tool::foxglove::Config> foxglove_config)
     : camera_(std::move(camera)),
       detector_(std::move(detector)),
       camera_config_(std::move(camera_config)),
-      settings_(std::move(settings)) {}
+      settings_(std::move(settings)),
+      foxglove_config_(std::move(foxglove_config)) {}
 
 ArmorDetectorTestApplication::~ArmorDetectorTestApplication() = default;
 
@@ -186,6 +189,24 @@ int ArmorDetectorTestApplication::Run() {
   MV_LOG_INFO("ArmorDetectorTest", "camera '{}' output={}x{} exposure={}us",
               CAMERA_INFO.device_name, CAMERA_INFO.output_width, CAMERA_INFO.output_height,
               CAMERA_INFO.exposure_us);
+
+  // Foxglove 只提供可选调试输出，初始化失败或没有可用 sink 均不影响检测验收。
+  std::unique_ptr<tool::foxglove::ArmorDebugPublisher> foxglove_publisher;
+  if (foxglove_config_) {
+    try {
+      foxglove_publisher =
+          std::make_unique<tool::foxglove::ArmorDebugPublisher>(std::move(*foxglove_config_));
+      if (!foxglove_publisher->IsRunning()) {
+        MV_LOG_WARN("ArmorDetectorTest",
+                    "Foxglove configured but no live or recording sink started");
+        foxglove_publisher.reset();
+      }
+    } catch (const std::exception& error) {
+      MV_LOG_WARN("ArmorDetectorTest", "Foxglove disabled after initialization failure: {}",
+                  error.what());
+      foxglove_publisher.reset();
+    }
+  }
 
   // 预览窗口是可选诊断输出，不参与最终 PASS/FAIL 判定。
   std::unique_ptr<tool::DebugWindow> preview_window;
@@ -265,6 +286,9 @@ int ArmorDetectorTestApplication::Run() {
           // LastStats() 对应刚完成的 Detect()，因此二者必须在同一同步调用链中读取。
           const auto DETECTIONS = detector_->Detect(frame.image);
           const auto STATS = detector_->LastStats();
+          if (foxglove_publisher) {
+            foxglove_publisher->Publish(frame, DETECTIONS, STATS);
+          }
           ++metrics.detection_success;
           ++report_detection_success;
           metrics.total_detections += DETECTIONS.size();
@@ -392,6 +416,9 @@ int ArmorDetectorTestApplication::Run() {
     }
   }
 
+  if (foxglove_publisher) {
+    foxglove_publisher->Stop();
+  }
   camera_->Close();
 
   // 按测试文档约定的有效率、时延、吞吐、空窗和内存门槛计算最终结果。

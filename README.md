@@ -4,13 +4,14 @@
 
 项目当前处于架构精简和算法模块重设计阶段。现阶段包含相机 HAL、配置、日志、
 MindVision 实机验收程序，以及基于 OpenVINO 的深圳大学 RobotDetectionModel
-0526 装甲板检测模块。
+0526 装甲板检测模块和 Foxglove 调试输出。
 
 ## 当前可执行程序
 
 - `mv-vision-main`：使用 MindVision 相机同步执行 YOLO 0526 检测并显示叠加结果。
 - `mv-camera-test`：MindVision 长时间稳定性、重复启停和拔线验收程序。
-- `mv-armor-detector-test`：MindVision 相机与 GPU 检测器的长时实机验收程序。
+- `mv-armor-detector-test`：MindVision、GPU 检测器与可选 Foxglove 输出的长时实机
+  验收程序。
 - `mv-armor-detector-video-test`：离线视频检测、可视化、逐帧耗时和性能验收程序。
 
 模型权重是本地文件，不提交到 Git，由使用者手工管理。来源、固定提交和放置方法见
@@ -27,6 +28,7 @@ MindVision 实机验收程序，以及基于 OpenVINO 的深圳大学 RobotDetec
 - yaml-cpp
 - OpenVINO Runtime 2024.0（构建主程序和检测模块时需要）
 - 仓库内 `3rdparty/mindvision` SDK（实机运行需要）
+- 仓库内 `3rdparty/foxglove` SDK（预编译 x86-64 Linux 库与 C++ 封装）
 
 Ubuntu 系统依赖示例：
 
@@ -81,6 +83,8 @@ cmake --build build-camera --parallel 4
 
 离线检测和性能验收见
 [`docs/test/ARMOR_DETECTOR_TEST.md`](docs/test/ARMOR_DETECTOR_TEST.md)。
+Foxglove 连接、话题与 MCAP 使用方法见
+[`docs/tool/FOXGLOVE.md`](docs/tool/FOXGLOVE.md)。
 检测模块的接口、模型协议、二维坐标系和后处理契约见
 [`docs/modules/ARMOR_DETECTOR.md`](docs/modules/ARMOR_DETECTOR.md)。
 
@@ -96,15 +100,18 @@ src/config/
 │   └── opencv.yaml
 ├── modules/
 │   └── armor_detector.yaml
+├── tool/
+│   ├── debug_window.yaml
+│   └── foxglove.yaml
 └── test/
     ├── camera_test.yaml
     ├── armor_detector_test.yaml
     └── armor_detector_video_test.yaml
 ```
 
-主程序固定读取日志、装甲检测器和 MindVision 相机配置。相机测试额外读取
-`test/camera_test.yaml`，装甲检测实机测试额外读取
-`test/armor_detector_test.yaml`，离线视频测试默认从
+主程序固定读取日志、装甲检测器、MindVision 相机与调试工具配置。相机测试额外读取
+`test/camera_test.yaml`；装甲检测实机测试额外读取 `test/armor_detector_test.yaml` 和
+共享的 `tool/foxglove.yaml`；离线视频测试默认从
 `test/armor_detector_video_test.yaml` 读取本地视频目录、文件名和窗口预览开关。
 模型路径相对于项目根目录解析。
 
@@ -123,11 +130,13 @@ src/config/
 │   │   └── serial/        # 空目录，等待重新设计
 │   ├── modules/
 │   │   └── armor_detector/# OpenVINO YOLO 0526 检测模块
-│   └── tool/debug/        # OpenCV 调试窗口与装甲检测结果可视化
+│   └── tool/
+│       ├── debug/         # OpenCV 调试窗口与装甲可视化
+│       └── foxglove/      # WebSocket、MCAP 与异步装甲调试发布
 ├── test/
 │   ├── camera/            # MindVision 实机验收程序
 │   └── armor_detector/    # 装甲检测实机与离线视频验收程序
-└── 3rdparty/mindvision/   # MindVision SDK
+└── 3rdparty/              # MindVision 与 Foxglove vendored SDK
 ```
 
 ## 当前边界

@@ -5,6 +5,18 @@
 message(STATUS "Configuring third-party dependencies...")
 
 # ----------------------------------------------------------------------------
+# Foxglove SDK - WebSocket 与 MCAP 调试输出
+# ----------------------------------------------------------------------------
+if(USE_OPENVINO AND EXISTS "${CMAKE_SOURCE_DIR}/3rdparty/foxglove/CMakeLists.txt")
+    add_subdirectory(3rdparty/foxglove)
+    message(STATUS "  ✓ Foxglove SDK enabled")
+elseif(USE_OPENVINO)
+    message(FATAL_ERROR "Foxglove SDK directory not found: ${CMAKE_SOURCE_DIR}/3rdparty/foxglove")
+else()
+    message(STATUS "  ⊗ Foxglove SDK disabled with OpenVINO")
+endif()
+
+# ----------------------------------------------------------------------------
 # MindVision SDK - 迈德威视相机 SDK
 # ----------------------------------------------------------------------------
 if(USE_MINDVISION_SDK)
