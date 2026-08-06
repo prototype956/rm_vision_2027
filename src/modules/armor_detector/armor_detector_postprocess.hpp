@@ -33,6 +33,14 @@ struct DecodeResult {
 };
 
 /**
+ * @brief YOLO 解码所需的置信度和 NMS 阈值。
+ */
+struct DecodeThresholds {
+  float confidence{0.65F};  ///< sigmoid objectness 阈值，范围为 (0, 1)。
+  float nms_iou{0.45F};     ///< NMS IoU 阈值，范围为 [0, 1]。
+};
+
+/**
  * @brief 计算保持长宽比、左上对齐的 640x640 Letterbox 映射。
  *
  * @param source_width 输入图像宽度。
@@ -82,14 +90,13 @@ struct DecodeResult {
  * @param columns 每行元素数，必须为 K_OUTPUT_COLUMNS。
  * @param transform 当前输入图像对应的 Letterbox 映射。
  * @param enemy_color 需要保留的敌方颜色。
- * @param confidence_threshold sigmoid objectness 阈值，范围为 (0, 1)。
- * @param nms_iou_threshold NMS IoU 阈值，范围为 [0, 1]。
+ * @param thresholds sigmoid objectness 和 NMS IoU 阈值。
  * @return 完成筛选和 NMS 的检测结果及阈值候选数量。
  * @throws std::invalid_argument 输出指针、形状或阈值非法。
  */
 [[nodiscard]] DecodeResult DecodeYolo0526(const float* output, std::size_t rows,
                                           std::size_t columns, const LetterboxTransform& transform,
-                                          ArmorColor enemy_color, float confidence_threshold,
-                                          float nms_iou_threshold);
+                                          ArmorColor enemy_color,
+                                          const DecodeThresholds& thresholds);
 
 }  // namespace mv::modules::detail

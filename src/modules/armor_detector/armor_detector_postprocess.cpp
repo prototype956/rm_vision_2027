@@ -109,9 +109,11 @@ LetterboxTransform MakeLetterboxTransform(int source_width, int source_height) {
       std::min(static_cast<float>(K_MODEL_WIDTH) / static_cast<float>(source_width),
                static_cast<float>(K_MODEL_HEIGHT) / static_cast<float>(source_height));
   const int CONTENT_WIDTH =
-      std::clamp(static_cast<int>(std::lround(source_width * SCALE)), 1, K_MODEL_WIDTH);
+      std::clamp(static_cast<int>(std::lround(static_cast<float>(source_width) * SCALE)), 1,
+                 K_MODEL_WIDTH);
   const int CONTENT_HEIGHT =
-      std::clamp(static_cast<int>(std::lround(source_height * SCALE)), 1, K_MODEL_HEIGHT);
+      std::clamp(static_cast<int>(std::lround(static_cast<float>(source_height) * SCALE)), 1,
+                 K_MODEL_HEIGHT);
   return {.scale = SCALE,
           .content_width = CONTENT_WIDTH,
           .content_height = CONTENT_HEIGHT,
@@ -173,14 +175,14 @@ std::vector<std::size_t> ClassAgnosticNms(const std::vector<ArmorDetection>& can
 
 DecodeResult DecodeYolo0526(const float* output, std::size_t rows, std::size_t columns,
                             const LetterboxTransform& transform, ArmorColor enemy_color,
-                            float confidence_threshold, float nms_iou_threshold) {
+                            const DecodeThresholds& thresholds) {
   if (output == nullptr) {
     throw std::invalid_argument("YOLO output pointer must not be null");
   }
   if (rows != K_OUTPUT_ROWS || columns != K_OUTPUT_COLUMNS) {
     throw std::invalid_argument("YOLO output must have shape [25200,22]");
   }
-  if (!(confidence_threshold > 0.0F && confidence_threshold < 1.0F)) {
+  if (!(thresholds.confidence > 0.0F && thresholds.confidence < 1.0F)) {
     throw std::invalid_argument("confidence threshold must be in (0, 1)");
   }
 
@@ -196,7 +198,7 @@ DecodeResult DecodeYolo0526(const float* output, std::size_t rows, std::size_t c
 
     // 置信度只取第 8 通道的 sigmoid，不与颜色或类别分数相乘。
     const float OBJECTNESS = StableSigmoid(row[8]);
-    if (OBJECTNESS < confidence_threshold) {
+    if (OBJECTNESS < thresholds.confidence) {
       continue;
     }
     ++result.threshold_candidates;
@@ -257,7 +259,7 @@ DecodeResult DecodeYolo0526(const float* output, std::size_t rows, std::size_t c
   }
 
   // 最终结果按 objectness 降序输出，便于调用方直接选择第一候选。
-  const auto KEPT = ClassAgnosticNms(candidates, nms_iou_threshold);
+  const auto KEPT = ClassAgnosticNms(candidates, thresholds.nms_iou);
   result.detections.reserve(KEPT.size());
   for (const auto INDEX : KEPT) {
     result.detections.push_back(candidates[INDEX]);

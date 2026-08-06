@@ -12,12 +12,12 @@ void SubscriptionRegistry::Register(std::uint64_t channel_id) {
 void SubscriptionRegistry::Subscribe(std::uint64_t channel_id) noexcept {
   try {
     std::lock_guard lock(mutex_);
-    const auto iterator = subscriptions_.find(channel_id);
-    if (iterator == subscriptions_.end()) {
+    const auto ITERATOR = subscriptions_.find(channel_id);
+    if (ITERATOR == subscriptions_.end()) {
       return;
     }
-    ++iterator->second.subscribers;
-    iterator->second.ever_subscribed = true;
+    ++ITERATOR->second.subscribers;
+    ITERATOR->second.ever_subscribed = true;
   } catch (...) {
   }
 }
@@ -25,9 +25,9 @@ void SubscriptionRegistry::Subscribe(std::uint64_t channel_id) noexcept {
 void SubscriptionRegistry::Unsubscribe(std::uint64_t channel_id) noexcept {
   try {
     std::lock_guard lock(mutex_);
-    const auto iterator = subscriptions_.find(channel_id);
-    if (iterator != subscriptions_.end() && iterator->second.subscribers > 0) {
-      --iterator->second.subscribers;
+    const auto ITERATOR = subscriptions_.find(channel_id);
+    if (ITERATOR != subscriptions_.end() && ITERATOR->second.subscribers > 0) {
+      --ITERATOR->second.subscribers;
     }
   } catch (...) {
   }
@@ -36,9 +36,9 @@ void SubscriptionRegistry::Unsubscribe(std::uint64_t channel_id) noexcept {
 SubscriptionSnapshot SubscriptionRegistry::Snapshot(std::uint64_t channel_id) const noexcept {
   try {
     std::lock_guard lock(mutex_);
-    const auto iterator = subscriptions_.find(channel_id);
-    if (iterator != subscriptions_.end()) {
-      return iterator->second;
+    const auto ITERATOR = subscriptions_.find(channel_id);
+    if (ITERATOR != subscriptions_.end()) {
+      return ITERATOR->second;
     }
   } catch (...) {
   }

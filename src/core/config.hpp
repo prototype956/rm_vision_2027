@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
+#include <utility>
 
 #include <filesystem>
 #include <yaml-cpp/yaml.h>
@@ -18,20 +19,20 @@ class ConfigLoader {
  public:
 
   static YAML::Node LoadFile(const std::filesystem::path& input_path) {
-    const auto path = NormalizeExistingFile(input_path);
+    const auto PATH = NormalizeExistingFile(input_path);
 
     YAML::Node root;
     try {
-      root = YAML::LoadFile(path.string());
+      root = YAML::LoadFile(PATH.string());
     } catch (const std::exception& error) {
-      throw ConfigError("cannot load config '" + path.string() + "': " + error.what());
+      throw ConfigError("cannot load config '" + PATH.string() + "': " + error.what());
     }
 
-    RequireMap(root, "config '" + path.string() + "'");
-    const int version = Require<int>(root, "schema_version", "config '" + path.string() + "'");
-    if (version != 1) {
-      throw ConfigError("unsupported schema_version in '" + path.string() +
-                        "': " + std::to_string(version));
+    RequireMap(root, "config '" + PATH.string() + "'");
+    const int VERSION = Require<int>(root, "schema_version", "config '" + PATH.string() + "'");
+    if (VERSION != 1) {
+      throw ConfigError("unsupported schema_version in '" + PATH.string() +
+                        "': " + std::to_string(VERSION));
     }
     return root;
   }
@@ -59,22 +60,26 @@ class ConfigLoader {
                                 const std::string& context) {
     RequireMap(node, context);
     for (const auto& item : node) {
-      const auto key = item.first.as<std::string>();
-      if (!allowed.contains(key)) {
-        throw ConfigError(context + " contains unknown key '" + key + "'");
+      const auto KEY = item.first.as<std::string>();
+      if (!allowed.contains(KEY)) {
+        std::string message = context;
+        message += " contains unknown key '";
+        message += KEY;
+        message += "'";
+        throw ConfigError(message);
       }
     }
   }
 
   static std::filesystem::path ResolvePath(const std::filesystem::path& base,
                                            const std::filesystem::path& path) {
-    const auto combined = path.is_absolute() ? path : base / path;
-    return std::filesystem::absolute(combined).lexically_normal();
+    const auto COMBINED = path.is_absolute() ? path : base / path;
+    return std::filesystem::absolute(COMBINED).lexically_normal();
   }
 
  private:
   static std::filesystem::path NormalizeExistingFile(const std::filesystem::path& input_path) {
-    const auto path = std::filesystem::absolute(input_path).lexically_normal();
+    auto path = std::filesystem::absolute(input_path).lexically_normal();
     if (!std::filesystem::is_regular_file(path)) {
       throw ConfigError("config file does not exist: " + path.string());
     }

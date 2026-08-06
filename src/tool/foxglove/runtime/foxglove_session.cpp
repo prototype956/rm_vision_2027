@@ -18,9 +18,9 @@ namespace mv::tool::foxglove::runtime {
 namespace {
 
 std::string RecordingFileName() {
-  const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+  const std::time_t NOW = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
   std::tm local{};
-  localtime_r(&now, &local);
+  localtime_r(&NOW, &local);
   std::ostringstream stream;
   stream << "miraclevision_" << std::put_time(&local, "%Y%m%d_%H%M%S") << '_' << getpid()
          << ".mcap";
@@ -53,10 +53,10 @@ struct FoxgloveSession::Impl {
 
   void ReportError(std::string_view operation, ::foxglove::FoxgloveError error,
                    std::atomic<std::uint64_t>& counter) noexcept {
-    const auto count = counter.fetch_add(1, std::memory_order_relaxed) + 1;
+    const auto COUNT = counter.fetch_add(1, std::memory_order_relaxed) + 1;
     // 持续故障时限制日志频率，避免调试链路反向拖慢视觉主循环。
-    if (count == 1 || count % 100 == 0) {
-      MV_LOG_ERROR("Foxglove", "{} error #{}: {}", operation, count, ::foxglove::strerror(error));
+    if (COUNT == 1 || COUNT % 100 == 0) {
+      MV_LOG_ERROR("Foxglove", "{} error #{}: {}", operation, COUNT, ::foxglove::strerror(error));
     }
   }
 
@@ -96,10 +96,10 @@ struct FoxgloveSession::Impl {
 
   void StartRecording() {
     std::filesystem::create_directories(config.recording.output_dir);
-    const auto path = recording_path.string();
+    const auto PATH = recording_path.string();
     ::foxglove::McapWriterOptions options;
     options.context = recording_context;
-    options.path = path;
+    options.path = PATH;
     options.profile = "foxglove";
     options.compression = ::foxglove::McapCompression::Zstd;
     options.truncate = false;
@@ -220,20 +220,20 @@ void FoxgloveSession::Stop() noexcept {
   }
   if (impl_->writer) {
     // close() 会写入 MCAP footer，测试程序依赖该结果判断录制是否完整。
-    const auto error = impl_->writer->close();
-    impl_->recording_closed_cleanly.store(error == ::foxglove::FoxgloveError::Ok,
+    const auto ERROR = impl_->writer->close();
+    impl_->recording_closed_cleanly.store(ERROR == ::foxglove::FoxgloveError::Ok,
                                           std::memory_order_relaxed);
-    if (error != ::foxglove::FoxgloveError::Ok) {
-      ReportRecordingError("close MCAP", error);
+    if (ERROR != ::foxglove::FoxgloveError::Ok) {
+      ReportRecordingError("close MCAP", ERROR);
     }
     impl_->writer.reset();
   }
   impl_->recording_active.store(false, std::memory_order_release);
 
   if (impl_->server) {
-    const auto error = impl_->server->stop();
-    if (error != ::foxglove::FoxgloveError::Ok) {
-      ReportLiveError("stop live server", error);
+    const auto ERROR = impl_->server->stop();
+    if (ERROR != ::foxglove::FoxgloveError::Ok) {
+      ReportLiveError("stop live server", ERROR);
     }
     impl_->server.reset();
   }

@@ -18,7 +18,7 @@ class MindVisionCamera : public ICamera {
 
   MindVisionCamera(const MindVisionCamera&) = delete;
   MindVisionCamera& operator=(const MindVisionCamera&) = delete;
-  MindVisionCamera(MindVisionCamera&& other);
+  MindVisionCamera(MindVisionCamera&& other) noexcept ;
   MindVisionCamera& operator=(MindVisionCamera&& other) noexcept;
 
   bool Open(const YAML::Node& config) override;

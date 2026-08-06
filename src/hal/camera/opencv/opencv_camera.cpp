@@ -31,7 +31,7 @@ OpenCvCamera::~OpenCvCamera() {
   Close();
 }
 
-OpenCvCamera::OpenCvCamera(OpenCvCamera&& other) : impl_(std::make_unique<Impl>()) {
+OpenCvCamera::OpenCvCamera(OpenCvCamera&& other)  noexcept : impl_(std::make_unique<Impl>()) {
   impl_.swap(other.impl_);
 }
 

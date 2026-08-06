@@ -204,10 +204,12 @@ std::vector<ArmorDetection> YoloArmorDetector::Detect(const cv::Mat& bgr_image) 
         OUTPUT.get_shape() != ov::Shape{1, detail::K_OUTPUT_ROWS, detail::K_OUTPUT_COLUMNS}) {
       throw ArmorDetectorRuntimeError("OpenVINO returned an unexpected 0526 output tensor");
     }
-    auto decoded =
-        detail::DecodeYolo0526(OUTPUT.data<const float>(), detail::K_OUTPUT_ROWS,
-                               detail::K_OUTPUT_COLUMNS, TRANSFORM, impl_->config.enemy_color,
-                               impl_->config.confidence_threshold, impl_->config.nms_iou_threshold);
+    const detail::DecodeThresholds THRESHOLDS{
+        .confidence = impl_->config.confidence_threshold,
+        .nms_iou = impl_->config.nms_iou_threshold};
+    auto decoded = detail::DecodeYolo0526(
+        OUTPUT.data<const float>(), detail::K_OUTPUT_ROWS, detail::K_OUTPUT_COLUMNS, TRANSFORM,
+        impl_->config.enemy_color, THRESHOLDS);
     const auto POSTPROCESS_END = Clock::now();
 
     // 统计值只在整次检测成功后更新，异常不会留下部分阶段的新旧混合数据。

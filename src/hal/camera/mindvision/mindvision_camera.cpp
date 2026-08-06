@@ -17,7 +17,7 @@ MindVisionCamera::MindVisionCamera() : impl_(std::make_unique<Impl>()) {}
 
 MindVisionCamera::~MindVisionCamera() = default;
 
-MindVisionCamera::MindVisionCamera(MindVisionCamera&& other) : impl_(std::make_unique<Impl>()) {
+MindVisionCamera::MindVisionCamera(MindVisionCamera&& other) noexcept : impl_(std::make_unique<Impl>()) {
   impl_.swap(other.impl_);
 }
 

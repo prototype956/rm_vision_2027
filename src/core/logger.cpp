@@ -33,19 +33,19 @@ spdlog::level::level_enum ParseLogLevel(const std::string& value) {
 }  // namespace
 
 void Logger::InitFromFile(const std::filesystem::path& config_path) {
-  const auto root = ConfigLoader::LoadFile(config_path);
-  ConfigLoader::RejectUnknownKeys(root, {"schema_version", "log_dir", "level", "console"},
+  const auto ROOT = ConfigLoader::LoadFile(config_path);
+  ConfigLoader::RejectUnknownKeys(ROOT, {"schema_version", "log_dir", "level", "console"},
                                   "logger config");
 
-  const auto raw_log_dir = ConfigLoader::Require<std::string>(root, "log_dir", "logger config");
-  const auto level = ConfigLoader::Require<std::string>(root, "level", "logger config");
-  const bool console = ConfigLoader::Require<bool>(root, "console", "logger config");
-  if (raw_log_dir.empty()) {
+  const auto RAW_LOG_DIR = ConfigLoader::Require<std::string>(ROOT, "log_dir", "logger config");
+  const auto LEVEL = ConfigLoader::Require<std::string>(ROOT, "level", "logger config");
+  const bool CONSOLE = ConfigLoader::Require<bool>(ROOT, "console", "logger config");
+  if (RAW_LOG_DIR.empty()) {
     throw ConfigError("logger.log_dir must not be empty");
   }
 
-  const auto log_dir = ConfigLoader::ResolvePath(config_path.parent_path(), raw_log_dir);
-  Init(log_dir, ParseLogLevel(level), console);
+  const auto LOG_DIR = ConfigLoader::ResolvePath(config_path.parent_path(), RAW_LOG_DIR);
+  Init(LOG_DIR, ParseLogLevel(LEVEL), CONSOLE);
   Info("Config", "logger config: {}",
        std::filesystem::absolute(config_path).lexically_normal().string());
 }
@@ -58,11 +58,11 @@ void Logger::Init(const std::filesystem::path& log_dir, spdlog::level::level_enu
   }
 
   std::filesystem::create_directories(log_dir);
-  const auto file_path =
+  const auto FILE_PATH =
       log_dir / fmt::format("{:%Y-%m-%d_%H-%M-%S}.log", std::chrono::system_clock::now());
 
   std::vector<spdlog::sink_ptr> sinks;
-  auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(file_path.string(), true);
+  auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(FILE_PATH.string(), true);
   file_sink->set_level(spdlog::level::trace);
   sinks.emplace_back(std::move(file_sink));
 

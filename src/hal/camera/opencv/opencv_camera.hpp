@@ -19,7 +19,7 @@ class OpenCvCamera : public ICamera {
 
   OpenCvCamera(const OpenCvCamera&) = delete;
   OpenCvCamera& operator=(const OpenCvCamera&) = delete;
-  OpenCvCamera(OpenCvCamera&& other);
+  OpenCvCamera(OpenCvCamera&& other) noexcept ;
   OpenCvCamera& operator=(OpenCvCamera&& other) noexcept;
 
   bool Open(const YAML::Node& config) override;
