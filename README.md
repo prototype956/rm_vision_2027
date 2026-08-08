@@ -10,6 +10,7 @@ MindVision 实机验收程序，以及基于 OpenVINO 的深圳大学 RobotDetec
 
 - `mv-vision-main`：使用 MindVision 相机同步执行 YOLO 0526 检测并显示叠加结果。
 - `mv-camera-test`：MindVision 长时间稳定性、重复启停和拔线验收程序。
+- `mv-camera-calibration`：MindVision 棋盘格采样、内参求解和质量验收工具。
 - `mv-armor-detector-test`：MindVision、GPU 检测器与可选 Foxglove 输出的长时实机
   验收程序。
 - `mv-armor-detector-video-test`：离线视频检测、可视化、逐帧耗时和性能验收程序。
@@ -72,6 +73,7 @@ cmake --build build-camera --parallel 4
 ```bash
 ./build-openvino/bin/mv-vision-main
 ./build-openvino/bin/mv-camera-test
+./scripts/calibrate_camera.sh build-openvino
 ./build-openvino/bin/mv-armor-detector-test
 ./build-openvino/bin/mv-armor-detector-video-test
 ```
@@ -85,6 +87,8 @@ cmake --build build-camera --parallel 4
 [`docs/test/ARMOR_DETECTOR_TEST.md`](docs/test/ARMOR_DETECTOR_TEST.md)。
 Foxglove 连接、话题与 MCAP 使用方法见
 [`docs/tool/FOXGLOVE.md`](docs/tool/FOXGLOVE.md)。
+相机内参标定流程见
+[`docs/tool/CAMERA_CALIBRATION.md`](docs/tool/CAMERA_CALIBRATION.md)。
 检测模块的接口、模型协议、二维坐标系和后处理契约见
 [`docs/modules/ARMOR_DETECTOR.md`](docs/modules/ARMOR_DETECTOR.md)。
 
@@ -101,6 +105,7 @@ src/config/
 ├── modules/
 │   └── armor_detector.yaml
 ├── tool/
+│   ├── camera_calibration.yaml
 │   ├── debug_window.yaml
 │   └── foxglove.yaml
 └── test/
@@ -131,6 +136,7 @@ src/config/
 │   ├── modules/
 │   │   └── armor_detector/# OpenVINO YOLO 0526 检测模块
 │   └── tool/
+│       ├── calibration/   # MindVision 棋盘格内参标定
 │       ├── debug/         # OpenCV 调试窗口与装甲可视化
 │       └── foxglove/      # WebSocket、MCAP 与异步装甲调试发布
 ├── test/

@@ -30,6 +30,7 @@ message(STATUS "  ✓ yaml-cpp found")
 # OpenCV - 当前应用、HAL 与测试所需组件
 find_package(OpenCV REQUIRED COMPONENTS
     core
+    calib3d
     imgproc
     imgcodecs
     highgui
@@ -49,7 +50,7 @@ endif()
 # 检查关键 OpenCV 模块
 # ----------------------------------------------------------------------------
 set(REQUIRED_OPENCV_COMPONENTS 
-    core imgproc imgcodecs highgui videoio
+    core calib3d imgproc imgcodecs highgui videoio
 )
 
 foreach(component ${REQUIRED_OPENCV_COMPONENTS})
