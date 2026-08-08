@@ -1,0 +1,12 @@
+schema_version: 1
+shared_memory:
+  meta_path: /tmp/talos_ipc_meta
+  image_pool_path: /tmp/talos_ipc_image_pool
+expected:
+  width: 1280
+  height: 720
+  pixel_format: bgr8
+timeouts:
+  connect_ms: 5000
+  grab_ms: 100
+  heartbeat_ms: 1000

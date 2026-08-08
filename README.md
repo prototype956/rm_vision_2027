@@ -8,7 +8,8 @@ MindVision 实机验收程序，以及基于 OpenVINO 的深圳大学 RobotDetec
 
 ## 当前可执行程序
 
-- `mv-vision-main`：使用 MindVision 相机同步执行 YOLO 0526 检测并显示叠加结果。
+- `mv-vision-main`：根据配置选择 MindVision 实机或 Talos 仿真相机，同步执行
+  YOLO 0526 检测并显示叠加结果。
 - `mv-camera-test`：MindVision 长时间稳定性、重复启停和拔线验收程序。
 - `mv-camera-calibration`：MindVision 棋盘格采样、内参求解和质量验收工具。
 - `mv-armor-detector-test`：MindVision、GPU 检测器与可选 Foxglove 输出的长时实机
@@ -70,8 +71,24 @@ cmake --build build-camera --parallel 4
 
 ## 运行
 
+`src/config/app/main.yaml` 默认选择 `talos`。一键启动 Daedalus 和视觉程序：
+
 ```bash
-./build-openvino/bin/mv-vision-main
+./scripts/run_simulation_vision.sh
+```
+
+脚本会将仿真绑定到 E 核 `8-15`、视觉绑定到 P 核 `0-7`，并在任一程序退出时停止
+另一个程序。也可以按下面的方式分别手动启动：
+
+```bash
+source /opt/intel/openvino_2024.0.0/setupvars.sh
+taskset -c 0-7 ./build-openvino/bin/mv-vision-main
+```
+
+切回实机时只需把 `app/main.yaml` 中的 `camera.backend` 改为 `mindvision`。其他工具
+仍可按原方式运行：
+
+```bash
 ./build-openvino/bin/mv-camera-test
 ./scripts/calibrate_camera.sh build-openvino
 ./build-openvino/bin/mv-armor-detector-test
@@ -98,10 +115,12 @@ Foxglove 连接、话题与 MCAP 使用方法见
 
 ```text
 src/config/
+├── app/main.yaml
 ├── core/logger.yaml
 ├── hal/camera/
 │   ├── mindvision.yaml
-│   └── opencv.yaml
+│   ├── opencv.yaml
+│   └── talos.yaml
 ├── modules/
 │   └── armor_detector.yaml
 ├── tool/
@@ -114,7 +133,9 @@ src/config/
     └── armor_detector_video_test.yaml
 ```
 
-主程序固定读取日志、装甲检测器、MindVision 相机与调试工具配置。相机测试额外读取
+主程序从 `app/main.yaml` 的 `camera.backend` 选择 `mindvision` 或 `talos`，并读取
+对应的相机配置；切换失败时不会自动回退。Talos 模式要求先启动 Daedalus 仿真器，
+默认读取 `/tmp/talos_ipc_meta` 和 `/tmp/talos_ipc_image_pool`。相机测试额外读取
 `test/camera_test.yaml`；装甲检测实机测试额外读取 `test/armor_detector_test.yaml` 和
 共享的 `tool/foxglove.yaml`；离线视频测试默认从
 `test/armor_detector_video_test.yaml` 读取本地视频目录、文件名和窗口预览开关。

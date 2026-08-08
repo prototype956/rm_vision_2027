@@ -1,0 +1,6 @@
+schema_version: 1
+camera:
+  backend: talos
+  configs:
+    mindvision: hal/camera/mindvision.yaml
+    talos: hal/camera/talos.yaml

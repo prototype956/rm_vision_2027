@@ -3,7 +3,7 @@
 namespace mv::app {
 
 /**
- * @brief 启动 YOLO 0526 检测器、MindVision 相机和可选调试输出。
+ * @brief 启动 YOLO 0526 检测器、配置选择的相机和可选调试输出。
  *
  * 函数负责初始化配置、打开相机、显示 HAL 返回的有效帧，并处理用户退出或
  * 不可恢复的相机错误。OpenCV 窗口与 Foxglove 独立开关；无窗口时

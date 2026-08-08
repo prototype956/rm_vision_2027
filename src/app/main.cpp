@@ -2,7 +2,7 @@
 
 #include "core/config.hpp"
 #include "core/logger.hpp"
-#include "hal/camera/mindvision/mindvision_camera.hpp"
+#include "hal/camera/camera_factory.hpp"
 #include "modules/armor_detector/armor_detector.hpp"
 #include "modules/armor_detector/armor_detector_config.hpp"
 #include "tool/debug/armor_detection_overlay.hpp"
@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <exception>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -39,6 +40,35 @@ bool LoadDebugWindowEnabled(const std::filesystem::path& config_path) {
     throw ConfigError("debug window config schema_version must be 1");
   }
   return ConfigLoader::Require<bool>(ROOT, "enabled", CONTEXT);
+}
+
+struct CameraSelection {
+  std::string backend;                ///< 传给相机工厂的后端名称。
+  std::filesystem::path config_path;  ///< 相对于配置根目录解析后的后端配置路径。
+};
+
+/** 读取主程序的相机选择，并在创建后端前完成名称和配置键校验。 */
+CameraSelection LoadCameraSelection(const std::filesystem::path& config_root) {
+  constexpr char CONTEXT[] = "main app config";
+  const auto ROOT = ConfigLoader::LoadFile(config_root / "app/main.yaml");
+  ConfigLoader::RejectUnknownKeys(ROOT, {"schema_version", "camera"}, CONTEXT);
+
+  const auto CAMERA = ROOT["camera"];
+  ConfigLoader::RequireMap(CAMERA, "main app config.camera");
+  ConfigLoader::RejectUnknownKeys(CAMERA, {"backend", "configs"}, "main app config.camera");
+  const auto BACKEND =
+      ConfigLoader::Require<std::string>(CAMERA, "backend", "main app config.camera");
+
+  const auto CONFIGS = CAMERA["configs"];
+  ConfigLoader::RequireMap(CONFIGS, "main app config.camera.configs");
+  ConfigLoader::RejectUnknownKeys(CONFIGS, {"mindvision", "talos"},
+                                  "main app config.camera.configs");
+  if (BACKEND != "mindvision" && BACKEND != "talos") {
+    throw ConfigError("main app config.camera.backend must be mindvision or talos");
+  }
+  const auto CONFIG_FILE =
+      ConfigLoader::Require<std::string>(CONFIGS, BACKEND, "main app config.camera.configs");
+  return CameraSelection{BACKEND, ConfigLoader::ResolvePath(config_root, CONFIG_FILE)};
 }
 
 void DrawDetections(cv::Mat& image, const std::vector<modules::ArmorDetection>& detections,
@@ -71,10 +101,13 @@ int Run() {
       return 2;
     }
 
-    const auto CAMERA_CONFIG = ConfigLoader::LoadFile(CONFIG_ROOT / "hal/camera/mindvision.yaml");
-    hal::MindVisionCamera camera;
-    if (!camera.Open(CAMERA_CONFIG)) {
-      MV_LOG_ERROR("App", "camera open failed");
+    const auto CAMERA_SELECTION = LoadCameraSelection(CONFIG_ROOT);
+    const auto CAMERA_CONFIG = ConfigLoader::LoadFile(CAMERA_SELECTION.config_path);
+    auto camera = hal::CreateCamera(CAMERA_SELECTION.backend);
+    MV_LOG_INFO("Config", "camera backend={} config={}", CAMERA_SELECTION.backend,
+                CAMERA_SELECTION.config_path.string());
+    if (!camera->Open(CAMERA_CONFIG)) {
+      MV_LOG_ERROR("App", "{} camera open failed", CAMERA_SELECTION.backend);
       return 3;
     }
 
@@ -103,7 +136,7 @@ int Run() {
 
     while (g_stop_requested == 0) {
       hal::CameraFrame frame;
-      const auto STATUS = camera.Grab(frame);
+      const auto STATUS = camera->Grab(frame);
 
       if (STATUS == hal::GrabStatus::OK) {
         try {
