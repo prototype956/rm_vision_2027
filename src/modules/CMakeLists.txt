@@ -1,1 +1,2 @@
 add_subdirectory(armor_detector)
+add_subdirectory(armor_pnp)

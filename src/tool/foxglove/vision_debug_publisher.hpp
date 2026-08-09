@@ -2,6 +2,7 @@
 
 #include "hal/camera/i_camera.hpp"
 #include "modules/armor_detector/armor_detector.hpp"
+#include "modules/armor_pnp/armor_pnp.hpp"
 #include "tool/foxglove/foxglove_config.hpp"
 
 #include <cstdint>
@@ -78,7 +79,8 @@ class VisionDebugPublisher final {
    * @param detector_stats 与该图像对应的检测性能统计。
    */
   void Publish(const hal::CameraFrame& frame, std::span<const modules::ArmorDetection> detections,
-               const modules::DetectorStats& detector_stats) noexcept;
+               const modules::DetectorStats& detector_stats,
+               const modules::ArmorPnpFrameResult& pnp_result) noexcept;
   /** @brief 获取自启动以来的线程安全累计统计。 */
   [[nodiscard]] VisionPublisherStats SnapshotStats() const noexcept;
   /** @brief 查询至少一个 sink 可用且流水线仍接受帧。 */

@@ -2,6 +2,7 @@
 
 #include "hal/camera/i_camera.hpp"
 #include "modules/armor_detector/armor_detector.hpp"
+#include "modules/armor_pnp/armor_pnp.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -28,6 +29,7 @@ struct VisionDebugFrame {
   std::uint64_t source_invalid_frames{0};  ///< 数据源自 Open() 以来累计拒绝的无效帧数。
   std::vector<modules::ArmorDetection> detections;  ///< 当前帧检测结果副本。
   modules::DetectorStats detector_stats;            ///< 当前帧检测性能指标副本。
+  modules::ArmorPnpFrameResult pnp_result;          ///< 当前帧 PnP 基准与检测结果。
 };
 
 }  // namespace mv::tool::foxglove::pipeline

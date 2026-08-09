@@ -1,5 +1,7 @@
 #pragma once
 
+#include "geometry/rigid_transform.hpp"
+
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -9,8 +11,6 @@
 #include <opencv2/core.hpp>
 #include <optional>
 #include <yaml-cpp/yaml.h>
-
-#include "geometry/rigid_transform.hpp"
 
 namespace mv::hal {
 
@@ -76,14 +76,22 @@ struct CameraFrame {
     std::uint8_t armor_label{0};  ///< Talos 协议中的装甲类别编码。
     bool is_outpost{false};       ///< 是否为前哨站等特殊旋转目标。
     geometry::Vector3 position_world{geometry::Vector3::Zero()};  ///< 机器人中心世界位置。
-    double yaw{0.0};              ///< 绕 world +Z 轴的航向角，单位为弧度。
-    double yaw_velocity{0.0};     ///< 航向角速度，单位为弧度每秒。
+    double yaw{0.0};           ///< 绕 world +Z 轴的航向角，单位为弧度。
+    double yaw_velocity{0.0};  ///< 航向角速度，单位为弧度每秒。
   };
 
-  /** @brief 用于验证三维到二维投影链路的装甲中心真值探针。 */
-  struct ProjectionProbe {
-    std::uint64_t id{0};     ///< 本次仿真运行内区分探针的稳定标识。
-    geometry::Vector3 position_world{geometry::Vector3::Zero()};  ///< 探针的世界位置。
+  enum class ArmorType : std::uint8_t { SMALL = 0, LARGE = 1 };
+
+  /** @brief 与图像同帧的单块装甲板灯条端点平面真值。 */
+  struct GroundTruthArmor {
+    std::uint64_t id{0};
+    std::uint8_t team{0};
+    std::uint8_t label{0};
+    ArmorType type{ArmorType::SMALL};
+    double width_m{0.0};
+    double height_m{0.0};
+    geometry::RigidTransform world_t_armor;
+    std::array<geometry::Vector3, 4> corners_world{};  ///< TL/TR/BR/BL。
   };
 
   /**
@@ -92,12 +100,12 @@ struct CameraFrame {
    * 仅能和所属 CameraFrame 的 image、capture_timestamp_ns 配套使用，不能跨帧组合。
    */
   struct FrameGeometry {
-    Calibration calibration;                         ///< camera_optical 对应的内参与畸变。
-    geometry::RigidTransform world_t_gimbal;           ///< gimbal 到 world 的变换。
+    Calibration calibration;                  ///< camera_optical 对应的内参与畸变。
+    geometry::RigidTransform world_t_gimbal;  ///< gimbal 到 world 的变换。
     geometry::RigidTransform gimbal_t_camera_optical;  ///< camera_optical 到 gimbal 的变换。
     geometry::RigidTransform gimbal_t_muzzle;          ///< muzzle 到 gimbal 的变换。
-    std::vector<GroundTruthTarget> targets;          ///< 当前快照中的机器人真值。
-    std::vector<ProjectionProbe> projection_probes;  ///< 当前快照中的装甲中心探针。
+    std::vector<GroundTruthTarget> targets;            ///< 当前快照中的机器人真值。
+    std::vector<GroundTruthArmor> armors;              ///< 当前快照中的单块装甲真值。
   };
 
   cv::Mat image;                                                ///< OpenCV 图像矩阵。

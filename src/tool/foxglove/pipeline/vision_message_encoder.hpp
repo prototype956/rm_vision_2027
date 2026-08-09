@@ -23,6 +23,9 @@ struct TopicDemand {
   bool frustum{false};                 ///< 是否需要三维视锥。
   bool ground_truth{false};            ///< 是否需要仿真三维真值。
   bool projection_annotations{false};  ///< 是否需要真值二维重投影点。
+  bool pnp_estimates{false};           ///< 是否需要 PnP 三维估计。
+  bool pnp_annotations{false};         ///< 是否需要 PnP 二维重投影。
+  bool pnp_stats{false};               ///< 是否需要 PnP 指标。
 
   /** @brief 查询是否至少需求一个话题。 */
   [[nodiscard]] bool Any() const noexcept;
@@ -53,6 +56,9 @@ struct PreparedFrame {
   std::optional<::foxglove::schemas::SceneUpdate> frustum;            ///< 三维视锥图元。
   std::optional<::foxglove::schemas::SceneUpdate> ground_truth;       ///< 三维仿真真值。
   std::optional<::foxglove::schemas::ImageAnnotations> projection_annotations;  ///< 真值投影点。
+  std::optional<::foxglove::schemas::SceneUpdate> pnp_estimates;
+  std::optional<::foxglove::schemas::ImageAnnotations> pnp_annotations;
+  std::optional<std::string> pnp_stats_json;
   std::optional<double> jpeg_ms;   ///< JPEG 编码耗时，未编码图像时为空。
   double publish_latency_ms{0.0};  ///< HAL 收帧到消息构造完成的延迟，单位为毫秒。
 };

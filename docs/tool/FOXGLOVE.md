@@ -23,14 +23,23 @@ PASS/FAIL 判定。
 - `/vision/transforms`：`world -> gimbal -> camera_optical` 两级 TF。
 - `/vision/camera/calibration`：与当前图像同帧的针孔内参和畸变参数。
 - `/vision/camera/frustum`：位于 `camera_optical` 下、深度 1 米的相机视锥。
-- `/simulation/ground_truth`：机器人中心、朝向和装甲中心投影探针的三维真值。
-- `/simulation/ground_truth/annotations`：装甲中心真值在相机图像上的重投影点。
+- `/simulation/ground_truth`：机器人中心、朝向及装甲姿态、四角和局部坐标轴真值。
+- `/simulation/ground_truth/annotations`：装甲灯条端点真值在图像上的四边形。
+- `/vision/pnp/estimate`：真值角点与检测角点两条 PnP 链的相机系/世界系三维估计。
+- `/vision/pnp/annotations`：仅检测角点 PnP 的绿色重投影四边形；真值输入使用黄色真值话题。
+- `/vision/pnp/stats`：逐次求解状态、候选、重投影和真值误差 JSON。
 
 将 Foxglove 连接到 `ws://<NUC-IP>:8765`，在 Image 面板选择图像话题，再将
 annotations 话题加入 Image annotations。Plot 面板可直接选择 stats 中的数值字段。
 Talos 仿真验收时在 3D 面板将固定坐标系设为 `world`，同时启用 transforms、frustum 和
 ground truth；在 Image 面板额外启用 ground truth annotations。
 `0.0.0.0` 不包含认证和 TLS，只应用于可信机器人局域网。
+
+Plot 的 Y 值必须指向数值叶子，不能直接选择整个 stats 对象。例如检测耗时使用
+`/vision/armor/stats.total_ms`，PnP 成功数使用 `/vision/pnp/stats.successful`，累计检测链
+位置误差使用 `/vision/pnp/stats.summary.detection.position_error_m.p50`。逐次 PnP 指标位于
+数组中，可用 `/vision/pnp/stats.attempts[0].reprojection_rmse_px` 选择指定元素；求解失败时
+该类可空指标为 `null`，Plot 会留下空点。
 
 内部实现按 `image`、`armor_detector`、`spatial` 和 `simulation` 分离消息
 编码，由 `pipeline` 统一管理限流、后台线程和频道。各领域仍属于同一调试帧，

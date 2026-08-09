@@ -2,7 +2,9 @@
 
 #include "geometry/rigid_transform.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <string>
 #include <utility>
 
@@ -12,6 +14,10 @@ namespace mv::tool::foxglove::simulation {
 namespace {
 
 ::foxglove::schemas::Vector3 ToVector(const geometry::Vector3& value) {
+  return {.x = value.x(), .y = value.y(), .z = value.z()};
+}
+
+::foxglove::schemas::Point3 ToPoint(const geometry::Vector3& value) {
   return {.x = value.x(), .y = value.y(), .z = value.z()};
 }
 
@@ -57,19 +63,38 @@ namespace {
     update.entities.push_back(std::move(entity));
   }
 
-  for (const auto& probe : geometry.projection_probes) {
+  for (const auto& armor : geometry.armors) {
     ::foxglove::schemas::SceneEntity entity;
     entity.timestamp = timestamp;
     entity.frame_id = "world";
-    entity.id = fmt::format("projection_probe_{}", probe.id);
+    entity.id = fmt::format("truth_armor_{}", armor.id);
     entity.lifetime = LIFETIME;
-    ::foxglove::schemas::SpherePrimitive marker;
-    marker.pose =
-        ::foxglove::schemas::Pose{.position = ToVector(probe.position_world),
-                                  .orientation = ::foxglove::schemas::Quaternion{.w = 1.0}};
-    marker.size = ::foxglove::schemas::Vector3{.x = 0.04, .y = 0.04, .z = 0.04};
-    marker.color = ::foxglove::schemas::Color{.r = 1.0, .g = 0.9, .b = 0.0, .a = 1.0};
-    entity.spheres.push_back(std::move(marker));
+    entity.metadata = {
+        {.key = "team", .value = std::to_string(armor.team)},
+        {.key = "label", .value = std::to_string(armor.label)},
+        {.key = "type",
+         .value = armor.type == hal::CameraFrame::ArmorType::LARGE ? "large" : "small"}};
+    ::foxglove::schemas::LinePrimitive outline;
+    outline.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LOOP;
+    outline.thickness = 0.012;
+    outline.color = ::foxglove::schemas::Color{.r = 1.0, .g = 0.85, .b = 0.0, .a = 1.0};
+    for (const auto& corner : armor.corners_world)
+      outline.points.push_back(ToPoint(corner));
+    entity.lines.push_back(std::move(outline));
+
+    ::foxglove::schemas::LinePrimitive axes;
+    axes.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LIST;
+    axes.thickness = 0.008;
+    const auto origin = armor.world_t_armor.translation;
+    axes.points = {ToPoint(origin),
+                   ToPoint(origin + geometry::TransformVector(armor.world_t_armor, {0.08, 0, 0})),
+                   ToPoint(origin),
+                   ToPoint(origin + geometry::TransformVector(armor.world_t_armor, {0, 0.08, 0})),
+                   ToPoint(origin),
+                   ToPoint(origin + geometry::TransformVector(armor.world_t_armor, {0, 0, 0.08}))};
+    axes.colors = {{.r = 1.0, .a = 1.0}, {.r = 1.0, .a = 1.0}, {.g = 1.0, .a = 1.0},
+                   {.g = 1.0, .a = 1.0}, {.b = 1.0, .a = 1.0}, {.b = 1.0, .a = 1.0}};
+    entity.lines.push_back(std::move(axes));
     update.entities.push_back(std::move(entity));
   }
   return update;
@@ -79,29 +104,47 @@ namespace {
     const hal::CameraFrame::FrameGeometry& geometry,
     const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::ImageAnnotations annotations;
-  ::foxglove::schemas::PointsAnnotation points;
-  points.timestamp = timestamp;
-  points.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::POINTS;
-  points.outline_color = ::foxglove::schemas::Color{.r = 1.0, .g = 0.9, .b = 0.0, .a = 1.0};
-  points.thickness = 7.0;
-
   const auto WORLD_T_CAMERA =
       mv::geometry::Compose(geometry.world_t_gimbal, geometry.gimbal_t_camera_optical);
   // 投影需要 camera_t_world，因此对同帧 world_t_camera 求逆后变换每个探针。
   const auto CAMERA_T_WORLD = mv::geometry::Inverse(WORLD_T_CAMERA);
   const auto& calibration = geometry.calibration;
-  for (const auto& probe : geometry.projection_probes) {
-    const auto CAMERA_POINT = mv::geometry::TransformPoint(CAMERA_T_WORLD, probe.position_world);
-    if (CAMERA_POINT.z() <= 0.0) {
+  for (const auto& armor : geometry.armors) {
+    const auto camera_t_armor = mv::geometry::Compose(CAMERA_T_WORLD, armor.world_t_armor);
+    const auto normal_camera =
+        mv::geometry::TransformVector(camera_t_armor, geometry::Vector3::UnitZ());
+    if (normal_camera.dot(camera_t_armor.translation) >= 0.0) {
       continue;
     }
-    const double U = calibration.fx * CAMERA_POINT.x() / CAMERA_POINT.z() + calibration.cx;
-    const double V = calibration.fy * CAMERA_POINT.y() / CAMERA_POINT.z() + calibration.cy;
-    if (U >= 0.0 && V >= 0.0 && U < calibration.width && V < calibration.height) {
-      points.points.push_back({.x = U, .y = V});
+    ::foxglove::schemas::PointsAnnotation polygon;
+    polygon.timestamp = timestamp;
+    polygon.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
+    polygon.outline_color = ::foxglove::schemas::Color{.r = 1.0, .g = 0.85, .b = 0.0, .a = 1.0};
+    polygon.thickness = 3.0;
+    bool visible = true;
+    double min_u = std::numeric_limits<double>::infinity();
+    double min_v = std::numeric_limits<double>::infinity();
+    double max_u = -std::numeric_limits<double>::infinity();
+    double max_v = -std::numeric_limits<double>::infinity();
+    for (const auto& corner : armor.corners_world) {
+      const auto camera_point = mv::geometry::TransformPoint(CAMERA_T_WORLD, corner);
+      if (camera_point.z() <= 0.0) {
+        visible = false;
+        break;
+      }
+      const double u = calibration.fx * camera_point.x() / camera_point.z() + calibration.cx;
+      const double v = calibration.fy * camera_point.y() / camera_point.z() + calibration.cy;
+      min_u = std::min(min_u, u);
+      min_v = std::min(min_v, v);
+      max_u = std::max(max_u, u);
+      max_v = std::max(max_v, v);
+      polygon.points.push_back({.x = u, .y = v});
     }
+    const bool intersects_image =
+        max_u >= 0.0 && max_v >= 0.0 && min_u < calibration.width && min_v < calibration.height;
+    if (visible && intersects_image)
+      annotations.points.push_back(std::move(polygon));
   }
-  annotations.points.push_back(std::move(points));
   return annotations;
 }
 

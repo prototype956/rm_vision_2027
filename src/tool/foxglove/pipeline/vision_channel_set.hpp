@@ -25,6 +25,9 @@ enum class VisionTopic {
   FRUSTUM,                 ///< camera_optical 下的三维视锥。
   GROUND_TRUTH,            ///< world 下的仿真三维真值。
   PROJECTION_ANNOTATIONS,  ///< 真值探针在相机图像上的重投影点。
+  PNP_ESTIMATES,
+  PNP_ANNOTATIONS,
+  PNP_STATS,
 };
 
 /** @brief 单个 Foxglove Context 中全部视觉频道的 SDK 标识。 */
@@ -38,6 +41,9 @@ struct ChannelIds {
   std::uint64_t frustum{0};                 ///< 三维视锥频道 ID。
   std::uint64_t ground_truth{0};            ///< 三维真值频道 ID。
   std::uint64_t projection_annotations{0};  ///< 真值重投影标注频道 ID。
+  std::uint64_t pnp_estimates{0};
+  std::uint64_t pnp_annotations{0};
+  std::uint64_t pnp_stats{0};
 };
 
 /** @brief 单个话题的一次 Foxglove SDK 发布错误。 */
@@ -48,10 +54,10 @@ struct ChannelPublishError {
 
 /** @brief 一批按需频道发布的无动态分配结果。 */
 struct ChannelPublishResult {
-  bool attempted{false};                        ///< 是否至少调用了一个频道的 log()。
-  bool success{true};                           ///< 所有已尝试频道是否均成功。
-  std::array<ChannelPublishError, 9> errors{};  ///< 每个固定话题最多记录一个错误。
-  std::size_t error_count{0};                   ///< errors 中的有效元素数量。
+  bool attempted{false};                         ///< 是否至少调用了一个频道的 log()。
+  bool success{true};                            ///< 所有已尝试频道是否均成功。
+  std::array<ChannelPublishError, 12> errors{};  ///< 每个固定话题最多记录一个错误。
+  std::size_t error_count{0};                    ///< errors 中的有效元素数量。
 };
 
 /**
@@ -88,6 +94,9 @@ class VisionChannelSet final {
   std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> frustum_;
   std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> ground_truth_;
   std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> projection_annotations_;
+  std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> pnp_estimates_;
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> pnp_annotations_;
+  std::unique_ptr<::foxglove::RawChannel> pnp_stats_;
   bool closed_{false};  ///< 保证显式 Close() 与析构关闭幂等。
 };
 

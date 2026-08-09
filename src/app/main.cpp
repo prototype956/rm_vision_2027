@@ -5,11 +5,13 @@
 #include "hal/camera/camera_factory.hpp"
 #include "modules/armor_detector/armor_detector.hpp"
 #include "modules/armor_detector/armor_detector_config.hpp"
+#include "modules/armor_pnp/armor_pnp.hpp"
 #include "tool/debug/armor_detection_overlay.hpp"
 #include "tool/debug/debug_window.hpp"
 #include "tool/foxglove/foxglove_config.hpp"
 #include "tool/foxglove/vision_debug_publisher.hpp"
 
+#include <algorithm>
 #include <csignal>
 #include <cstdio>
 #include <exception>
@@ -81,6 +83,36 @@ void DrawDetections(cv::Mat& image, const std::vector<modules::ArmorDetection>& 
               cv::LINE_AA);
 }
 
+void LogPnpHealth(const modules::ArmorPnpFrameResult& result, std::uint64_t sequence,
+                  std::size_t total_truth_armors) {
+  if (sequence % 100 != 0)
+    return;
+  std::size_t truth_attempted = 0;
+  std::size_t truth_succeeded = 0;
+  double max_rmse = 0.0;
+  double max_position_error = 0.0;
+  double max_rotation_error = 0.0;
+  for (const auto& attempt : result.attempts) {
+    if (attempt.source != modules::PnpInputSource::GROUND_TRUTH)
+      continue;
+    ++truth_attempted;
+    if (!attempt.estimate)
+      continue;
+    ++truth_succeeded;
+    max_rmse = std::max(max_rmse, attempt.estimate->reprojection_rmse_px);
+    max_position_error =
+        std::max(max_position_error, attempt.estimate->position_error_m.value_or(0.0));
+    max_rotation_error =
+        std::max(max_rotation_error, attempt.estimate->rotation_error_deg.value_or(0.0));
+  }
+  MV_LOG_INFO(
+      "ArmorPnP",
+      "truth baseline seq={} visible_solved={}/{} total={} max_rmse={:.4f}px max_position={:.4f}m "
+      "max_rotation={:.3f}deg",
+      sequence, truth_succeeded, truth_attempted, total_truth_armors, max_rmse, max_position_error,
+      max_rotation_error);
+}
+
 }  // namespace
 
 int Run() {
@@ -100,6 +132,9 @@ int Run() {
       MV_LOG_ERROR("App", "armor detector initialization failed: {}", error.what());
       return 2;
     }
+
+    const auto PNP_YAML = ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_pnp.yaml");
+    modules::ArmorPnp pnp(modules::ParseArmorPnpConfig(PNP_YAML));
 
     const auto CAMERA_SELECTION = LoadCameraSelection(CONFIG_ROOT);
     const auto CAMERA_CONFIG = ConfigLoader::LoadFile(CAMERA_SELECTION.config_path);
@@ -142,8 +177,11 @@ int Run() {
         try {
           const auto DETECTIONS = detector.Detect(frame.image);
           const auto STATS = detector.LastStats();
+          const auto PNP_RESULT = pnp.ProcessFrame(frame, DETECTIONS);
+          LogPnpHealth(PNP_RESULT, frame.sequence,
+                       frame.geometry ? frame.geometry->armors.size() : 0);
           if (foxglove_publisher) {
-            foxglove_publisher->Publish(frame, DETECTIONS, STATS);
+            foxglove_publisher->Publish(frame, DETECTIONS, STATS, PNP_RESULT);
           }
           if (window) {
             cv::Mat debug_image = frame.image.clone();

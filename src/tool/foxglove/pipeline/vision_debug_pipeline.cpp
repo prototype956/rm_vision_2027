@@ -24,6 +24,9 @@ VisionDebugPipeline::VisionDebugPipeline(const Config& config, runtime::Foxglove
       session_.RegisterLiveChannel(live_channel_ids_.frustum);
       session_.RegisterLiveChannel(live_channel_ids_.ground_truth);
       session_.RegisterLiveChannel(live_channel_ids_.projection_annotations);
+      session_.RegisterLiveChannel(live_channel_ids_.pnp_estimates);
+      session_.RegisterLiveChannel(live_channel_ids_.pnp_annotations);
+      session_.RegisterLiveChannel(live_channel_ids_.pnp_stats);
     } catch (const std::exception& error) {
       live_channels_.reset();
       session_.FailLiveSetup(error.what());
@@ -74,12 +77,16 @@ TopicDemand VisionDebugPipeline::LiveDemand() const noexcept {
       .ground_truth = session_.Subscription(live_channel_ids_.ground_truth).subscribers > 0,
       .projection_annotations =
           session_.Subscription(live_channel_ids_.projection_annotations).subscribers > 0,
+      .pnp_estimates = session_.Subscription(live_channel_ids_.pnp_estimates).subscribers > 0,
+      .pnp_annotations = session_.Subscription(live_channel_ids_.pnp_annotations).subscribers > 0,
+      .pnp_stats = session_.Subscription(live_channel_ids_.pnp_stats).subscribers > 0,
   };
 }
 
 void VisionDebugPipeline::Publish(const hal::CameraFrame& frame,
                                   std::span<const modules::ArmorDetection> detections,
-                                  const modules::DetectorStats& detector_stats) noexcept {
+                                  const modules::DetectorStats& detector_stats,
+                                  const modules::ArmorPnpFrameResult& pnp_result) noexcept {
   metrics_.OnSubmitted();
   const auto LIVE_DEMAND = LiveDemand();
   // 无订阅且未录制时不复制图像和检测结果，调试功能保持近似零额外负载。
@@ -88,7 +95,7 @@ void VisionDebugPipeline::Publish(const hal::CameraFrame& frame,
     return;
   }
   try {
-    const auto RESULT = queue_.Push(frame, detections, detector_stats);
+    const auto RESULT = queue_.Push(frame, detections, detector_stats, pnp_result);
     if (RESULT.rate_limited) {
       metrics_.OnRateLimited();
     } else if (RESULT.enqueued) {
@@ -131,7 +138,10 @@ void VisionDebugPipeline::ProcessFrame(const VisionDebugFrame& frame) {
                                                             .calibration = true,
                                                             .frustum = true,
                                                             .ground_truth = true,
-                                                            .projection_annotations = true}
+                                                            .projection_annotations = true,
+                                                            .pnp_estimates = true,
+                                                            .pnp_annotations = true,
+                                                            .pnp_stats = true}
                                               : TopicDemand{};
   const auto COMBINED_DEMAND = Merge(LIVE_DEMAND, RECORDING_DEMAND);
   if (!COMBINED_DEMAND.Any()) {

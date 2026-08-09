@@ -22,14 +22,14 @@ namespace {
 // 以下常量和结构必须与 Daedalus 的 Talos 共享内存 ABI 保持一致。元数据区使用
 // 固定布局，图像像素则按三个连续缓冲区存放在独立文件中。
 constexpr uint32_t K_SHM_MAGIC = 0x54414C05;
-constexpr uint32_t K_SHM_VERSION = 4;
+constexpr uint32_t K_SHM_VERSION = 5;
 constexpr uint8_t K_FLAG_NEW = 0x80;
 constexpr uint8_t K_INDEX_MASK = 0x03;
 constexpr uint8_t K_FORMAT_RGB8 = 0;
 constexpr uint8_t K_FORMAT_BGR8 = 1;
 constexpr std::size_t K_BUFFER_COUNT = 3;
 constexpr std::size_t K_GROUND_TRUTH_MAX_TARGETS = 16;
-constexpr std::size_t K_PROJECTION_PROBE_MAX_COUNT = 32;
+constexpr std::size_t K_GROUND_TRUTH_MAX_ARMORS = 32;
 
 struct alignas(64) ShmHeader {
   uint32_t magic;
@@ -48,7 +48,7 @@ struct QuaternionF32 {
   float w;  ///< Hamilton 四元数实部。
 };
 
-// Talos v4 的刚体变换约定与 geometry::RigidTransform 相同：parent_t_child
+// Talos v5 的刚体变换约定与 geometry::RigidTransform 相同：parent_t_child
 // 将 child 中的坐标变换到 parent，平移单位为米。
 struct alignas(32) RigidTransformF32 {
   float translation[3];
@@ -91,10 +91,18 @@ struct alignas(64) GroundTruthRuneMeta {
   uint8_t bytes[128];
 };
 
-struct alignas(32) ProjectionProbeMeta {
-  uint64_t id;              ///< 本次仿真运行内的探针标识。
-  float position_world[3];  ///< 装甲中心在 world 中的位置，单位为米。
-  uint8_t pad[12];
+struct alignas(64) GroundTruthArmorMeta {
+  uint64_t id;
+  uint8_t team;
+  uint8_t label;
+  uint8_t armor_type;
+  uint8_t pad1;
+  float width_m;
+  float height_m;
+  uint8_t pad2[12];
+  RigidTransformF32 world_t_armor;
+  float corners_world[4][3];
+  uint8_t pad3[16];
 };
 
 struct alignas(64) GroundTruthBatchMeta {
@@ -102,11 +110,11 @@ struct alignas(64) GroundTruthBatchMeta {
   uint64_t timestamp_ns;    ///< 整批真值所属采集快照时间。
   uint32_t target_count;    ///< targets 中的有效元素数量。
   uint32_t rune_count;
-  uint32_t projection_probe_count;  ///< projection_probes 中的有效元素数量。
+  uint32_t armor_count;
   uint32_t pad1;
   GroundTruthTargetMeta targets[K_GROUND_TRUTH_MAX_TARGETS];
   GroundTruthRuneMeta runes[4];
-  ProjectionProbeMeta projection_probes[K_PROJECTION_PROBE_MAX_COUNT];
+  GroundTruthArmorMeta armors[K_GROUND_TRUTH_MAX_ARMORS];
 };
 
 struct alignas(64) CapturedFrameMeta {
@@ -155,14 +163,14 @@ static_assert(sizeof(QuaternionF32) == 16);
 static_assert(sizeof(RigidTransformF32) == 32);
 static_assert(sizeof(CameraCalibrationMeta) == 128);
 static_assert(sizeof(GroundTruthTargetMeta) == 64);
-static_assert(sizeof(ProjectionProbeMeta) == 32);
-static_assert(sizeof(GroundTruthBatchMeta) == 2624);
-static_assert(sizeof(CapturedFrameMeta) == 3072);
-static_assert(sizeof(FrameTripleBuffer) == 9280);
+static_assert(sizeof(GroundTruthArmorMeta) == 128);
+static_assert(sizeof(GroundTruthBatchMeta) == 5696);
+static_assert(sizeof(CapturedFrameMeta) == 6144);
+static_assert(sizeof(FrameTripleBuffer) == 18496);
 static_assert(offsetof(ShmMetaRegion, frame) == 64);
-static_assert(offsetof(ShmMetaRegion, gimbal_cmd) == 9344);
-static_assert(offsetof(ShmMetaRegion, runtime_state) == 9536);
-static_assert(sizeof(ShmMetaRegion) == 9600);
+static_assert(offsetof(ShmMetaRegion, gimbal_cmd) == 18560);
+static_assert(offsetof(ShmMetaRegion, runtime_state) == 18752);
+static_assert(sizeof(ShmMetaRegion) == 18816);
 
 uint64_t SystemNowNs() noexcept {
   return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -244,10 +252,10 @@ bool ValidCalibration(const CameraCalibrationMeta& calibration, uint32_t width,
 
 mv::geometry::RigidTransform ConvertTransform(const RigidTransformF32& value) noexcept {
   return {.translation = mv::geometry::Vector3(value.translation[0], value.translation[1],
-                                                value.translation[2]),
-          // Eigen 四元数构造顺序为 w/x/y/z；Talos v4 协议字段为 x/y/z/w。
-          .rotation = mv::geometry::Quaternion(value.rotation.w, value.rotation.x,
-                                               value.rotation.y, value.rotation.z)};
+                                               value.translation[2]),
+          // Eigen 四元数构造顺序为 w/x/y/z；Talos v5 协议字段为 x/y/z/w。
+          .rotation = mv::geometry::Quaternion(value.rotation.w, value.rotation.x, value.rotation.y,
+                                               value.rotation.z)};
 }
 
 CameraFrame::FrameGeometry ConvertGeometry(const CapturedFrameMeta& metadata) {
@@ -280,14 +288,23 @@ CameraFrame::FrameGeometry ConvertGeometry(const CapturedFrameMeta& metadata) {
                                 .yaw = target.yaw,
                                 .yaw_velocity = target.yaw_velocity});
   }
-  geometry.projection_probes.reserve(truth.projection_probe_count);
-  for (std::size_t index = 0; index < truth.projection_probe_count; ++index) {
-    const auto& probe = truth.projection_probes[index];
-    geometry.projection_probes.push_back(
-        {.id = probe.id,
-         .position_world = mv::geometry::Vector3(probe.position_world[0],
-                                                 probe.position_world[1],
-                                                 probe.position_world[2])});
+  geometry.armors.reserve(truth.armor_count);
+  for (std::size_t index = 0; index < truth.armor_count; ++index) {
+    const auto& armor = truth.armors[index];
+    CameraFrame::GroundTruthArmor converted{
+        .id = armor.id,
+        .team = armor.team,
+        .label = armor.label,
+        .type = static_cast<CameraFrame::ArmorType>(armor.armor_type),
+        .width_m = armor.width_m,
+        .height_m = armor.height_m,
+        .world_t_armor = ConvertTransform(armor.world_t_armor)};
+    for (std::size_t corner = 0; corner < converted.corners_world.size(); ++corner) {
+      converted.corners_world[corner] =
+          mv::geometry::Vector3(armor.corners_world[corner][0], armor.corners_world[corner][1],
+                                armor.corners_world[corner][2]);
+    }
+    geometry.armors.push_back(std::move(converted));
   }
   return geometry;
 }
@@ -499,7 +516,7 @@ GrabStatus TalosDevice::Grab(CameraFrame& frame) {
     const auto INVALID = [&]() {
       const uint64_t COUNT = ++impl_->invalid_frames;
       if (COUNT == 1 || COUNT % 100 == 0) {
-        MV_LOG_WARN("HAL.Camera.Talos", "rejected invalid Talos v4 frame #{} (seq={})", COUNT,
+        MV_LOG_WARN("HAL.Camera.Talos", "rejected invalid Talos v5 frame #{} (seq={})", COUNT,
                     metadata.frame_sequence);
       }
       return GrabStatus::INVALID_FRAME;
@@ -511,7 +528,7 @@ GrabStatus TalosDevice::Grab(CameraFrame& frame) {
     bool truth_valid = truth.frame_sequence == metadata.frame_sequence &&
                        truth.timestamp_ns == metadata.capture_timestamp_ns &&
                        truth.target_count <= K_GROUND_TRUTH_MAX_TARGETS &&
-                       truth.projection_probe_count <= K_PROJECTION_PROBE_MAX_COUNT;
+                       truth.armor_count <= K_GROUND_TRUTH_MAX_ARMORS;
     for (std::size_t index = 0; truth_valid && index < truth.target_count; ++index) {
       const auto& target = truth.targets[index];
       truth_valid = target.frame_sequence == metadata.frame_sequence &&
@@ -519,10 +536,31 @@ GrabStatus TalosDevice::Grab(CameraFrame& frame) {
                     Finite(target.yaw_velocity) && Finite(target.position[0]) &&
                     Finite(target.position[1]) && Finite(target.position[2]);
     }
-    for (std::size_t index = 0; truth_valid && index < truth.projection_probe_count; ++index) {
-      const auto& probe = truth.projection_probes[index];
-      truth_valid = Finite(probe.position_world[0]) && Finite(probe.position_world[1]) &&
-                    Finite(probe.position_world[2]);
+    for (std::size_t index = 0; truth_valid && index < truth.armor_count; ++index) {
+      const auto& armor = truth.armors[index];
+      truth_valid = armor.team <= 1 && armor.label <= 7 && armor.armor_type <= 1 &&
+                    Finite(armor.width_m) && Finite(armor.height_m) && armor.width_m > 0.0F &&
+                    armor.height_m > 0.0F && ValidTransform(armor.world_t_armor);
+      for (std::size_t corner = 0; truth_valid && corner < 4; ++corner) {
+        truth_valid = Finite(armor.corners_world[corner][0]) &&
+                      Finite(armor.corners_world[corner][1]) &&
+                      Finite(armor.corners_world[corner][2]);
+      }
+      if (truth_valid) {
+        const auto pose = ConvertTransform(armor.world_t_armor);
+        const std::array<mv::geometry::Vector3, 4> expected{
+            mv::geometry::Vector3(-armor.width_m * 0.5, armor.height_m * 0.5, 0.0),
+            mv::geometry::Vector3(armor.width_m * 0.5, armor.height_m * 0.5, 0.0),
+            mv::geometry::Vector3(armor.width_m * 0.5, -armor.height_m * 0.5, 0.0),
+            mv::geometry::Vector3(-armor.width_m * 0.5, -armor.height_m * 0.5, 0.0)};
+        for (std::size_t corner = 0; truth_valid && corner < expected.size(); ++corner) {
+          const mv::geometry::Vector3 actual(armor.corners_world[corner][0],
+                                             armor.corners_world[corner][1],
+                                             armor.corners_world[corner][2]);
+          truth_valid =
+              (actual - mv::geometry::TransformPoint(pose, expected[corner])).norm() <= 0.002;
+        }
+      }
     }
 
     if (metadata.capture_timestamp_ns == 0 ||

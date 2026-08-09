@@ -1,0 +1,6 @@
+schema_version: 1
+small_width_m: 0.135
+large_width_m: 0.225
+height_m: 0.055
+min_distance_m: 0.1
+max_distance_m: 30.0

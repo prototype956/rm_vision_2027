@@ -287,7 +287,7 @@ int ArmorDetectorTestApplication::Run() {
           const auto DETECTIONS = detector_->Detect(frame.image);
           const auto STATS = detector_->LastStats();
           if (foxglove_publisher) {
-            foxglove_publisher->Publish(frame, DETECTIONS, STATS);
+            foxglove_publisher->Publish(frame, DETECTIONS, STATS, modules::ArmorPnpFrameResult{});
           }
           ++metrics.detection_success;
           ++report_detection_success;

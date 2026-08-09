@@ -16,6 +16,9 @@ constexpr char K_CALIBRATION_TOPIC[] = "/vision/camera/calibration";
 constexpr char K_FRUSTUM_TOPIC[] = "/vision/camera/frustum";
 constexpr char K_GROUND_TRUTH_TOPIC[] = "/simulation/ground_truth";
 constexpr char K_PROJECTION_ANNOTATIONS_TOPIC[] = "/simulation/ground_truth/annotations";
+constexpr char K_PNP_ESTIMATES_TOPIC[] = "/vision/pnp/estimate";
+constexpr char K_PNP_ANNOTATIONS_TOPIC[] = "/vision/pnp/annotations";
+constexpr char K_PNP_STATS_TOPIC[] = "/vision/pnp/stats";
 
 // RawChannel 必须携带稳定 JSON Schema，Foxglove Plot/Raw Messages 才能解析字段。
 constexpr char K_ARMOR_STATS_SCHEMA[] = R"json({
@@ -47,6 +50,42 @@ constexpr char K_DEBUG_STATS_SCHEMA[] = R"json({
     "queue_overwritten_frames":{"type":"integer"}
   },
   "required":["timestamp","sequence","capture_timestamp_ns","geometry_valid","source_invalid_frames","jpeg_encode_ms","publish_latency_ms","rate_limited_frames","queue_overwritten_frames"]
+})json";
+
+constexpr char K_PNP_STATS_SCHEMA[] = R"json({
+  "type":"object",
+  "properties":{
+    "timestamp":{"type":"object","properties":{"sec":{"type":"integer"},"nsec":{"type":"integer"}},"required":["sec","nsec"]},
+    "sequence":{"type":"integer"},
+    "attempted":{"type":"integer"},
+    "successful":{"type":"integer"},
+    "summary":{"type":"object","properties":{
+      "ground_truth":{"type":"object","properties":{
+        "reprojection_rmse_px":{"type":"object","properties":{"samples":{"type":"integer"},"p50":{"type":"number"},"p95":{"type":"number"}},"required":["samples","p50","p95"]},
+        "mean_corner_error_px":{"type":"object","properties":{"samples":{"type":"integer"},"p50":{"type":"number"},"p95":{"type":"number"}},"required":["samples","p50","p95"]},
+        "position_error_m":{"type":"object","properties":{"samples":{"type":"integer"},"p50":{"type":"number"},"p95":{"type":"number"}},"required":["samples","p50","p95"]},
+        "depth_error_m":{"type":"object","properties":{"samples":{"type":"integer"},"p50":{"type":"number"},"p95":{"type":"number"}},"required":["samples","p50","p95"]},
+        "rotation_error_deg":{"type":"object","properties":{"samples":{"type":"integer"},"p50":{"type":"number"},"p95":{"type":"number"}},"required":["samples","p50","p95"]}
+      },"required":["reprojection_rmse_px","mean_corner_error_px","position_error_m","depth_error_m","rotation_error_deg"]},
+      "detection":{"type":"object","properties":{
+        "reprojection_rmse_px":{"type":"object","properties":{"samples":{"type":"integer"},"p50":{"type":"number"},"p95":{"type":"number"}},"required":["samples","p50","p95"]},
+        "mean_corner_error_px":{"type":"object","properties":{"samples":{"type":"integer"},"p50":{"type":"number"},"p95":{"type":"number"}},"required":["samples","p50","p95"]},
+        "position_error_m":{"type":"object","properties":{"samples":{"type":"integer"},"p50":{"type":"number"},"p95":{"type":"number"}},"required":["samples","p50","p95"]},
+        "depth_error_m":{"type":"object","properties":{"samples":{"type":"integer"},"p50":{"type":"number"},"p95":{"type":"number"}},"required":["samples","p50","p95"]},
+        "rotation_error_deg":{"type":"object","properties":{"samples":{"type":"integer"},"p50":{"type":"number"},"p95":{"type":"number"}},"required":["samples","p50","p95"]}
+      },"required":["reprojection_rmse_px","mean_corner_error_px","position_error_m","depth_error_m","rotation_error_deg"]}
+    },"required":["ground_truth","detection"]},
+    "attempts":{"type":"array","items":{"type":"object","properties":{
+      "source":{"type":"string"},"input_index":{"type":"integer"},"status":{"type":"string"},
+      "truth_id":{"type":["integer","null"]},"candidate_index":{"type":["integer","null"]},
+      "reprojection_rmse_px":{"type":["number","null"]},"mean_corner_error_px":{"type":["number","null"]},
+      "distance_m":{"type":["number","null"]},"viewing_angle_deg":{"type":["number","null"]},
+      "corner_errors_px":{"type":"array","items":{"type":["number","null"]},"minItems":4,"maxItems":4},
+      "position_error_m":{"type":["number","null"]},"depth_error_m":{"type":["number","null"]},
+      "rotation_error_deg":{"type":["number","null"]}
+    },"required":["source","input_index","status","truth_id","candidate_index","reprojection_rmse_px","distance_m","viewing_angle_deg","corner_errors_px","mean_corner_error_px","position_error_m","depth_error_m","rotation_error_deg"]}}
+  },
+  "required":["timestamp","sequence","attempted","successful","summary","attempts"]
 })json";
 
 ::foxglove::Schema JsonSchema(const char* name, const char* data, std::size_t size) {
@@ -112,6 +151,12 @@ VisionChannelSet::VisionChannelSet(const ::foxglove::Context& context) {
       K_GROUND_TRUTH_TOPIC, context, "create ground truth channel");
   projection_annotations_ = CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
       K_PROJECTION_ANNOTATIONS_TOPIC, context, "create projection annotations channel");
+  pnp_estimates_ = CreateSchemaChannel<::foxglove::schemas::SceneUpdateChannel>(
+      K_PNP_ESTIMATES_TOPIC, context, "create PnP estimates channel");
+  pnp_annotations_ = CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
+      K_PNP_ANNOTATIONS_TOPIC, context, "create PnP annotations channel");
+  pnp_stats_ = CreateRawChannel(K_PNP_STATS_TOPIC, "mv.vision.ArmorPnpStats", K_PNP_STATS_SCHEMA,
+                                sizeof(K_PNP_STATS_SCHEMA) - 1, context);
 }
 
 VisionChannelSet::~VisionChannelSet() {
@@ -127,7 +172,10 @@ ChannelIds VisionChannelSet::Ids() const noexcept {
           .calibration = calibration_->id(),
           .frustum = frustum_->id(),
           .ground_truth = ground_truth_->id(),
-          .projection_annotations = projection_annotations_->id()};
+          .projection_annotations = projection_annotations_->id(),
+          .pnp_estimates = pnp_estimates_->id(),
+          .pnp_annotations = pnp_annotations_->id(),
+          .pnp_stats = pnp_stats_->id()};
 }
 
 ChannelPublishResult VisionChannelSet::Publish(const PreparedFrame& frame,
@@ -178,6 +226,22 @@ ChannelPublishResult VisionChannelSet::Publish(const PreparedFrame& frame,
     AddError(result, VisionTopic::PROJECTION_ANNOTATIONS,
              projection_annotations_->log(*frame.projection_annotations, frame.epoch_nanos));
   }
+  if (demand.pnp_estimates && frame.pnp_estimates.has_value()) {
+    result.attempted = true;
+    AddError(result, VisionTopic::PNP_ESTIMATES,
+             pnp_estimates_->log(*frame.pnp_estimates, frame.epoch_nanos));
+  }
+  if (demand.pnp_annotations && frame.pnp_annotations.has_value()) {
+    result.attempted = true;
+    AddError(result, VisionTopic::PNP_ANNOTATIONS,
+             pnp_annotations_->log(*frame.pnp_annotations, frame.epoch_nanos));
+  }
+  if (demand.pnp_stats && frame.pnp_stats_json.has_value()) {
+    result.attempted = true;
+    const auto* data = reinterpret_cast<const std::byte*>(frame.pnp_stats_json->data());
+    AddError(result, VisionTopic::PNP_STATS,
+             pnp_stats_->log(data, frame.pnp_stats_json->size(), frame.epoch_nanos));
+  }
   return result;
 }
 
@@ -204,6 +268,12 @@ void VisionChannelSet::Close() noexcept {
     ground_truth_->close();
   if (projection_annotations_)
     projection_annotations_->close();
+  if (pnp_estimates_)
+    pnp_estimates_->close();
+  if (pnp_annotations_)
+    pnp_annotations_->close();
+  if (pnp_stats_)
+    pnp_stats_->close();
 }
 
 const char* TopicName(VisionTopic topic) noexcept {
@@ -226,6 +296,12 @@ const char* TopicName(VisionTopic topic) noexcept {
       return "ground_truth";
     case VisionTopic::PROJECTION_ANNOTATIONS:
       return "projection_annotations";
+    case VisionTopic::PNP_ESTIMATES:
+      return "pnp_estimates";
+    case VisionTopic::PNP_ANNOTATIONS:
+      return "pnp_annotations";
+    case VisionTopic::PNP_STATS:
+      return "pnp_stats";
   }
   return "unknown";
 }

@@ -38,8 +38,9 @@ VisionDebugPublisher::~VisionDebugPublisher() = default;
 
 void VisionDebugPublisher::Publish(const hal::CameraFrame& frame,
                                    std::span<const modules::ArmorDetection> detections,
-                                   const modules::DetectorStats& detector_stats) noexcept {
-  impl_->pipeline.Publish(frame, detections, detector_stats);
+                                   const modules::DetectorStats& detector_stats,
+                                   const modules::ArmorPnpFrameResult& pnp_result) noexcept {
+  impl_->pipeline.Publish(frame, detections, detector_stats, pnp_result);
 }
 
 VisionPublisherStats VisionDebugPublisher::SnapshotStats() const noexcept {

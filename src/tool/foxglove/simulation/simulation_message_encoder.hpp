@@ -16,7 +16,7 @@ namespace mv::tool::foxglove::simulation {
     const ::foxglove::schemas::Timestamp& timestamp);
 
 /**
- * @brief 使用同帧内外参将 world 中的装甲中心探针重投影到相机图像。
+ * @brief 使用同帧内外参将 world 中的装甲灯条端点四角重投影到相机图像。
  *
  * 相机后方和图像边界外的探针会被过滤。没有可见探针时仍返回一个空 POINTS
  * 标注，以便 Foxglove 清除上一帧黄色点。

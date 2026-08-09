@@ -14,7 +14,8 @@ LatestFrameQueue::LatestFrameQueue(double max_fps)
 
 QueuePushResult LatestFrameQueue::Push(const hal::CameraFrame& frame,
                                        std::span<const modules::ArmorDetection> detections,
-                                       const modules::DetectorStats& detector_stats) {
+                                       const modules::DetectorStats& detector_stats,
+                                       const modules::ArmorPnpFrameResult& pnp_result) {
   std::lock_guard lock(mutex_);
   if (stopped_) {
     return {};
@@ -39,6 +40,7 @@ QueuePushResult LatestFrameQueue::Push(const hal::CameraFrame& frame,
   item.source_invalid_frames = frame.source_invalid_frames;
   item.detections.assign(detections.begin(), detections.end());
   item.detector_stats = detector_stats;
+  item.pnp_result = pnp_result;
 
   const bool OVERWRITTEN = queued_frame_.has_value();
   queued_frame_ = std::move(item);

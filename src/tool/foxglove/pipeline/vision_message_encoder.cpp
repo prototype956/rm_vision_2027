@@ -2,6 +2,7 @@
 
 #include "tool/foxglove/armor_detector/armor_message_encoder.hpp"
 #include "tool/foxglove/image/image_message_encoder.hpp"
+#include "tool/foxglove/pnp/pnp_message_encoder.hpp"
 #include "tool/foxglove/simulation/simulation_message_encoder.hpp"
 #include "tool/foxglove/spatial/spatial_message_encoder.hpp"
 
@@ -38,7 +39,8 @@ std::string EncodeDebugStats(const VisionDebugFrame& frame,
 
 bool TopicDemand::Any() const noexcept {
   return image || armor_annotations || armor_stats || debug_stats || transforms || calibration ||
-         frustum || ground_truth || projection_annotations;
+         frustum || ground_truth || projection_annotations || pnp_estimates || pnp_annotations ||
+         pnp_stats;
 }
 
 TopicDemand Merge(TopicDemand left, TopicDemand right) noexcept {
@@ -50,7 +52,10 @@ TopicDemand Merge(TopicDemand left, TopicDemand right) noexcept {
           .calibration = left.calibration || right.calibration,
           .frustum = left.frustum || right.frustum,
           .ground_truth = left.ground_truth || right.ground_truth,
-          .projection_annotations = left.projection_annotations || right.projection_annotations};
+          .projection_annotations = left.projection_annotations || right.projection_annotations,
+          .pnp_estimates = left.pnp_estimates || right.pnp_estimates,
+          .pnp_annotations = left.pnp_annotations || right.pnp_annotations,
+          .pnp_stats = left.pnp_stats || right.pnp_stats};
 }
 
 VisionMessageEncoder::VisionMessageEncoder(const ImageConfig& config)
@@ -104,6 +109,15 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
     if (demand.projection_annotations) {
       result.projection_annotations = simulation::EncodeProjectionAnnotations(geometry, TIMESTAMP);
     }
+    if (demand.pnp_estimates) {
+      result.pnp_estimates = pnp::EncodeEstimates(frame.pnp_result, geometry, TIMESTAMP);
+    }
+  }
+  if (demand.pnp_annotations) {
+    result.pnp_annotations = pnp::EncodeAnnotations(frame.pnp_result, TIMESTAMP);
+  }
+  if (demand.pnp_stats) {
+    result.pnp_stats_json = pnp::EncodeStats(frame.pnp_result, frame.sequence, TIMESTAMP);
   }
 
   result.publish_latency_ms = Milliseconds(SteadyClock::now() - frame.receive_steady_time);

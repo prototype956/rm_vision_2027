@@ -7,6 +7,7 @@ target_link_libraries(mv-vision-main
         mv-core
         mv-hal-camera
         mv-modules-armor-detector
+        mv-modules-armor-pnp
         mv-tool-armor-overlay
         mv-tool-debug
         mv-tool-foxglove

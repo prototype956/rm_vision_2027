@@ -23,6 +23,7 @@ target_link_libraries(mv-tool-foxglove-pipeline
         mv-tool-foxglove-armor-detector
         mv-tool-foxglove-spatial
         mv-tool-foxglove-simulation
+        mv-tool-foxglove-pnp
         fmt::fmt
 )
 
