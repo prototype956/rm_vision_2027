@@ -1,11 +1,16 @@
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <opencv2/core.hpp>
+#include <optional>
 #include <yaml-cpp/yaml.h>
+
+#include "geometry/rigid_transform.hpp"
 
 namespace mv::hal {
 
@@ -53,9 +58,54 @@ enum class GrabStatus : uint8_t { OK = 0, TIMEOUT, DISCONNECTED, INVALID_FRAME, 
  * image 独立持有有效像素数据，不依赖相机驱动的 DMA 缓冲区生命周期。
  */
 struct CameraFrame {
-  cv::Mat image;                                      ///< OpenCV 图像矩阵。
-  std::chrono::steady_clock::time_point timestamp{};  ///< HAL 完成该帧处理的单调时钟时间。
-  uint64_t sequence{0};                               ///< 本次 Open() 后从 0 递增的帧序号。
+  /** @brief 与当前图像对应的针孔相机内参和 plumb_bob 畸变参数。 */
+  struct Calibration {
+    std::uint32_t width{0};              ///< 标定适用的图像宽度，单位为像素。
+    std::uint32_t height{0};             ///< 标定适用的图像高度，单位为像素。
+    double fx{0.0};                      ///< 水平方向焦距，单位为像素。
+    double fy{0.0};                      ///< 垂直方向焦距，单位为像素。
+    double cx{0.0};                      ///< 主点横坐标，单位为像素。
+    double cy{0.0};                      ///< 主点纵坐标，单位为像素。
+    std::array<double, 5> distortion{};  ///< 依次为 k1、k2、p1、p2、k3。
+  };
+
+  /** @brief 仿真器在 world 坐标系中给出的单个机器人真值。 */
+  struct GroundTruthTarget {
+    std::uint64_t id{0};          ///< 本次仿真运行内区分目标的稳定标识。
+    std::uint8_t team{0};         ///< 队伍编码：0 为红方，1 为蓝方。
+    std::uint8_t armor_label{0};  ///< Talos 协议中的装甲类别编码。
+    bool is_outpost{false};       ///< 是否为前哨站等特殊旋转目标。
+    geometry::Vector3 position_world{geometry::Vector3::Zero()};  ///< 机器人中心世界位置。
+    double yaw{0.0};              ///< 绕 world +Z 轴的航向角，单位为弧度。
+    double yaw_velocity{0.0};     ///< 航向角速度，单位为弧度每秒。
+  };
+
+  /** @brief 用于验证三维到二维投影链路的装甲中心真值探针。 */
+  struct ProjectionProbe {
+    std::uint64_t id{0};     ///< 本次仿真运行内区分探针的稳定标识。
+    geometry::Vector3 position_world{geometry::Vector3::Zero()};  ///< 探针的世界位置。
+  };
+
+  /**
+   * @brief 与图像在同一仿真采集快照中的标定、外参和真值。
+   *
+   * 仅能和所属 CameraFrame 的 image、capture_timestamp_ns 配套使用，不能跨帧组合。
+   */
+  struct FrameGeometry {
+    Calibration calibration;                         ///< camera_optical 对应的内参与畸变。
+    geometry::RigidTransform world_t_gimbal;           ///< gimbal 到 world 的变换。
+    geometry::RigidTransform gimbal_t_camera_optical;  ///< camera_optical 到 gimbal 的变换。
+    geometry::RigidTransform gimbal_t_muzzle;          ///< muzzle 到 gimbal 的变换。
+    std::vector<GroundTruthTarget> targets;          ///< 当前快照中的机器人真值。
+    std::vector<ProjectionProbe> projection_probes;  ///< 当前快照中的装甲中心探针。
+  };
+
+  cv::Mat image;                                                ///< OpenCV 图像矩阵。
+  std::chrono::steady_clock::time_point receive_steady_time{};  ///< HAL 收帧单调时钟。
+  std::optional<std::uint64_t> capture_timestamp_ns;  ///< 数据源采集 Unix epoch 纳秒时间。
+  std::optional<FrameGeometry> geometry;  ///< 同一采集快照的空间数据；实机后端通常为空。
+  uint64_t sequence{0};                   ///< 本次 Open() 后从 0 递增的帧序号。
+  uint64_t source_invalid_frames{0};  ///< 当前数据源自 Open() 以来拒绝的无效帧数。
 };
 
 /**
@@ -65,15 +115,15 @@ struct CameraFrame {
  * 假定驱动一定接受了配置文件中的请求值。
  */
 struct CameraInfo {
-  std::string device_name;                         ///< 后端提供的设备名称或输入源标识。
-  int sensor_width{0};                             ///< 传感器或后端报告的原始宽度。
-  int sensor_height{0};                            ///< 传感器或后端报告的原始高度。
-  int output_width{0};                             ///< 每帧输出宽度。
-  int output_height{0};                            ///< 每帧输出高度。
-  int roi_offset_x{0};                             ///< 硬件 ROI 左上角横坐标。
-  int roi_offset_y{0};                             ///< 硬件 ROI 左上角纵坐标。
-  int exposure_us{0};                              ///< 曝光时间，单位为微秒。
-  int grab_timeout_ms{0};                          ///< 单次阻塞取帧超时，单位为毫秒。
+  std::string device_name;  ///< 后端提供的设备名称或输入源标识。
+  int sensor_width{0};      ///< 传感器或后端报告的原始宽度。
+  int sensor_height{0};     ///< 传感器或后端报告的原始高度。
+  int output_width{0};      ///< 每帧输出宽度。
+  int output_height{0};     ///< 每帧输出高度。
+  int roi_offset_x{0};      ///< 硬件 ROI 左上角横坐标。
+  int roi_offset_y{0};      ///< 硬件 ROI 左上角纵坐标。
+  int exposure_us{0};       ///< 曝光时间，单位为微秒。
+  int grab_timeout_ms{0};   ///< 单次阻塞取帧超时，单位为毫秒。
   PixelFormat pixel_format{PixelFormat::UNKNOWN};  ///< 每帧实际像素格式。
 };
 

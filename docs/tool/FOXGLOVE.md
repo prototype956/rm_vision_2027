@@ -1,6 +1,6 @@
 # Foxglove 调试输出
 
-Foxglove 模块将相机原图、二维装甲标注和检测指标异步发布到 WebSocket，并可选写入
+Foxglove 模块将相机原图、二维装甲标注、空间坐标和调试指标异步发布到 WebSocket，并可选写入
 MCAP。`mv-vision-main` 和 `mv-armor-detector-test` 共用
 `src/config/tool/foxglove.yaml`；发布失败不会反压检测主链路，也不参与装甲检测测试的
 PASS/FAIL 判定。
@@ -14,15 +14,27 @@ PASS/FAIL 判定。
 - `image.max_fps` 和 `image.jpeg_quality`：控制图像限流与 JPEG 质量。
 - `recording.enabled` 和 `recording.output_dir`：控制可选 MCAP 录制及输出目录。
 
-实时与录制使用相同的三个话题：
+实时与录制使用相同的话题：
 
 - `/vision/camera/image`：JPEG `foxglove.CompressedImage`。
 - `/vision/armor/annotations`：四角框和颜色、类别、置信度文字。
-- `/vision/armor/stats`：检测耗时、候选数、发布延迟及调试丢帧统计。
+- `/vision/armor/stats`：检测耗时、候选数和最终检测数。
+- `/vision/debug/stats`：采集时间、空间元数据状态、JPEG 耗时、发布延迟及调试丢帧统计。
+- `/vision/transforms`：`world -> gimbal -> camera_optical` 两级 TF。
+- `/vision/camera/calibration`：与当前图像同帧的针孔内参和畸变参数。
+- `/vision/camera/frustum`：位于 `camera_optical` 下、深度 1 米的相机视锥。
+- `/simulation/ground_truth`：机器人中心、朝向和装甲中心投影探针的三维真值。
+- `/simulation/ground_truth/annotations`：装甲中心真值在相机图像上的重投影点。
 
 将 Foxglove 连接到 `ws://<NUC-IP>:8765`，在 Image 面板选择图像话题，再将
 annotations 话题加入 Image annotations。Plot 面板可直接选择 stats 中的数值字段。
+Talos 仿真验收时在 3D 面板将固定坐标系设为 `world`，同时启用 transforms、frustum 和
+ground truth；在 Image 面板额外启用 ground truth annotations。
 `0.0.0.0` 不包含认证和 TLS，只应用于可信机器人局域网。
+
+内部实现按 `image`、`armor_detector`、`spatial` 和 `simulation` 分离消息
+编码，由 `pipeline` 统一管理限流、后台线程和频道。各领域仍属于同一调试帧，
+不会因为拆分模块而产生话题间时间差。
 
 ## 构建与运行
 

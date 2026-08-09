@@ -1,8 +1,12 @@
 add_subdirectory(runtime)
+add_subdirectory(image)
 add_subdirectory(armor_detector)
+add_subdirectory(spatial)
+add_subdirectory(simulation)
+add_subdirectory(pipeline)
 
 add_library(mv-tool-foxglove STATIC
-    armor_debug_publisher.cpp
+    vision_debug_publisher.cpp
     foxglove_config.cpp
 )
 
@@ -18,8 +22,8 @@ target_link_libraries(mv-tool-foxglove
         mv-hal-camera
         mv-modules-armor-detector
     PRIVATE
-        mv-tool-foxglove-armor-detector
+        mv-tool-foxglove-pipeline
         mv-tool-foxglove-runtime
 )
 
-message(STATUS "    + mv-tool-foxglove (WebSocket + MCAP armor diagnostics)")
+message(STATUS "    + mv-tool-foxglove (WebSocket + MCAP vision diagnostics)")

@@ -1,9 +1,9 @@
-#include "tool/foxglove/armor_detector/latest_frame_queue.hpp"
+#include "tool/foxglove/pipeline/latest_frame_queue.hpp"
 
 #include <algorithm>
 #include <utility>
 
-namespace mv::tool::foxglove::armor_detector {
+namespace mv::tool::foxglove::pipeline {
 
 LatestFrameQueue::LatestFrameQueue(double max_fps)
     : PERIOD(std::chrono::duration_cast<SteadyClock::duration>(
@@ -20,32 +20,33 @@ QueuePushResult LatestFrameQueue::Push(const hal::CameraFrame& frame,
     return {};
   }
   if (next_publish_timestamp_ != SteadyClock::time_point{} &&
-      frame.timestamp + JITTER_TOLERANCE < next_publish_timestamp_) {
+      frame.receive_steady_time + JITTER_TOLERANCE < next_publish_timestamp_) {
     return {.rate_limited = true};
   }
-  // 小抖动沿用原调度节拍；长暂停后以当前帧重新锚定，避免连续追赶历史时隙。
   if (next_publish_timestamp_ == SteadyClock::time_point{} ||
-      frame.timestamp > next_publish_timestamp_ + PERIOD) {
-    next_publish_timestamp_ = frame.timestamp + PERIOD;
+      frame.receive_steady_time > next_publish_timestamp_ + PERIOD) {
+    next_publish_timestamp_ = frame.receive_steady_time + PERIOD;
   } else {
     next_publish_timestamp_ += PERIOD;
   }
 
-  FrameItem item;
+  VisionDebugFrame item;
   item.image = frame.image;
-  item.timestamp = frame.timestamp;
+  item.receive_steady_time = frame.receive_steady_time;
+  item.capture_timestamp_ns = frame.capture_timestamp_ns;
+  item.geometry = frame.geometry;
   item.sequence = frame.sequence;
+  item.source_invalid_frames = frame.source_invalid_frames;
   item.detections.assign(detections.begin(), detections.end());
   item.detector_stats = detector_stats;
 
   const bool OVERWRITTEN = queued_frame_.has_value();
-  // 队列容量固定为 1，生产者用新帧覆盖旧帧而不是等待编码线程。
   queued_frame_ = std::move(item);
   condition_.notify_one();
   return {.enqueued = true, .overwritten = OVERWRITTEN};
 }
 
-std::optional<FrameItem> LatestFrameQueue::WaitPop() noexcept {
+std::optional<VisionDebugFrame> LatestFrameQueue::WaitPop() noexcept {
   try {
     std::unique_lock lock(mutex_);
     condition_.wait(lock, [this] { return stopped_ || queued_frame_.has_value(); });
@@ -66,4 +67,4 @@ void LatestFrameQueue::Stop() noexcept {
   condition_.notify_one();
 }
 
-}  // namespace mv::tool::foxglove::armor_detector
+}  // namespace mv::tool::foxglove::pipeline

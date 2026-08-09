@@ -31,7 +31,7 @@ OpenCvCamera::~OpenCvCamera() {
   Close();
 }
 
-OpenCvCamera::OpenCvCamera(OpenCvCamera&& other)  noexcept : impl_(std::make_unique<Impl>()) {
+OpenCvCamera::OpenCvCamera(OpenCvCamera&& other) noexcept : impl_(std::make_unique<Impl>()) {
   impl_.swap(other.impl_);
 }
 
@@ -158,7 +158,7 @@ GrabStatus OpenCvCamera::Grab(CameraFrame& frame) {
     return GrabStatus::INVALID_FRAME;
   }
   frame.image = std::move(image);
-  frame.timestamp = std::chrono::steady_clock::now();
+  frame.receive_steady_time = std::chrono::steady_clock::now();
   frame.sequence = impl_->sequence++;
   return GrabStatus::OK;
 }

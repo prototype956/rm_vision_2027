@@ -366,7 +366,7 @@ GrabStatus MindVisionDevice::Grab(CameraFrame& frame) {
   }
 
   frame.image = std::move(image);
-  frame.timestamp = std::chrono::steady_clock::now();
+  frame.receive_steady_time = std::chrono::steady_clock::now();
   frame.sequence = impl_->sequence++;
   return GrabStatus::OK;
 #endif

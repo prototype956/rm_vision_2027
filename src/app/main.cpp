@@ -7,8 +7,8 @@
 #include "modules/armor_detector/armor_detector_config.hpp"
 #include "tool/debug/armor_detection_overlay.hpp"
 #include "tool/debug/debug_window.hpp"
-#include "tool/foxglove/armor_debug_publisher.hpp"
 #include "tool/foxglove/foxglove_config.hpp"
+#include "tool/foxglove/vision_debug_publisher.hpp"
 
 #include <csignal>
 #include <cstdio>
@@ -117,14 +117,14 @@ int Run() {
       window = std::make_unique<tool::DebugWindow>(K_WINDOW_NAME);
     }
 
-    std::unique_ptr<tool::foxglove::ArmorDebugPublisher> foxglove_publisher;
+    std::unique_ptr<tool::foxglove::VisionDebugPublisher> foxglove_publisher;
     try {
       const auto FOXGLOVE_PATH = CONFIG_ROOT / "tool/foxglove.yaml";
       const auto FOXGLOVE_YAML = ConfigLoader::LoadFile(FOXGLOVE_PATH);
       auto foxglove_config = tool::foxglove::ParseConfig(FOXGLOVE_YAML, FOXGLOVE_PATH);
       if (foxglove_config.enabled) {
         foxglove_publisher =
-            std::make_unique<tool::foxglove::ArmorDebugPublisher>(std::move(foxglove_config));
+            std::make_unique<tool::foxglove::VisionDebugPublisher>(std::move(foxglove_config));
         if (!foxglove_publisher->IsRunning()) {
           MV_LOG_WARN("App", "Foxglove configured but no live or recording sink started");
         }

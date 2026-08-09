@@ -6,7 +6,7 @@ server:
   port: 8765
 
 image:
-  frame_id: camera_optical_frame
+  frame_id: camera_optical
   max_fps: 20
   jpeg_quality: 75
 

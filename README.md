@@ -28,6 +28,7 @@ MindVision 实机验收程序，以及基于 OpenVINO 的深圳大学 RobotDetec
 - fmt
 - spdlog
 - yaml-cpp
+- Eigen 3.4
 - OpenVINO Runtime 2024.0（构建主程序和检测模块时需要）
 - 仓库内 `3rdparty/mindvision` SDK（实机运行需要）
 - 仓库内 `3rdparty/foxglove` SDK（预编译 x86-64 Linux 库与 C++ 封装）
@@ -38,7 +39,7 @@ Ubuntu 系统依赖示例：
 sudo apt update
 sudo apt install -y \
     build-essential cmake \
-    libopencv-dev libfmt-dev libspdlog-dev libyaml-cpp-dev
+    libopencv-dev libfmt-dev libspdlog-dev libyaml-cpp-dev libeigen3-dev
 ```
 
 ## 构建
@@ -104,6 +105,8 @@ taskset -c 0-7 ./build-openvino/bin/mv-vision-main
 [`docs/test/ARMOR_DETECTOR_TEST.md`](docs/test/ARMOR_DETECTOR_TEST.md)。
 Foxglove 连接、话题与 MCAP 使用方法见
 [`docs/tool/FOXGLOVE.md`](docs/tool/FOXGLOVE.md)。
+坐标轴、变换方向和 Talos 同帧契约见
+[`docs/modules/COORDINATE_SYSTEMS.md`](docs/modules/COORDINATE_SYSTEMS.md)。
 相机内参标定流程见
 [`docs/tool/CAMERA_CALIBRATION.md`](docs/tool/CAMERA_CALIBRATION.md)。
 检测模块的接口、模型协议、二维坐标系和后处理契约见
@@ -159,7 +162,7 @@ src/config/
 │   └── tool/
 │       ├── calibration/   # MindVision 棋盘格内参标定
 │       ├── debug/         # OpenCV 调试窗口与装甲可视化
-│       └── foxglove/      # WebSocket、MCAP 与异步装甲调试发布
+│       └── foxglove/      # 按 image/armor/spatial/simulation 分层的视觉调试发布
 ├── test/
 │   ├── camera/            # MindVision 实机验收程序
 │   └── armor_detector/    # 装甲检测实机与离线视频验收程序

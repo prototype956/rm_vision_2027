@@ -46,8 +46,8 @@ Config ParseConfig(const YAML::Node& root, const std::filesystem::path& config_p
   if (PORT <= 0 || PORT > std::numeric_limits<std::uint16_t>::max()) {
     throw ConfigError("Foxglove config.server.port must be in [1, 65535]");
   }
-  if (config.image.frame_id.empty()) {
-    throw ConfigError("Foxglove config.image.frame_id must not be empty");
+  if (config.image.frame_id != "camera_optical") {
+    throw ConfigError("Foxglove config.image.frame_id must be camera_optical");
   }
   if (!std::isfinite(config.image.max_fps) || config.image.max_fps <= 0.0 ||
       config.image.max_fps > 240.0) {

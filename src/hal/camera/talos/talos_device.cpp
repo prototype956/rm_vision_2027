@@ -2,7 +2,9 @@
 
 #include "core/logger.hpp"
 
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -20,15 +22,14 @@ namespace {
 // 以下常量和结构必须与 Daedalus 的 Talos 共享内存 ABI 保持一致。元数据区使用
 // 固定布局，图像像素则按三个连续缓冲区存放在独立文件中。
 constexpr uint32_t K_SHM_MAGIC = 0x54414C05;
-constexpr uint32_t K_MIN_VERSION = 2;
-constexpr uint32_t K_MAX_VERSION = 3;
+constexpr uint32_t K_SHM_VERSION = 4;
 constexpr uint8_t K_FLAG_NEW = 0x80;
 constexpr uint8_t K_INDEX_MASK = 0x03;
 constexpr uint8_t K_FORMAT_RGB8 = 0;
 constexpr uint8_t K_FORMAT_BGR8 = 1;
 constexpr std::size_t K_BUFFER_COUNT = 3;
-constexpr std::size_t K_SYNC_POSE_COUNT = 4;
-constexpr std::size_t K_META_REGION_SIZE = 3712;
+constexpr std::size_t K_GROUND_TRUTH_MAX_TARGETS = 16;
+constexpr std::size_t K_PROJECTION_PROBE_MAX_COUNT = 32;
 
 struct alignas(64) ShmHeader {
   uint32_t magic;
@@ -40,55 +41,128 @@ struct alignas(64) ShmHeader {
   uint8_t pad[32];
 };
 
-struct alignas(32) ImageMeta {
-  uint64_t sequence;
-  uint64_t timestamp_ns;
+struct QuaternionF32 {
+  float x;  ///< Hamilton 四元数虚部 X。
+  float y;  ///< Hamilton 四元数虚部 Y。
+  float z;  ///< Hamilton 四元数虚部 Z。
+  float w;  ///< Hamilton 四元数实部。
+};
+
+// Talos v4 的刚体变换约定与 geometry::RigidTransform 相同：parent_t_child
+// 将 child 中的坐标变换到 parent，平移单位为米。
+struct alignas(32) RigidTransformF32 {
+  float translation[3];
+  QuaternionF32 rotation;
+  uint8_t pad[4];
+};
+
+struct alignas(64) CameraCalibrationMeta {
+  uint64_t timestamp_ns;  ///< 所属采集快照的 Unix epoch 纳秒时间。
+  double fx;              ///< 水平焦距，单位为像素。
+  double fy;              ///< 垂直焦距，单位为像素。
+  double cx;              ///< 主点横坐标，单位为像素。
+  double cy;              ///< 主点纵坐标，单位为像素。
+  double distortion[5];   ///< plumb_bob 顺序：k1、k2、p1、p2、k3。
+  uint32_t width;         ///< 标定适用的图像宽度。
+  uint32_t height;        ///< 标定适用的图像高度。
+  uint8_t pad[24];
+};
+
+// 下列未消费的协议区仍必须占位，以保持与 Rust #[repr(C, align(...))] ABI 一致。
+struct alignas(64) ChassisObservationMeta {
+  uint8_t bytes[128];
+};
+
+struct alignas(32) GroundTruthTargetMeta {
+  uint64_t frame_sequence;  ///< 所属图像帧序号。
+  uint64_t timestamp_ns;    ///< 所属采集快照的 Unix epoch 纳秒时间。
+  uint64_t id;              ///< 本次仿真运行内的目标标识。
+  uint8_t team;             ///< 0 为红方，1 为蓝方。
+  uint8_t armor_label;      ///< Talos 装甲类别编码。
+  uint8_t is_outpost;       ///< 非零表示特殊旋转目标。
+  uint8_t pad1;
+  float position[3];   ///< world 坐标系位置，单位为米。
+  float yaw_velocity;  ///< 绕 world +Z 的角速度，单位为弧度每秒。
+  float yaw;           ///< 绕 world +Z 的航向角，单位为弧度。
+  uint8_t pad[16];
+};
+
+struct alignas(64) GroundTruthRuneMeta {
+  uint8_t bytes[128];
+};
+
+struct alignas(32) ProjectionProbeMeta {
+  uint64_t id;              ///< 本次仿真运行内的探针标识。
+  float position_world[3];  ///< 装甲中心在 world 中的位置，单位为米。
+  uint8_t pad[12];
+};
+
+struct alignas(64) GroundTruthBatchMeta {
+  uint64_t frame_sequence;  ///< 整批真值所属图像帧序号。
+  uint64_t timestamp_ns;    ///< 整批真值所属采集快照时间。
+  uint32_t target_count;    ///< targets 中的有效元素数量。
+  uint32_t rune_count;
+  uint32_t projection_probe_count;  ///< projection_probes 中的有效元素数量。
+  uint32_t pad1;
+  GroundTruthTargetMeta targets[K_GROUND_TRUTH_MAX_TARGETS];
+  GroundTruthRuneMeta runes[4];
+  ProjectionProbeMeta projection_probes[K_PROJECTION_PROBE_MAX_COUNT];
+};
+
+struct alignas(64) CapturedFrameMeta {
+  uint64_t frame_sequence;        ///< 发布端启动后严格递增的帧序号。
+  uint64_t capture_timestamp_ns;  ///< 整个快照共用的 Unix epoch 纳秒时间。
   uint32_t width;
   uint32_t height;
   uint8_t buffer_id;
   uint8_t format;
-  uint8_t pad[6];
+  uint8_t pad1[30];
+  CameraCalibrationMeta camera_info;
+  RigidTransformF32 world_t_gimbal;           ///< gimbal 到 world 的变换。
+  RigidTransformF32 gimbal_t_camera_optical;  ///< camera_optical 到 gimbal 的变换。
+  RigidTransformF32 gimbal_t_muzzle;          ///< muzzle 到 gimbal 的变换。
+  uint8_t pad2[32];
+  ChassisObservationMeta chassis_observation;
+  GroundTruthBatchMeta ground_truth;
 };
 
-struct alignas(64) ImageTripleBuffer {
+struct alignas(64) FrameTripleBuffer {
   uint8_t state;
   uint8_t write_index;
   uint8_t read_index;
   uint8_t pad[61];
-  ImageMeta slots[3];
+  CapturedFrameMeta slots[3];
 };
 
-struct alignas(64) PoseMeta {
-  uint64_t frame_sequence;
-  float position[3];
-  float quaternion[4];
-  uint64_t timestamp_ns;
-  uint8_t pad[16];
+struct alignas(64) GimbalCmdMeta {
+  uint8_t bytes[192];
 };
 
-struct alignas(64) PoseTripleBuffer {
-  uint8_t state;
-  uint8_t write_index;
-  uint8_t read_index;
-  uint8_t pad[61];
-  PoseMeta slots[3];
+struct alignas(64) RuntimeStateMeta {
+  uint8_t bytes[64];
 };
 
-struct alignas(64) ShmMetaPrefix {
+struct alignas(64) ShmMetaRegion {
   ShmHeader header;
-  ImageTripleBuffer image;
-  PoseTripleBuffer poses[5];
+  FrameTripleBuffer frame;
+  GimbalCmdMeta gimbal_cmd;
+  RuntimeStateMeta runtime_state;
 };
 
 // 编译期校验可防止字段或对齐方式变化后静默破坏跨进程协议。
 static_assert(sizeof(ShmHeader) == 64);
-static_assert(sizeof(ImageMeta) == 32);
-static_assert(sizeof(ImageTripleBuffer) == 192);
-static_assert(sizeof(PoseMeta) == 64);
-static_assert(sizeof(PoseTripleBuffer) == 256);
-static_assert(offsetof(ShmMetaPrefix, image) == 64);
-static_assert(offsetof(ShmMetaPrefix, poses) == 256);
-static_assert(sizeof(ShmMetaPrefix) == 1536);
+static_assert(sizeof(QuaternionF32) == 16);
+static_assert(sizeof(RigidTransformF32) == 32);
+static_assert(sizeof(CameraCalibrationMeta) == 128);
+static_assert(sizeof(GroundTruthTargetMeta) == 64);
+static_assert(sizeof(ProjectionProbeMeta) == 32);
+static_assert(sizeof(GroundTruthBatchMeta) == 2624);
+static_assert(sizeof(CapturedFrameMeta) == 3072);
+static_assert(sizeof(FrameTripleBuffer) == 9280);
+static_assert(offsetof(ShmMetaRegion, frame) == 64);
+static_assert(offsetof(ShmMetaRegion, gimbal_cmd) == 9344);
+static_assert(offsetof(ShmMetaRegion, runtime_state) == 9536);
+static_assert(sizeof(ShmMetaRegion) == 9600);
 
 uint64_t SystemNowNs() noexcept {
   return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -131,18 +205,108 @@ bool Consume(TripleBuffer& buffer, Slot& slot) noexcept {
   return true;
 }
 
+bool Finite(float value) noexcept {
+  return std::isfinite(static_cast<double>(value));
+}
+
+// 除有限性外检查单位四元数范数，避免无效姿态进入后续 TF 组合和投影。
+bool ValidTransform(const RigidTransformF32& transform) noexcept {
+  for (const float VALUE : transform.translation) {
+    if (!Finite(VALUE)) {
+      return false;
+    }
+  }
+  const auto& q = transform.rotation;
+  if (!Finite(q.x) || !Finite(q.y) || !Finite(q.z) || !Finite(q.w)) {
+    return false;
+  }
+  const double NORM = std::sqrt(static_cast<double>(q.x) * q.x + static_cast<double>(q.y) * q.y +
+                                static_cast<double>(q.z) * q.z + static_cast<double>(q.w) * q.w);
+  return std::abs(NORM - 1.0) <= 1.0e-3;
+}
+
+bool ValidCalibration(const CameraCalibrationMeta& calibration, uint32_t width,
+                      uint32_t height) noexcept {
+  if (calibration.width != width || calibration.height != height ||
+      !std::isfinite(calibration.fx) || !std::isfinite(calibration.fy) ||
+      !std::isfinite(calibration.cx) || !std::isfinite(calibration.cy) || calibration.fx <= 0.0 ||
+      calibration.fy <= 0.0 || calibration.cx < 0.0 || calibration.cy < 0.0 ||
+      calibration.cx > width || calibration.cy > height) {
+    return false;
+  }
+  for (const double VALUE : calibration.distortion) {
+    if (!std::isfinite(VALUE)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+mv::geometry::RigidTransform ConvertTransform(const RigidTransformF32& value) noexcept {
+  return {.translation = mv::geometry::Vector3(value.translation[0], value.translation[1],
+                                                value.translation[2]),
+          // Eigen 四元数构造顺序为 w/x/y/z；Talos v4 协议字段为 x/y/z/w。
+          .rotation = mv::geometry::Quaternion(value.rotation.w, value.rotation.x,
+                                               value.rotation.y, value.rotation.z)};
+}
+
+CameraFrame::FrameGeometry ConvertGeometry(const CapturedFrameMeta& metadata) {
+  // Grab() 已完整验证数量、时间戳和数值范围，这里只负责从 ABI 类型提升到 HAL 类型。
+  CameraFrame::FrameGeometry geometry;
+  const auto& camera = metadata.camera_info;
+  geometry.calibration = {
+      .width = camera.width,
+      .height = camera.height,
+      .fx = camera.fx,
+      .fy = camera.fy,
+      .cx = camera.cx,
+      .cy = camera.cy,
+      .distortion = {camera.distortion[0], camera.distortion[1], camera.distortion[2],
+                     camera.distortion[3], camera.distortion[4]}};
+  geometry.world_t_gimbal = ConvertTransform(metadata.world_t_gimbal);
+  geometry.gimbal_t_camera_optical = ConvertTransform(metadata.gimbal_t_camera_optical);
+  geometry.gimbal_t_muzzle = ConvertTransform(metadata.gimbal_t_muzzle);
+
+  const auto& truth = metadata.ground_truth;
+  geometry.targets.reserve(truth.target_count);
+  for (std::size_t index = 0; index < truth.target_count; ++index) {
+    const auto& target = truth.targets[index];
+    geometry.targets.push_back({.id = target.id,
+                                .team = target.team,
+                                .armor_label = target.armor_label,
+                                .is_outpost = target.is_outpost != 0,
+                                .position_world = mv::geometry::Vector3(
+                                    target.position[0], target.position[1], target.position[2]),
+                                .yaw = target.yaw,
+                                .yaw_velocity = target.yaw_velocity});
+  }
+  geometry.projection_probes.reserve(truth.projection_probe_count);
+  for (std::size_t index = 0; index < truth.projection_probe_count; ++index) {
+    const auto& probe = truth.projection_probes[index];
+    geometry.projection_probes.push_back(
+        {.id = probe.id,
+         .position_world = mv::geometry::Vector3(probe.position_world[0],
+                                                 probe.position_world[1],
+                                                 probe.position_world[2])});
+  }
+  return geometry;
+}
+
 }  // namespace
 
 struct TalosDevice::Impl {
-  TalosConfig config;                 ///< 最近一次 Open() 接收的类型化配置。
-  int meta_fd{-1};                    ///< 可读写的元数据文件描述符。
-  int image_pool_fd{-1};              ///< 只读图像池文件描述符。
-  void* meta_mapping{nullptr};        ///< 元数据 mmap 起始地址。
-  void* image_pool_mapping{nullptr};  ///< 图像池 mmap 起始地址。
-  std::size_t image_pool_size{0};     ///< 已映射图像池的字节数。
-  ShmMetaPrefix* meta{nullptr};       ///< 带类型的协议元数据视图。
-  CameraInfo info;                    ///< Open() 成功后对上层公开的信息。
-  bool is_open{false};                ///< 两个映射和发布端心跳均有效。
+  TalosConfig config;                           ///< 最近一次 Open() 接收的类型化配置。
+  int meta_fd{-1};                              ///< 可读写的元数据文件描述符。
+  int image_pool_fd{-1};                        ///< 只读图像池文件描述符。
+  void* meta_mapping{nullptr};                  ///< 元数据 mmap 起始地址。
+  void* image_pool_mapping{nullptr};            ///< 图像池 mmap 起始地址。
+  std::size_t image_pool_size{0};               ///< 已映射图像池的字节数。
+  ShmMetaRegion* meta{nullptr};                 ///< 带类型的协议元数据视图。
+  CameraInfo info;                              ///< Open() 成功后对上层公开的信息。
+  bool is_open{false};                          ///< 两个映射和发布端心跳均有效。
+  std::optional<uint64_t> last_frame_sequence;  ///< 最近接收帧序号，用于拒绝重复或回退帧。
+  std::optional<uint64_t> last_capture_timestamp_ns;  ///< 最近采集时间，用于检查严格单调性。
+  uint64_t invalid_frames{0};  ///< 本次连接以来被完整性校验拒绝的帧数。
 
   /** 按映射、文件描述符的逆依赖顺序释放资源，并恢复关闭状态。 */
   void ResetMappings() noexcept {
@@ -150,7 +314,7 @@ struct TalosDevice::Impl {
       ::munmap(image_pool_mapping, image_pool_size);
     }
     if (meta_mapping != nullptr) {
-      ::munmap(meta_mapping, K_META_REGION_SIZE);
+      ::munmap(meta_mapping, sizeof(ShmMetaRegion));
     }
     if (image_pool_fd >= 0) {
       ::close(image_pool_fd);
@@ -165,6 +329,9 @@ struct TalosDevice::Impl {
     image_pool_size = 0;
     meta = nullptr;
     is_open = false;
+    last_frame_sequence.reset();
+    last_capture_timestamp_ns.reset();
+    invalid_frames = 0;
   }
 
   bool HeartbeatFresh() const noexcept {
@@ -189,25 +356,25 @@ struct TalosDevice::Impl {
 
     struct stat meta_stat {};
     if (::fstat(meta_fd, &meta_stat) != 0 ||
-        meta_stat.st_size < static_cast<off_t>(K_META_REGION_SIZE)) {
+        meta_stat.st_size < static_cast<off_t>(sizeof(ShmMetaRegion))) {
       error = "metadata file has an invalid size";
       ResetMappings();
       return false;
     }
     meta_mapping =
-        ::mmap(nullptr, K_META_REGION_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, meta_fd, 0);
+        ::mmap(nullptr, sizeof(ShmMetaRegion), PROT_READ | PROT_WRITE, MAP_SHARED, meta_fd, 0);
     if (IsMapFailed(meta_mapping)) {
       meta_mapping = nullptr;
       error = "cannot map Talos metadata";
       ResetMappings();
       return false;
     }
-    meta = static_cast<ShmMetaPrefix*>(meta_mapping);
+    meta = static_cast<ShmMetaRegion*>(meta_mapping);
 
     const uint32_t VERSION = meta->header.version;
     const uint32_t IMAGE_WIDTH = meta->header.image_width;
     const uint32_t IMAGE_HEIGHT = meta->header.image_height;
-    if (meta->header.magic != K_SHM_MAGIC || VERSION < K_MIN_VERSION || VERSION > K_MAX_VERSION) {
+    if (meta->header.magic != K_SHM_MAGIC || VERSION != K_SHM_VERSION) {
       error = "unsupported Talos metadata magic/version";
       ResetMappings();
       return false;
@@ -323,43 +490,70 @@ GrabStatus TalosDevice::Grab(CameraFrame& frame) {
       return GrabStatus::DISCONNECTED;
     }
 
-    ImageMeta image_meta{};
-    if (!Consume<ImageMeta>(impl_->meta->image, image_meta)) {
+    CapturedFrameMeta metadata{};
+    if (!Consume<CapturedFrameMeta>(impl_->meta->frame, metadata)) {
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
       continue;
     }
 
-    bool poses_synchronized = true;
-    // 当前视觉帧只有在四辆机器人位姿都属于同一仿真帧时才可交给上层。
-    for (std::size_t index = 0; index < K_SYNC_POSE_COUNT; ++index) {
-      PoseMeta pose{};
-      if (!Consume<PoseMeta>(impl_->meta->poses[index], pose) ||
-          pose.frame_sequence != image_meta.sequence) {
-        poses_synchronized = false;
+    const auto INVALID = [&]() {
+      const uint64_t COUNT = ++impl_->invalid_frames;
+      if (COUNT == 1 || COUNT % 100 == 0) {
+        MV_LOG_WARN("HAL.Camera.Talos", "rejected invalid Talos v4 frame #{} (seq={})", COUNT,
+                    metadata.frame_sequence);
       }
-    }
-
-    if (!poses_synchronized ||
-        image_meta.width != static_cast<uint32_t>(impl_->info.output_width) ||
-        image_meta.height != static_cast<uint32_t>(impl_->info.output_height) ||
-        image_meta.buffer_id >= K_BUFFER_COUNT ||
-        (image_meta.format != K_FORMAT_RGB8 && image_meta.format != K_FORMAT_BGR8)) {
       return GrabStatus::INVALID_FRAME;
+    };
+
+    // 图像、标定、TF 和真值必须来自同一个原子发布的采集快照。任一子结构不同步，
+    // 整帧都不能交给上层，否则 Foxglove 的三维实体和二维重投影将产生假误差。
+    const auto& truth = metadata.ground_truth;
+    bool truth_valid = truth.frame_sequence == metadata.frame_sequence &&
+                       truth.timestamp_ns == metadata.capture_timestamp_ns &&
+                       truth.target_count <= K_GROUND_TRUTH_MAX_TARGETS &&
+                       truth.projection_probe_count <= K_PROJECTION_PROBE_MAX_COUNT;
+    for (std::size_t index = 0; truth_valid && index < truth.target_count; ++index) {
+      const auto& target = truth.targets[index];
+      truth_valid = target.frame_sequence == metadata.frame_sequence &&
+                    target.timestamp_ns == metadata.capture_timestamp_ns && Finite(target.yaw) &&
+                    Finite(target.yaw_velocity) && Finite(target.position[0]) &&
+                    Finite(target.position[1]) && Finite(target.position[2]);
+    }
+    for (std::size_t index = 0; truth_valid && index < truth.projection_probe_count; ++index) {
+      const auto& probe = truth.projection_probes[index];
+      truth_valid = Finite(probe.position_world[0]) && Finite(probe.position_world[1]) &&
+                    Finite(probe.position_world[2]);
     }
 
-    const std::size_t FRAME_SIZE = static_cast<std::size_t>(image_meta.width) *
-                                   static_cast<std::size_t>(image_meta.height) * 3;
-    const std::size_t OFFSET = static_cast<std::size_t>(image_meta.buffer_id) * FRAME_SIZE;
+    if (metadata.capture_timestamp_ns == 0 ||
+        metadata.camera_info.timestamp_ns != metadata.capture_timestamp_ns ||
+        metadata.width != static_cast<uint32_t>(impl_->info.output_width) ||
+        metadata.height != static_cast<uint32_t>(impl_->info.output_height) ||
+        metadata.buffer_id >= K_BUFFER_COUNT ||
+        (metadata.format != K_FORMAT_RGB8 && metadata.format != K_FORMAT_BGR8) ||
+        !ValidCalibration(metadata.camera_info, metadata.width, metadata.height) ||
+        !ValidTransform(metadata.world_t_gimbal) ||
+        !ValidTransform(metadata.gimbal_t_camera_optical) ||
+        !ValidTransform(metadata.gimbal_t_muzzle) || !truth_valid ||
+        (impl_->last_frame_sequence.has_value() &&
+         metadata.frame_sequence <= *impl_->last_frame_sequence) ||
+        (impl_->last_capture_timestamp_ns.has_value() &&
+         metadata.capture_timestamp_ns <= *impl_->last_capture_timestamp_ns)) {
+      return INVALID();
+    }
+
+    const std::size_t FRAME_SIZE =
+        static_cast<std::size_t>(metadata.width) * static_cast<std::size_t>(metadata.height) * 3;
+    const std::size_t OFFSET = static_cast<std::size_t>(metadata.buffer_id) * FRAME_SIZE;
     if (OFFSET > impl_->image_pool_size || FRAME_SIZE > impl_->image_pool_size - OFFSET) {
-      return GrabStatus::INVALID_FRAME;
+      return INVALID();
     }
 
     const auto* source = static_cast<const uint8_t*>(impl_->image_pool_mapping) + OFFSET;
-    const cv::Mat SHARED_IMAGE(static_cast<int>(image_meta.height),
-                               static_cast<int>(image_meta.width), CV_8UC3,
-                               const_cast<uint8_t*>(source));
+    const cv::Mat SHARED_IMAGE(static_cast<int>(metadata.height), static_cast<int>(metadata.width),
+                               CV_8UC3, const_cast<uint8_t*>(source));
     // 发布端会复用共享三缓冲槽位，返回前必须复制或转换到独立拥有的 cv::Mat。
-    if (image_meta.format == K_FORMAT_BGR8) {
+    if (metadata.format == K_FORMAT_BGR8) {
       frame.image = SHARED_IMAGE.clone();
     } else {
       cv::cvtColor(SHARED_IMAGE, frame.image, cv::COLOR_RGB2BGR);
@@ -367,8 +561,13 @@ GrabStatus TalosDevice::Grab(CameraFrame& frame) {
     if (frame.image.empty()) {
       return GrabStatus::FATAL;
     }
-    frame.timestamp = std::chrono::steady_clock::now();
-    frame.sequence = image_meta.sequence;
+    impl_->last_frame_sequence = metadata.frame_sequence;
+    impl_->last_capture_timestamp_ns = metadata.capture_timestamp_ns;
+    frame.receive_steady_time = std::chrono::steady_clock::now();
+    frame.capture_timestamp_ns = metadata.capture_timestamp_ns;
+    frame.geometry = ConvertGeometry(metadata);
+    frame.sequence = metadata.frame_sequence;
+    frame.source_invalid_frames = impl_->invalid_frames;
     return GrabStatus::OK;
   }
   return GrabStatus::TIMEOUT;

@@ -32,6 +32,7 @@ target_include_directories(mv-hal-camera
 target_link_libraries(mv-hal-camera
     PUBLIC
         mv-core               # 依赖 Logger 和 ConfigLoader
+        mv-geometry           # CameraFrame 公开三维几何类型
         opencv_core           # cv::Mat 类型（接口中使用，故 PUBLIC）
         yaml-cpp
     PRIVATE

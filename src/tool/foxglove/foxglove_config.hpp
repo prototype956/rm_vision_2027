@@ -20,9 +20,9 @@ struct ServerConfig {
  * @brief 调试图像的坐标系、发布频率和 JPEG 参数。
  */
 struct ImageConfig {
-  std::string frame_id{"camera_optical_frame"};  ///< CompressedImage 使用的坐标系名称。
-  double max_fps{20.0};                          ///< 调试流最大发布频率。
-  int jpeg_quality{75};                          ///< OpenCV JPEG 质量，范围为 [1, 100]。
+  std::string frame_id{"camera_optical"};  ///< CompressedImage 使用的坐标系名称。
+  double max_fps{20.0};                    ///< 调试流最大发布频率。
+  int jpeg_quality{75};                    ///< OpenCV JPEG 质量，范围为 [1, 100]。
 };
 
 /**

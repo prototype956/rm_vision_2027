@@ -3,7 +3,7 @@
 #include "core/logger.hpp"
 #include "tool/debug/armor_detection_overlay.hpp"
 #include "tool/debug/debug_window.hpp"
-#include "tool/foxglove/armor_debug_publisher.hpp"
+#include "tool/foxglove/vision_debug_publisher.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -191,11 +191,11 @@ int ArmorDetectorTestApplication::Run() {
               CAMERA_INFO.exposure_us);
 
   // Foxglove 只提供可选调试输出，初始化失败或没有可用 sink 均不影响检测验收。
-  std::unique_ptr<tool::foxglove::ArmorDebugPublisher> foxglove_publisher;
+  std::unique_ptr<tool::foxglove::VisionDebugPublisher> foxglove_publisher;
   if (foxglove_config_) {
     try {
       foxglove_publisher =
-          std::make_unique<tool::foxglove::ArmorDebugPublisher>(std::move(*foxglove_config_));
+          std::make_unique<tool::foxglove::VisionDebugPublisher>(std::move(*foxglove_config_));
       if (!foxglove_publisher->IsRunning()) {
         MV_LOG_WARN("ArmorDetectorTest",
                     "Foxglove configured but no live or recording sink started");

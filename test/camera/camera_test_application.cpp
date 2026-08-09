@@ -9,7 +9,6 @@
 #include <cstdint>
 #include <ctime>
 #include <deque>
-#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -20,6 +19,7 @@
 #include <thread>
 #include <vector>
 
+#include <filesystem>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <unistd.h>
@@ -56,7 +56,8 @@ double Seconds(Clock::duration duration) {
 
 // 对帧间隔副本排序并进行线性插值，原始采样顺序保持不变。
 double Percentile(std::vector<double> values, double percentile) {
-  if (values.empty()) return 0.0;
+  if (values.empty())
+    return 0.0;
   std::sort(values.begin(), values.end());
   const double POSITION = percentile * static_cast<double>(values.size() - 1);
   const auto LOWER = static_cast<std::size_t>(std::floor(POSITION));
@@ -124,8 +125,7 @@ void DrawPreview(cv::Mat& image, const hal::CameraFrame& frame, const hal::Camer
   };
   int y = 28;
   for (const auto& line : LINES) {
-    cv::putText(image, line, {16, y}, cv::FONT_HERSHEY_SIMPLEX, 0.62, {0, 0, 0}, 3,
-                cv::LINE_AA);
+    cv::putText(image, line, {16, y}, cv::FONT_HERSHEY_SIMPLEX, 0.62, {0, 0, 0}, 3, cv::LINE_AA);
     cv::putText(image, line, {16, y}, cv::FONT_HERSHEY_SIMPLEX, 0.62, GREEN, 1, cv::LINE_AA);
     y += 27;
   }
@@ -157,8 +157,7 @@ void CountFailure(Metrics& metrics, hal::GrabStatus status) {
 }  // namespace
 
 CameraTestApplication::CameraTestApplication(std::unique_ptr<hal::ICamera> camera,
-                                             YAML::Node camera_config,
-                                             CameraTestSettings settings)
+                                             YAML::Node camera_config, CameraTestSettings settings)
     : camera_(std::move(camera)),
       camera_config_(std::move(camera_config)),
       settings_(std::move(settings)) {}
@@ -195,8 +194,8 @@ int CameraTestApplication::Run() {
       for (int index = 0; restart_pass && index < settings_.frames_per_restart_cycle; ++index) {
         hal::CameraFrame frame;
         const auto STATUS = camera_->Grab(frame);
-        if (STATUS != hal::GrabStatus::OK || frame.image.cols != 1280 ||
-            frame.image.rows != 720 || frame.image.type() != CV_8UC3) {
+        if (STATUS != hal::GrabStatus::OK || frame.image.cols != 1280 || frame.image.rows != 720 ||
+            frame.image.type() != CV_8UC3) {
           MV_LOG_ERROR("CameraTest", "restart cycle {}/{} frame {} failed: {}", cycle,
                        settings_.restart_cycles, index, hal::GrabStatusName(STATUS));
           restart_pass = false;
@@ -205,7 +204,8 @@ int CameraTestApplication::Run() {
         ++frames_grabbed;
       }
       camera_->Close();
-      if (!restart_pass) break;
+      if (!restart_pass)
+        break;
       ++completed_cycles;
       MV_LOG_INFO("CameraTest", "restart cycle {}/{} PASS ({} frames)", cycle,
                   settings_.restart_cycles, settings_.frames_per_restart_cycle);
@@ -213,11 +213,10 @@ int CameraTestApplication::Run() {
 
     // 所有周期完成且 RSS 增长不超过 20 MiB，重复启停测试才通过。
     const double RSS_GROWTH_MIB =
-        static_cast<double>(static_cast<int64_t>(RssBytes()) -
-                            static_cast<int64_t>(INITIAL_RSS)) /
+        static_cast<double>(static_cast<int64_t>(RssBytes()) - static_cast<int64_t>(INITIAL_RSS)) /
         (1024.0 * 1024.0);
-    restart_pass = restart_pass && completed_cycles == settings_.restart_cycles &&
-                   RSS_GROWTH_MIB <= 20.0;
+    restart_pass =
+        restart_pass && completed_cycles == settings_.restart_cycles && RSS_GROWTH_MIB <= 20.0;
     const auto RESTART_SUMMARY_PATH =
         settings_.output_dir / ("restart_summary_" + RUN_ID + ".json");
     std::ofstream restart_summary(RESTART_SUMMARY_PATH);
@@ -270,10 +269,9 @@ int CameraTestApplication::Run() {
   const auto START = Clock::now();
   auto report_start = START;
   auto next_report = START + std::chrono::seconds(settings_.report_interval_sec);
-  auto next_sample =
-      settings_.save_sample_interval_sec > 0
-          ? START + std::chrono::seconds(settings_.save_sample_interval_sec)
-          : Clock::time_point::max();
+  auto next_sample = settings_.save_sample_interval_sec > 0
+                         ? START + std::chrono::seconds(settings_.save_sample_interval_sec)
+                         : Clock::time_point::max();
   auto last_success_time = Clock::time_point{};
   uint64_t last_fingerprint = 0;
   bool have_fingerprint = false;
@@ -289,7 +287,8 @@ int CameraTestApplication::Run() {
   // 主循环持续抓帧，直到达到配置时长、用户关闭预览或遇到不可恢复错误。
   while (true) {
     const auto BEFORE_GRAB = Clock::now();
-    if (Seconds(BEFORE_GRAB - START) >= settings_.duration_sec) break;
+    if (Seconds(BEFORE_GRAB - START) >= settings_.duration_sec)
+      break;
 
     hal::CameraFrame frame;
     last_status = camera_->Grab(frame);
@@ -321,11 +320,12 @@ int CameraTestApplication::Run() {
         }
 
         if (last_success_time != Clock::time_point{}) {
-          const double INTERVAL = Seconds(frame.timestamp - last_success_time);
-          if (INTERVAL > 0.0) metrics.intervals_sec.push_back(INTERVAL);
+          const double INTERVAL = Seconds(frame.receive_steady_time - last_success_time);
+          if (INTERVAL > 0.0)
+            metrics.intervals_sec.push_back(INTERVAL);
           metrics.max_no_valid_frame_sec = std::max(metrics.max_no_valid_frame_sec, INTERVAL);
         }
-        last_success_time = frame.timestamp;
+        last_success_time = frame.receive_steady_time;
 
         // 指纹只用于诊断重复帧，不直接作为本次验收的失败条件。
         const uint64_t FINGERPRINT = FrameFingerprint(frame.image);
@@ -358,8 +358,8 @@ int CameraTestApplication::Run() {
             std::max(metrics.max_no_valid_frame_sec, Seconds(NOW - last_success_time));
       }
       events << "{\"elapsed_sec\":" << Seconds(NOW - START) << ",\"event\":\"grab_failure\","
-             << "\"status\":\"" << hal::GrabStatusName(last_status) << "\",\"last_sequence\":"
-             << last_good_frame.sequence << "}\n";
+             << "\"status\":\"" << hal::GrabStatusName(last_status)
+             << "\",\"last_sequence\":" << last_good_frame.sequence << "}\n";
       MV_LOG_WARN("CameraTest", "grab {} at total={} last_sequence={}",
                   hal::GrabStatusName(last_status), metrics.total, last_good_frame.sequence);
     }
@@ -373,7 +373,8 @@ int CameraTestApplication::Run() {
                     static_cast<double>(report_success) / REPORT_ELAPSED, Seconds(NOW - START));
         preview_window->Show(preview);
       }
-      if (preview_window->Poll().exit_requested) break;
+      if (preview_window->Poll().exit_requested)
+        break;
     }
 
     // 每个报告周期更新滚动一分钟 FPS、帧间隔分位数及进程资源占用。
@@ -387,10 +388,8 @@ int CameraTestApplication::Run() {
         post_warmup_success_times.pop_front();
       }
       if (ELAPSED >= settings_.warmup_sec + 60.0) {
-        const double MINUTE_FPS =
-            static_cast<double>(post_warmup_success_times.size()) / 60.0;
-        metrics.minimum_post_warmup_fps =
-            std::min(metrics.minimum_post_warmup_fps, MINUTE_FPS);
+        const double MINUTE_FPS = static_cast<double>(post_warmup_success_times.size()) / 60.0;
+        metrics.minimum_post_warmup_fps = std::min(metrics.minimum_post_warmup_fps, MINUTE_FPS);
       }
       if (baseline_fps == 0.0 && ELAPSED >= settings_.warmup_sec) {
         baseline_fps = settings_.warmup_sec > 0
@@ -402,9 +401,8 @@ int CameraTestApplication::Run() {
       const double P50 = Percentile(metrics.intervals_sec, 0.50) * 1000.0;
       const double P95 = Percentile(metrics.intervals_sec, 0.95) * 1000.0;
       const double P99 = Percentile(metrics.intervals_sec, 0.99) * 1000.0;
-      const double CPU =
-          100.0 * static_cast<double>(std::clock() - INITIAL_CPU) / CLOCKS_PER_SEC /
-          std::max(ELAPSED, 1e-6);
+      const double CPU = 100.0 * static_cast<double>(std::clock() - INITIAL_CPU) / CLOCKS_PER_SEC /
+                         std::max(ELAPSED, 1e-6);
       const double RSS_MIB = static_cast<double>(RssBytes()) / (1024.0 * 1024.0);
       metrics_csv << ELAPSED << ',' << metrics.total << ',' << metrics.success << ','
                   << (metrics.total - metrics.success) << ',' << FPS << ',' << P50 << ',' << P95
@@ -421,8 +419,7 @@ int CameraTestApplication::Run() {
     }
 
     // TIMEOUT 和 INVALID_FRAME 可继续统计；断开或致命错误立即结束主循环。
-    if (last_status == hal::GrabStatus::DISCONNECTED ||
-        last_status == hal::GrabStatus::FATAL) {
+    if (last_status == hal::GrabStatus::DISCONNECTED || last_status == hal::GrabStatus::FATAL) {
       MV_LOG_ERROR("CameraTest", "stopping after {} (last successful sequence={})",
                    hal::GrabStatusName(last_status), last_good_frame.sequence);
       break;
@@ -442,15 +439,14 @@ int CameraTestApplication::Run() {
   const bool ENOUGH_FOR_BASELINE = ELAPSED >= settings_.warmup_sec && baseline_fps > 0.0;
   const bool ENOUGH_FOR_MINUTE = ELAPSED >= settings_.warmup_sec + 60.0;
   const bool FPS_PASS =
-      !ENOUGH_FOR_MINUTE ||
-      (std::isfinite(metrics.minimum_post_warmup_fps) &&
-       metrics.minimum_post_warmup_fps >= 0.95 * baseline_fps);
+      !ENOUGH_FOR_MINUTE || (std::isfinite(metrics.minimum_post_warmup_fps) &&
+                             metrics.minimum_post_warmup_fps >= 0.95 * baseline_fps);
   const bool P99_PASS = !ENOUGH_FOR_BASELINE || P99 <= 2.0 / baseline_fps;
 
   // 汇总配置文档约定的有效率、FPS、时延、连续空窗、内存和连接状态门槛。
-  const bool PASS = metrics.total > 0 && SUCCESS_RATIO >= 0.999 &&
-                    metrics.resolution_errors == 0 && metrics.type_errors == 0 && FPS_PASS &&
-                    P99_PASS && metrics.max_no_valid_frame_sec < 0.5 && RSS_GROWTH_MIB <= 20.0 &&
+  const bool PASS = metrics.total > 0 && SUCCESS_RATIO >= 0.999 && metrics.resolution_errors == 0 &&
+                    metrics.type_errors == 0 && FPS_PASS && P99_PASS &&
+                    metrics.max_no_valid_frame_sec < 0.5 && RSS_GROWTH_MIB <= 20.0 &&
                     metrics.disconnected == 0 && metrics.fatal == 0;
 
   // summary 是长时测试的最终机器可读结果，进程退出码与 result 字段保持一致。
@@ -469,9 +465,8 @@ int CameraTestApplication::Run() {
           << "  \"fatal_errors\": " << metrics.fatal << ",\n"
           << "  \"baseline_fps\": " << baseline_fps << ",\n"
           << "  \"minimum_post_warmup_fps\": "
-          << (std::isfinite(metrics.minimum_post_warmup_fps)
-                  ? metrics.minimum_post_warmup_fps
-                  : 0.0)
+          << (std::isfinite(metrics.minimum_post_warmup_fps) ? metrics.minimum_post_warmup_fps
+                                                             : 0.0)
           << ",\n"
           << "  \"frame_interval_p50_ms\": " << Percentile(metrics.intervals_sec, 0.50) * 1000.0
           << ",\n"

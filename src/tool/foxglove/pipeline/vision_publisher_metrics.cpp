@@ -1,9 +1,9 @@
-#include "tool/foxglove/armor_detector/armor_publisher_metrics.hpp"
+#include "tool/foxglove/pipeline/vision_publisher_metrics.hpp"
 
 #include <algorithm>
 #include <cmath>
 
-namespace mv::tool::foxglove::armor_detector {
+namespace mv::tool::foxglove::pipeline {
 namespace {
 
 double Percentile(std::vector<double> values, double quantile) {
@@ -26,39 +26,39 @@ LatencyPercentiles Summarize(const std::vector<double>& values) {
 
 }  // namespace
 
-void ArmorPublisherMetrics::OnSubmitted() noexcept {
+void VisionPublisherMetrics::OnSubmitted() noexcept {
   submitted_frames_.fetch_add(1, std::memory_order_relaxed);
 }
 
-void ArmorPublisherMetrics::OnEnqueued(bool overwritten) noexcept {
+void VisionPublisherMetrics::OnEnqueued(bool overwritten) noexcept {
   enqueued_frames_.fetch_add(1, std::memory_order_relaxed);
   if (overwritten) {
     queue_overwritten_frames_.fetch_add(1, std::memory_order_relaxed);
   }
 }
 
-void ArmorPublisherMetrics::OnRateLimited() noexcept {
+void VisionPublisherMetrics::OnRateLimited() noexcept {
   rate_limited_frames_.fetch_add(1, std::memory_order_relaxed);
 }
 
-std::uint64_t ArmorPublisherMetrics::OnEncodingError() noexcept {
+std::uint64_t VisionPublisherMetrics::OnEncodingError() noexcept {
   return encoding_errors_.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
-void ArmorPublisherMetrics::OnEncoded() noexcept {
+void VisionPublisherMetrics::OnEncoded() noexcept {
   encoded_frames_.fetch_add(1, std::memory_order_relaxed);
 }
 
-void ArmorPublisherMetrics::OnLivePublished() noexcept {
+void VisionPublisherMetrics::OnLivePublished() noexcept {
   live_published_frames_.fetch_add(1, std::memory_order_relaxed);
 }
 
-void ArmorPublisherMetrics::OnRecorded() noexcept {
+void VisionPublisherMetrics::OnRecorded() noexcept {
   recorded_frames_.fetch_add(1, std::memory_order_relaxed);
 }
 
-void ArmorPublisherMetrics::AddLatency(std::optional<double> jpeg_ms,
-                                       double publish_latency_ms) noexcept {
+void VisionPublisherMetrics::AddLatency(std::optional<double> jpeg_ms,
+                                        double publish_latency_ms) noexcept {
   try {
     std::lock_guard lock(latency_mutex_);
     if (jpeg_ms.has_value()) {
@@ -69,19 +69,18 @@ void ArmorPublisherMetrics::AddLatency(std::optional<double> jpeg_ms,
   }
 }
 
-PipelineCounts ArmorPublisherMetrics::Counts() const noexcept {
-  return {
-      .rate_limited_frames = rate_limited_frames_.load(std::memory_order_relaxed),
-      .queue_overwritten_frames = queue_overwritten_frames_.load(std::memory_order_relaxed),
-  };
+PipelineCounts VisionPublisherMetrics::Counts() const noexcept {
+  return {.rate_limited_frames = rate_limited_frames_.load(std::memory_order_relaxed),
+          .queue_overwritten_frames = queue_overwritten_frames_.load(std::memory_order_relaxed)};
 }
 
-PublisherStats ArmorPublisherMetrics::Snapshot(
+VisionPublisherStats VisionPublisherMetrics::Snapshot(
     const runtime::SessionSnapshot& session,
     const runtime::SubscriptionSnapshot& image_subscription,
-    const runtime::SubscriptionSnapshot& annotation_subscription,
-    const runtime::SubscriptionSnapshot& stats_subscription) const noexcept {
-  PublisherStats result;
+    const runtime::SubscriptionSnapshot& armor_annotation_subscription,
+    const runtime::SubscriptionSnapshot& armor_stats_subscription,
+    const runtime::SubscriptionSnapshot& debug_stats_subscription) const noexcept {
+  VisionPublisherStats result;
   result.submitted_frames = submitted_frames_.load(std::memory_order_relaxed);
   result.enqueued_frames = enqueued_frames_.load(std::memory_order_relaxed);
   result.rate_limited_frames = rate_limited_frames_.load(std::memory_order_relaxed);
@@ -96,11 +95,13 @@ PublisherStats ArmorPublisherMetrics::Snapshot(
   result.client_disconnects = session.client_disconnects;
   result.current_clients = session.current_clients;
   result.image_subscribers = image_subscription.subscribers;
-  result.annotation_subscribers = annotation_subscription.subscribers;
-  result.stats_subscribers = stats_subscription.subscribers;
+  result.armor_annotation_subscribers = armor_annotation_subscription.subscribers;
+  result.armor_stats_subscribers = armor_stats_subscription.subscribers;
+  result.debug_stats_subscribers = debug_stats_subscription.subscribers;
   result.image_ever_subscribed = image_subscription.ever_subscribed;
-  result.annotation_ever_subscribed = annotation_subscription.ever_subscribed;
-  result.stats_ever_subscribed = stats_subscription.ever_subscribed;
+  result.armor_annotation_ever_subscribed = armor_annotation_subscription.ever_subscribed;
+  result.armor_stats_ever_subscribed = armor_stats_subscription.ever_subscribed;
+  result.debug_stats_ever_subscribed = debug_stats_subscription.ever_subscribed;
   result.live_active = session.live_active;
   result.recording_active = session.recording_active;
   result.recording_closed_cleanly = session.recording_closed_cleanly;
@@ -113,4 +114,4 @@ PublisherStats ArmorPublisherMetrics::Snapshot(
   return result;
 }
 
-}  // namespace mv::tool::foxglove::armor_detector
+}  // namespace mv::tool::foxglove::pipeline

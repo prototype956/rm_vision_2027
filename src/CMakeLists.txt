@@ -5,6 +5,7 @@
 message(STATUS "  Configuring source modules...")
 
 add_subdirectory(core)
+add_subdirectory(geometry)
 add_subdirectory(tool)
 
 if(USE_OPENVINO)

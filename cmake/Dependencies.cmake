@@ -27,6 +27,10 @@ message(STATUS "  ✓ spdlog found: ${spdlog_VERSION}")
 find_package(yaml-cpp REQUIRED)
 message(STATUS "  ✓ yaml-cpp found")
 
+# Eigen - 内部三维几何与固定尺寸线性代数
+find_package(Eigen3 3.4 REQUIRED NO_MODULE)
+message(STATUS "  ✓ Eigen found: ${Eigen3_VERSION}")
+
 # OpenCV - 当前应用、HAL 与测试所需组件
 find_package(OpenCV REQUIRED COMPONENTS
     core
