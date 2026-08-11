@@ -1,0 +1,44 @@
+schema_version: 4
+mode: gradient_axis_shadow
+# percentile_pca_shadow baseline only
+axial_expansion: 0.20
+lateral_expansion: 0.50
+min_roi_area_px: 24
+min_support_pixels: 8
+color_quantile: 0.70
+brightness_quantile: 0.60
+min_color_difference: 4.0
+min_brightness: 24.0
+morphology_kernel: 3
+min_axis_ratio: 2.0
+max_center_offset_ratio: 0.75
+max_parallel_angle_deg: 45.0
+max_length_ratio: 3.0
+endpoint_low_quantile: 0.02
+endpoint_high_quantile: 0.98
+endpoint_band_ratio: 0.12
+max_corner_move_height_ratio: 0.35
+min_polygon_area_px: 4.0
+
+# gradient_axis_shadow (independent grayscale-weighted PCA + endpoint gradients)
+gradient_axial_expansion: 0.10
+gradient_lateral_half_width_ratio: 0.18
+gradient_lateral_half_width_min_px: 3.0
+gradient_lateral_half_width_max_px: 12.0
+gradient_min_light_length_px: 12.0
+gradient_short_light_threshold_px: 30.0
+gradient_min_estimated_width_px: 3.0
+gradient_max_axis_angle_deg: 15.0
+gradient_max_center_offset_ratio: 0.20
+gradient_search_start_ratio: 0.40
+gradient_search_end_ratio: 0.60
+gradient_short_scan_lines: 3
+gradient_long_scan_lines: 5
+gradient_sample_step_px: 0.25
+gradient_smoothing_sigma_px: 0.75
+gradient_min_strength_gray: 6.0
+gradient_min_contrast_ratio: 0.15
+gradient_min_inner_brightness_ratio: 0.20
+gradient_max_secondary_peak_ratio: 0.85
+gradient_max_profile_peak_spread_px: 1.0
+gradient_max_corner_move_px: 2.0

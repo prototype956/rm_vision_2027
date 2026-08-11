@@ -17,9 +17,13 @@ class ConfigError : public std::runtime_error {
 
 class ConfigLoader {
  public:
-
-  static YAML::Node LoadFile(const std::filesystem::path& input_path) {
+  static YAML::Node LoadFile(const std::filesystem::path& input_path,
+                             int supported_schema_version = 1) {
     const auto PATH = NormalizeExistingFile(input_path);
+
+    if (supported_schema_version <= 0) {
+      throw ConfigError("supported schema_version must be positive for '" + PATH.string() + "'");
+    }
 
     YAML::Node root;
     try {
@@ -30,9 +34,10 @@ class ConfigLoader {
 
     RequireMap(root, "config '" + PATH.string() + "'");
     const int VERSION = Require<int>(root, "schema_version", "config '" + PATH.string() + "'");
-    if (VERSION != 1) {
+    if (VERSION != supported_schema_version) {
       throw ConfigError("unsupported schema_version in '" + PATH.string() +
-                        "': " + std::to_string(VERSION));
+                        "': " + std::to_string(VERSION) + " (expected " +
+                        std::to_string(supported_schema_version) + ")");
     }
     return root;
   }

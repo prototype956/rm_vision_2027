@@ -3,6 +3,7 @@
 #include "core/config.hpp"
 #include "core/logger.hpp"
 #include "hal/camera/camera_factory.hpp"
+#include "modules/armor_corner_refiner/armor_corner_refiner.hpp"
 #include "modules/armor_detector/armor_detector.hpp"
 #include "modules/armor_detector/armor_detector_config.hpp"
 #include "modules/armor_pnp/armor_pnp.hpp"
@@ -87,6 +88,14 @@ void LogPnpHealth(const modules::ArmorPnpFrameResult& result, std::uint64_t sequ
                   std::size_t total_truth_armors) {
   if (sequence % 100 != 0)
     return;
+  std::string dominant_refinement_failure = "none";
+  std::size_t dominant_refinement_failure_count = 0;
+  for (const auto& [reason, count] : result.refinement_summary.failure_reasons) {
+    if (count > dominant_refinement_failure_count) {
+      dominant_refinement_failure = reason;
+      dominant_refinement_failure_count = count;
+    }
+  }
   std::size_t truth_attempted = 0;
   std::size_t truth_succeeded = 0;
   double max_rmse = 0.0;
@@ -111,6 +120,33 @@ void LogPnpHealth(const modules::ArmorPnpFrameResult& result, std::uint64_t sequ
       "max_rotation={:.3f}deg",
       sequence, truth_succeeded, truth_attempted, total_truth_armors, max_rmse, max_position_error,
       max_rotation_error);
+  MV_LOG_INFO("ArmorPnP",
+              "A/B seq={} raw_solved={}/{} refined_solved={}/{} refine={}/{} fallback={} "
+              "corner_p95(raw/refined)={:.3f}/{:.3f}px depth_p95={:.4f}/{:.4f}m "
+              "top_fallback={}({})",
+              sequence, result.raw_solve_summary.succeeded, result.raw_solve_summary.attempted,
+              result.refined_solve_summary.succeeded, result.refined_solve_summary.attempted,
+              result.refinement_summary.succeeded, result.refinement_summary.attempted,
+              result.refinement_summary.fallback,
+              result.detection_raw_summary.mean_corner_error_px.p95,
+              result.detection_refined_with_fallback_summary.mean_corner_error_px.p95,
+              result.detection_raw_summary.depth_error_m.p95,
+              result.detection_refined_with_fallback_summary.depth_error_m.p95,
+              dominant_refinement_failure, dominant_refinement_failure_count);
+  const auto MATCHED_RAW = std::find_if(
+      result.attempts.begin(), result.attempts.end(), [](const modules::ArmorPnpAttempt& attempt) {
+        return attempt.source == modules::PnpInputSource::DETECTION_RAW && attempt.estimate &&
+               attempt.estimate->truth_id;
+      });
+  if (MATCHED_RAW != result.attempts.end()) {
+    const auto& value = *MATCHED_RAW->estimate;
+    MV_LOG_INFO("ArmorPnP",
+                "matched raw truth={} corner du=[{:.1f},{:.1f},{:.1f},{:.1f}] "
+                "dv=[{:.1f},{:.1f},{:.1f},{:.1f}]",
+                *value.truth_id, value.corner_delta_u_px[0], value.corner_delta_u_px[1],
+                value.corner_delta_u_px[2], value.corner_delta_u_px[3], value.corner_delta_v_px[0],
+                value.corner_delta_v_px[1], value.corner_delta_v_px[2], value.corner_delta_v_px[3]);
+  }
 }
 
 }  // namespace
@@ -133,8 +169,12 @@ int Run() {
       return 2;
     }
 
-    const auto PNP_YAML = ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_pnp.yaml");
+    const auto PNP_YAML = ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_pnp.yaml", 2);
     modules::ArmorPnp pnp(modules::ParseArmorPnpConfig(PNP_YAML));
+    const auto REFINER_YAML =
+        ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_corner_refiner.yaml", 4);
+    modules::ArmorCornerRefiner corner_refiner(
+        modules::ParseArmorCornerRefinerConfig(REFINER_YAML));
 
     const auto CAMERA_SELECTION = LoadCameraSelection(CONFIG_ROOT);
     const auto CAMERA_CONFIG = ConfigLoader::LoadFile(CAMERA_SELECTION.config_path);
@@ -177,7 +217,14 @@ int Run() {
         try {
           const auto DETECTIONS = detector.Detect(frame.image);
           const auto STATS = detector.LastStats();
-          const auto PNP_RESULT = pnp.ProcessFrame(frame, DETECTIONS);
+          std::vector<modules::CornerRefinementResult> refinements;
+          refinements.reserve(DETECTIONS.size());
+          for (const auto& detection : DETECTIONS) {
+            refinements.push_back(
+                corner_refiner.Refine(frame.image, detection.corners, detection.color,
+                                      modules::ArmorTypeForLabel(detection.label)));
+          }
+          const auto PNP_RESULT = pnp.ProcessFrame(frame, DETECTIONS, refinements);
           LogPnpHealth(PNP_RESULT, frame.sequence,
                        frame.geometry ? frame.geometry->armors.size() : 0);
           if (foxglove_publisher) {

@@ -42,6 +42,8 @@
 # Local caches and editor/OS temporary files
 # =============================================================================
 /.cache/
+__pycache__/
+*.py[cod]
 /.idea/
 *.swp
 *.swo

@@ -26,7 +26,11 @@ enum class VisionTopic {
   GROUND_TRUTH,            ///< world 下的仿真三维真值。
   PROJECTION_ANNOTATIONS,  ///< 真值探针在相机图像上的重投影点。
   PNP_ESTIMATES,
-  PNP_ANNOTATIONS,
+  PNP_CORNERS,
+  PNP_REPROJECTION,
+  PNP_ERROR_VECTORS,
+  CORNER_REFINER_AXES,
+  CORNER_REFINER_CANDIDATES,
   PNP_STATS,
 };
 
@@ -42,7 +46,11 @@ struct ChannelIds {
   std::uint64_t ground_truth{0};            ///< 三维真值频道 ID。
   std::uint64_t projection_annotations{0};  ///< 真值重投影标注频道 ID。
   std::uint64_t pnp_estimates{0};
-  std::uint64_t pnp_annotations{0};
+  std::uint64_t pnp_corners{0};
+  std::uint64_t pnp_reprojection{0};
+  std::uint64_t pnp_error_vectors{0};
+  std::uint64_t corner_refiner_axes{0};
+  std::uint64_t corner_refiner_candidates{0};
   std::uint64_t pnp_stats{0};
 };
 
@@ -56,7 +64,7 @@ struct ChannelPublishError {
 struct ChannelPublishResult {
   bool attempted{false};                         ///< 是否至少调用了一个频道的 log()。
   bool success{true};                            ///< 所有已尝试频道是否均成功。
-  std::array<ChannelPublishError, 12> errors{};  ///< 每个固定话题最多记录一个错误。
+  std::array<ChannelPublishError, 16> errors{};  ///< 每个固定话题最多记录一个错误。
   std::size_t error_count{0};                    ///< errors 中的有效元素数量。
 };
 
@@ -95,7 +103,11 @@ class VisionChannelSet final {
   std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> ground_truth_;
   std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> projection_annotations_;
   std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> pnp_estimates_;
-  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> pnp_annotations_;
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> pnp_corners_;
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> pnp_reprojection_;
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> pnp_error_vectors_;
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> corner_refiner_axes_;
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> corner_refiner_candidates_;
   std::unique_ptr<::foxglove::RawChannel> pnp_stats_;
   bool closed_{false};  ///< 保证显式 Close() 与析构关闭幂等。
 };

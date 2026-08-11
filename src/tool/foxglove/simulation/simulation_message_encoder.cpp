@@ -3,9 +3,11 @@
 #include "geometry/rigid_transform.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include <fmt/format.h>
@@ -126,7 +128,9 @@ namespace {
     double min_v = std::numeric_limits<double>::infinity();
     double max_u = -std::numeric_limits<double>::infinity();
     double max_v = -std::numeric_limits<double>::infinity();
-    for (const auto& corner : armor.corners_world) {
+    std::array<::foxglove::schemas::Point2, 4> projected{};
+    for (std::size_t index = 0; index < armor.corners_world.size(); ++index) {
+      const auto& corner = armor.corners_world[index];
       const auto camera_point = mv::geometry::TransformPoint(CAMERA_T_WORLD, corner);
       if (camera_point.z() <= 0.0) {
         visible = false;
@@ -138,12 +142,25 @@ namespace {
       min_v = std::min(min_v, v);
       max_u = std::max(max_u, u);
       max_v = std::max(max_v, v);
-      polygon.points.push_back({.x = u, .y = v});
+      projected[index] = {.x = u, .y = v};
+      polygon.points.push_back(projected[index]);
     }
     const bool intersects_image =
         max_u >= 0.0 && max_v >= 0.0 && min_u < calibration.width && min_v < calibration.height;
-    if (visible && intersects_image)
+    if (visible && intersects_image) {
       annotations.points.push_back(std::move(polygon));
+      constexpr std::array<std::string_view, 4> CORNER_NAMES{"TL", "TR", "BR", "BL"};
+      for (std::size_t index = 0; index < projected.size(); ++index) {
+        ::foxglove::schemas::TextAnnotation label;
+        label.timestamp = timestamp;
+        label.position = {.x = projected[index].x + 2.0, .y = projected[index].y - 2.0};
+        label.text = fmt::format("GT:{}", CORNER_NAMES[index]);
+        label.font_size = 10.0;
+        label.text_color = {.r = 1.0, .g = 0.85, .a = 1.0};
+        label.background_color = {.a = 0.65};
+        annotations.texts.push_back(std::move(label));
+      }
+    }
   }
   return annotations;
 }

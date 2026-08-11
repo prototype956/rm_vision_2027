@@ -14,7 +14,19 @@ namespace mv::tool::foxglove::pnp {
     const modules::ArmorPnpFrameResult& result, const hal::CameraFrame::FrameGeometry& geometry,
     const ::foxglove::schemas::Timestamp& timestamp);
 
-[[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeAnnotations(
+[[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeCorners(
+    const modules::ArmorPnpFrameResult& result, const ::foxglove::schemas::Timestamp& timestamp);
+
+[[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeReprojection(
+    const modules::ArmorPnpFrameResult& result, const ::foxglove::schemas::Timestamp& timestamp);
+
+[[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeErrorVectors(
+    const modules::ArmorPnpFrameResult& result, const ::foxglove::schemas::Timestamp& timestamp);
+
+[[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeCornerRefinerAxes(
+    const modules::ArmorPnpFrameResult& result, const ::foxglove::schemas::Timestamp& timestamp);
+
+[[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeCornerRefinerCandidates(
     const modules::ArmorPnpFrameResult& result, const ::foxglove::schemas::Timestamp& timestamp);
 
 [[nodiscard]] std::string EncodeStats(const modules::ArmorPnpFrameResult& result,
