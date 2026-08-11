@@ -8,8 +8,8 @@ target_include_directories(mv-modules-armor-corner-refiner PUBLIC
 )
 
 target_link_libraries(mv-modules-armor-corner-refiner
-    PUBLIC mv-core mv-hal-camera mv-modules-armor-detector
+    PUBLIC mv-core
     PRIVATE opencv_core opencv_imgproc yaml-cpp
 )
 
-message(STATUS "    + mv-modules-armor-corner-refiner (shadow light-bar endpoint strategies)")
+message(STATUS "    + mv-modules-armor-corner-refiner (JLU PCA + brightness-gradient endpoints)")

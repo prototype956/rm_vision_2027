@@ -121,27 +121,25 @@ void LogPnpHealth(const modules::ArmorPnpFrameResult& result, std::uint64_t sequ
       sequence, truth_succeeded, truth_attempted, total_truth_armors, max_rmse, max_position_error,
       max_rotation_error);
   MV_LOG_INFO("ArmorPnP",
-              "A/B seq={} raw_solved={}/{} refined_solved={}/{} refine={}/{} fallback={} "
-              "corner_p95(raw/refined)={:.3f}/{:.3f}px depth_p95={:.4f}/{:.4f}m "
+              "single-chain seq={} solved={}/{} refine={}/{} fallback={} "
+              "corner_p95(raw/final)={:.3f}/{:.3f}px depth_p95={:.4f}m "
               "top_fallback={}({})",
-              sequence, result.raw_solve_summary.succeeded, result.raw_solve_summary.attempted,
-              result.refined_solve_summary.succeeded, result.refined_solve_summary.attempted,
+              sequence, result.solve_summary.succeeded, result.solve_summary.attempted,
               result.refinement_summary.succeeded, result.refinement_summary.attempted,
               result.refinement_summary.fallback,
-              result.detection_raw_summary.mean_corner_error_px.p95,
-              result.detection_refined_with_fallback_summary.mean_corner_error_px.p95,
-              result.detection_raw_summary.depth_error_m.p95,
-              result.detection_refined_with_fallback_summary.depth_error_m.p95,
+              result.refinement_summary.raw_mean_corner_error_px.p95,
+              result.refinement_summary.final_mean_corner_error_px.p95,
+              result.detection_summary.depth_error_m.p95,
               dominant_refinement_failure, dominant_refinement_failure_count);
-  const auto MATCHED_RAW = std::find_if(
+  const auto MATCHED_DETECTION = std::find_if(
       result.attempts.begin(), result.attempts.end(), [](const modules::ArmorPnpAttempt& attempt) {
-        return attempt.source == modules::PnpInputSource::DETECTION_RAW && attempt.estimate &&
+        return attempt.source == modules::PnpInputSource::DETECTION && attempt.estimate &&
                attempt.estimate->truth_id;
       });
-  if (MATCHED_RAW != result.attempts.end()) {
-    const auto& value = *MATCHED_RAW->estimate;
+  if (MATCHED_DETECTION != result.attempts.end()) {
+    const auto& value = *MATCHED_DETECTION->estimate;
     MV_LOG_INFO("ArmorPnP",
-                "matched raw truth={} corner du=[{:.1f},{:.1f},{:.1f},{:.1f}] "
+                "matched final truth={} corner du=[{:.1f},{:.1f},{:.1f},{:.1f}] "
                 "dv=[{:.1f},{:.1f},{:.1f},{:.1f}]",
                 *value.truth_id, value.corner_delta_u_px[0], value.corner_delta_u_px[1],
                 value.corner_delta_u_px[2], value.corner_delta_u_px[3], value.corner_delta_v_px[0],
@@ -172,7 +170,7 @@ int Run() {
     const auto PNP_YAML = ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_pnp.yaml", 2);
     modules::ArmorPnp pnp(modules::ParseArmorPnpConfig(PNP_YAML));
     const auto REFINER_YAML =
-        ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_corner_refiner.yaml", 4);
+        ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_corner_refiner.yaml");
     modules::ArmorCornerRefiner corner_refiner(
         modules::ParseArmorCornerRefinerConfig(REFINER_YAML));
 
@@ -217,12 +215,12 @@ int Run() {
         try {
           const auto DETECTIONS = detector.Detect(frame.image);
           const auto STATS = detector.LastStats();
+          cv::Mat gray_image;
+          cv::cvtColor(frame.image, gray_image, cv::COLOR_BGR2GRAY);
           std::vector<modules::CornerRefinementResult> refinements;
           refinements.reserve(DETECTIONS.size());
           for (const auto& detection : DETECTIONS) {
-            refinements.push_back(
-                corner_refiner.Refine(frame.image, detection.corners, detection.color,
-                                      modules::ArmorTypeForLabel(detection.label)));
+            refinements.push_back(corner_refiner.Refine(gray_image, detection.corners));
           }
           const auto PNP_RESULT = pnp.ProcessFrame(frame, DETECTIONS, refinements);
           LogPnpHealth(PNP_RESULT, frame.sequence,

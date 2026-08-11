@@ -61,6 +61,7 @@ std::optional<std::array<cv::Point2f, 4>> ProjectTruth(
       geometry::Compose(geometry.world_t_gimbal, geometry.gimbal_t_camera_optical);
   const auto camera_t_world = geometry::Inverse(world_t_camera);
   const auto camera_t_armor = geometry::Compose(camera_t_world, armor.world_t_armor);
+  // 只保留正面朝向相机且四角均在相机前方的真值，避免生成无物理意义的 PnP 基准。
   const auto normal_camera = geometry::TransformVector(camera_t_armor, geometry::Vector3::UnitZ());
   if (normal_camera.dot(camera_t_armor.translation) >= 0.0) {
     return std::nullopt;
@@ -168,6 +169,7 @@ std::vector<std::size_t> MatchDetectionsToTruth(std::span<const ArmorDetection> 
         costs[row][column] = FORBIDDEN_COST;
         continue;
       }
+      // IoU 权重为 2，中心和同索引角点距离共同消除相邻同标签目标的歧义。
       costs[row][column] = 2.0 * (1.0 - iou) + center_ratio + corner_ratio;
     }
   }
@@ -230,6 +232,7 @@ void AddTruthErrors(ArmorPoseEstimate& estimate, const hal::CameraFrame::GroundT
   const auto world_t_camera =
       geometry::Compose(geometry.world_t_gimbal, geometry.gimbal_t_camera_optical);
   const auto actual = geometry::Compose(geometry::Inverse(world_t_camera), truth.world_t_armor);
+  // 所有有符号误差统一定义为 estimate - truth，并在 camera_optical 坐标系中表达。
   const auto position_error = estimate.camera_t_armor.translation - actual.translation;
   estimate.truth_id = truth.id;
   estimate.truth_distance_m = actual.translation.norm();
@@ -262,6 +265,7 @@ PnpPercentiles Percentiles(const std::vector<double>& samples) {
     return {};
   auto sorted = samples;
   std::sort(sorted.begin(), sorted.end());
+  // 使用最近秩定义，保证输出始终等于一个实际观测样本。
   const auto AT = [&](double fraction) {
     const auto INDEX =
         static_cast<std::size_t>(std::ceil(fraction * static_cast<double>(sorted.size())) - 1.0);
@@ -385,10 +389,8 @@ const char* PnpInputSourceName(PnpInputSource source) noexcept {
   switch (source) {
     case PnpInputSource::GROUND_TRUTH:
       return "ground_truth";
-    case PnpInputSource::DETECTION_RAW:
-      return "detection_raw";
-    case PnpInputSource::DETECTION_REFINED:
-      return "detection_refined";
+    case PnpInputSource::DETECTION:
+      return "detection";
   }
   return "unknown";
 }
@@ -419,6 +421,7 @@ ArmorPnpAttempt ArmorPnp::Solve(std::span<const cv::Point2f, 4> image_corners,
   std::vector<cv::Mat> rvecs;
   std::vector<cv::Mat> tvecs;
   try {
+    // 平面方形目标使用 IPPE 获得多个姿态候选，后续统一施加可见性与距离约束。
     const int count = cv::solvePnPGeneric(
         std::vector<cv::Point3d>(object_points.begin(), object_points.end()),
         std::vector<cv::Point2f>(image_corners.begin(), image_corners.end()),
@@ -468,6 +471,7 @@ ArmorPnpAttempt ArmorPnp::Solve(std::span<const cv::Point2f, 4> image_corners,
       squared_error += dx * dx + dy * dy;
     }
     const double rmse = std::sqrt(squared_error / static_cast<double>(projected.size()));
+    // 候选选择只依据同一输入四角下的重投影 RMSE，同时保留次优间隔衡量歧义。
     if (rmse >= best_rmse) {
       second_rmse = std::min(second_rmse, rmse);
       continue;
@@ -532,6 +536,7 @@ ArmorPnpFrameResult ArmorPnp::ProcessFrame(const hal::CameraFrame& frame,
     return result;
   const auto& geometry = *frame.geometry;
   std::vector<VisibleTruth> visible_truth;
+  // 真值投影也走同一 IPPE 解算，用于验证坐标系、物点顺序和数值基线。
   for (std::size_t index = 0; index < geometry.armors.size(); ++index) {
     const auto pixels = ProjectTruth(geometry.armors[index], geometry);
     if (!pixels)
@@ -545,83 +550,50 @@ ArmorPnpFrameResult ArmorPnp::ProcessFrame(const hal::CameraFrame& frame,
     result.attempts.push_back(std::move(attempt));
   }
 
+  // 全局一对一匹配只服务误差统计；未匹配检测仍正常输出正式 PnP 估计。
   const auto truth_matches = MatchDetectionsToTruth(detections, visible_truth, config_);
   for (std::size_t index = 0; index < detections.size(); ++index) {
     const auto& detection = detections[index];
     const auto type = ArmorTypeForLabel(detection.label);
-    auto raw = Solve(detection.corners, type, geometry.calibration, PnpInputSource::DETECTION_RAW,
-                     index, static_cast<std::uint8_t>(detection.label));
-    ++raw_solve_summary_.attempted;
-    if (raw.estimate) {
-      ++raw_solve_summary_.succeeded;
+    CornerRefinementResult refinement = refinements[index];
+    ++refinement_summary_.attempted;
+    refinement_elapsed_samples_.push_back(refinement.elapsed_ms);
+    if (refinement.success && !refinement.fallback) {
+      ++refinement_summary_.succeeded;
     } else {
-      ++raw_solve_summary_.rejection_reasons[PnpStatusName(raw.status)];
+      ++refinement_summary_.fallback;
+      ++refinement_summary_.failure_reasons[CornerRefinementStatusName(refinement.status)];
+    }
+
+    // 每个检测只运行一次正式 PnP：精修成功使用精修角点，否则使用原子回退的原始角点。
+    const auto& final_corners =
+        refinement.success ? refinement.refined_corners : refinement.original_corners;
+    auto detection_attempt =
+        Solve(final_corners, type, geometry.calibration, PnpInputSource::DETECTION, index,
+              static_cast<std::uint8_t>(detection.label));
+    ++solve_summary_.attempted;
+    if (detection_attempt.estimate) {
+      ++solve_summary_.succeeded;
+    } else {
+      ++solve_summary_.rejection_reasons[PnpStatusName(detection_attempt.status)];
     }
 
     const std::size_t best_truth = truth_matches[index];
     if (best_truth < visible_truth.size()) {
-      if (raw.estimate)
-        AddTruthErrors(*raw.estimate, *visible_truth[best_truth].armor, geometry,
-                       visible_truth[best_truth].pixels);
-    }
-
-    CornerRefinementResult refinement = refinements[index];
-    ++refinement_summary_.attempted;
-    refinement_elapsed_samples_.push_back(refinement.elapsed_ms);
-    ArmorPnpAttempt refined;
-    if (refinement.success && !refinement.fallback) {
-      refined = Solve(refinement.refined_corners, type, geometry.calibration,
-                      PnpInputSource::DETECTION_REFINED, index,
-                      static_cast<std::uint8_t>(detection.label));
-      if (!refined.estimate) {
-        refinement.success = false;
-        refinement.fallback = true;
-        refinement.status = CornerRefinementStatus::PNP_FALLBACK;
-        refinement.refined_corners = refinement.original_corners;
-        for (std::size_t corner = 0; corner < refinement.endpoints.size(); ++corner) {
-          auto& endpoint = refinement.endpoints[corner];
-          if (endpoint.applied) {
-            endpoint.applied = false;
-            endpoint.fallback = true;
-            endpoint.reverted_by = EndpointRevertedBy::PNP;
-          }
-          endpoint.final = refinement.original_corners[corner];
-          endpoint.movement_px = 0.0;
-          refinement.corner_displacements[corner] = {};
-        }
-        refined = raw;
-        refined.source = PnpInputSource::DETECTION_REFINED;
-        if (refined.estimate)
-          refined.estimate->source = PnpInputSource::DETECTION_REFINED;
+      const auto& truth = visible_truth[best_truth];
+      double raw_error = 0.0;
+      double final_error = 0.0;
+      for (std::size_t corner = 0; corner < 4; ++corner) {
+        raw_error += cv::norm(refinement.original_corners[corner] - truth.pixels[corner]);
+        final_error += cv::norm(final_corners[corner] - truth.pixels[corner]);
       }
-    } else {
-      // A fallback must be numerically identical to the official raw chain. Copying the solved
-      // attempt also avoids relying on a second OpenCV call returning bit-identical candidates.
-      refined = raw;
-      refined.source = PnpInputSource::DETECTION_REFINED;
-      if (refined.estimate)
-        refined.estimate->source = PnpInputSource::DETECTION_REFINED;
+      raw_corner_error_samples_.push_back(raw_error / 4.0);
+      final_corner_error_samples_.push_back(final_error / 4.0);
+      if (detection_attempt.estimate)
+        AddTruthErrors(*detection_attempt.estimate, *truth.armor, geometry, truth.pixels);
     }
-    if (refinement.success && !refinement.fallback) {
-      ++refinement_summary_.succeeded;
-      ++refinement_summary_.fully_refined;
-    } else {
-      ++refinement_summary_.fallback;
-      ++refinement_summary_.full_fallback;
-      ++refinement_summary_.failure_reasons[CornerRefinementStatusName(refinement.status)];
-    }
-    ++refined_solve_summary_.attempted;
-    if (refined.estimate) {
-      ++refined_solve_summary_.succeeded;
-    } else {
-      ++refined_solve_summary_.rejection_reasons[PnpStatusName(refined.status)];
-    }
-    refined.refinement = refinement;
-    if (best_truth < visible_truth.size() && refined.estimate)
-      AddTruthErrors(*refined.estimate, *visible_truth[best_truth].armor, geometry,
-                     visible_truth[best_truth].pixels);
-    result.attempts.push_back(std::move(raw));
-    result.attempts.push_back(std::move(refined));
+    detection_attempt.refinement = std::move(refinement);
+    result.attempts.push_back(std::move(detection_attempt));
   }
   for (auto& attempt : result.attempts) {
     if (!attempt.estimate)
@@ -633,6 +605,7 @@ ArmorPnpFrameResult ArmorPnp::ProcessFrame(const hal::CameraFrame& frame,
       const auto key = std::make_pair(attempt.source, *estimate.truth_id);
       const auto previous = previous_error_.find(key);
       const auto previous_sequence = previous_sequence_.find(key);
+      // 抖动和候选切换仅比较同一真值目标的连续帧，目标消失后重现不会产生伪跳变。
       const bool consecutive =
           previous_sequence != previous_sequence_.end() &&
           previous_sequence->second != std::numeric_limits<std::uint64_t>::max() &&
@@ -643,82 +616,45 @@ ArmorPnpFrameResult ArmorPnp::ProcessFrame(const hal::CameraFrame& frame,
       const auto previous_candidate = previous_candidate_.find(key);
       if (previous_candidate != previous_candidate_.end() && consecutive &&
           previous_candidate->second != estimate.candidate_index) {
-        auto& health = attempt.source == PnpInputSource::DETECTION_RAW ? raw_solve_summary_
-                                                                       : refined_solve_summary_;
         if (attempt.source != PnpInputSource::GROUND_TRUTH)
-          ++health.candidate_switches;
+          ++solve_summary_.candidate_switches;
       }
       previous_candidate_[key] = estimate.candidate_index;
       previous_sequence_[key] = frame.sequence;
     }
     if (attempt.source == PnpInputSource::GROUND_TRUTH) {
       AddSamples(truth_samples_, estimate);
-    } else if (attempt.source == PnpInputSource::DETECTION_RAW) {
-      AddSamples(raw_samples_, estimate);
-      if (estimate.truth_distance_m && estimate.truth_viewing_angle_deg && estimate.truth_type) {
-        AddSamples(raw_distance_samples_[DistanceGroup(*estimate.truth_distance_m)], estimate);
-        AddSamples(raw_angle_samples_[AngleGroup(*estimate.truth_viewing_angle_deg)], estimate);
-        AddSamples(raw_size_samples_[SizeGroup(*estimate.truth_type)], estimate);
-      }
     } else {
-      AddSamples(refined_with_fallback_samples_, estimate);
-      const bool refinement_succeeded =
-          attempt.refinement && attempt.refinement->success && !attempt.refinement->fallback;
-      if (refinement_succeeded)
-        AddSamples(refined_success_samples_, estimate);
+      AddSamples(detection_samples_, estimate);
       if (estimate.truth_distance_m && estimate.truth_viewing_angle_deg && estimate.truth_type) {
-        const auto distance_group = DistanceGroup(*estimate.truth_distance_m);
-        const auto angle_group = AngleGroup(*estimate.truth_viewing_angle_deg);
-        const auto size_group = SizeGroup(*estimate.truth_type);
-        AddSamples(refined_with_fallback_distance_samples_[distance_group], estimate);
-        AddSamples(refined_with_fallback_angle_samples_[angle_group], estimate);
-        AddSamples(refined_with_fallback_size_samples_[size_group], estimate);
-        if (refinement_succeeded) {
-          AddSamples(refined_success_distance_samples_[distance_group], estimate);
-          AddSamples(refined_success_angle_samples_[angle_group], estimate);
-          AddSamples(refined_success_size_samples_[size_group], estimate);
-        }
+        AddSamples(distance_samples_[DistanceGroup(*estimate.truth_distance_m)], estimate);
+        AddSamples(angle_samples_[AngleGroup(*estimate.truth_viewing_angle_deg)], estimate);
+        AddSamples(size_samples_[SizeGroup(*estimate.truth_type)], estimate);
       }
     }
   }
+  // 全局与各分组统计共用同一快照序号，防止消费者读到跨周期的混合结果。
   if (!summary_initialized_ || frame.sequence % 100 == 0) {
     summary_initialized_ = true;
     summary_sequence_ = frame.sequence;
     truth_summary_ = Summarize(truth_samples_);
-    raw_summary_ = Summarize(raw_samples_);
-    refined_success_summary_ = Summarize(refined_success_samples_);
-    refined_with_fallback_summary_ = Summarize(refined_with_fallback_samples_);
-    raw_distance_summaries_ = SummarizeGroups(raw_distance_samples_);
-    refined_success_distance_summaries_ = SummarizeGroups(refined_success_distance_samples_);
-    refined_with_fallback_distance_summaries_ =
-        SummarizeGroups(refined_with_fallback_distance_samples_);
-    raw_angle_summaries_ = SummarizeGroups(raw_angle_samples_);
-    refined_success_angle_summaries_ = SummarizeGroups(refined_success_angle_samples_);
-    refined_with_fallback_angle_summaries_ = SummarizeGroups(refined_with_fallback_angle_samples_);
-    raw_size_summaries_ = SummarizeGroups(raw_size_samples_);
-    refined_success_size_summaries_ = SummarizeGroups(refined_success_size_samples_);
-    refined_with_fallback_size_summaries_ = SummarizeGroups(refined_with_fallback_size_samples_);
+    detection_summary_ = Summarize(detection_samples_);
+    distance_summaries_ = SummarizeGroups(distance_samples_);
+    angle_summaries_ = SummarizeGroups(angle_samples_);
+    size_summaries_ = SummarizeGroups(size_samples_);
     refinement_summary_.elapsed_ms = Percentiles(refinement_elapsed_samples_);
-    raw_solve_snapshot_ = raw_solve_summary_;
-    refined_solve_snapshot_ = refined_solve_summary_;
+    refinement_summary_.raw_mean_corner_error_px = Percentiles(raw_corner_error_samples_);
+    refinement_summary_.final_mean_corner_error_px = Percentiles(final_corner_error_samples_);
+    solve_snapshot_ = solve_summary_;
     refinement_snapshot_ = refinement_summary_;
   }
   result.summary_sequence = summary_sequence_;
   result.ground_truth_summary = truth_summary_;
-  result.detection_raw_summary = raw_summary_;
-  result.detection_refined_success_summary = refined_success_summary_;
-  result.detection_refined_with_fallback_summary = refined_with_fallback_summary_;
-  result.raw_distance_groups = raw_distance_summaries_;
-  result.refined_success_distance_groups = refined_success_distance_summaries_;
-  result.refined_with_fallback_distance_groups = refined_with_fallback_distance_summaries_;
-  result.raw_angle_groups = raw_angle_summaries_;
-  result.refined_success_angle_groups = refined_success_angle_summaries_;
-  result.refined_with_fallback_angle_groups = refined_with_fallback_angle_summaries_;
-  result.raw_size_groups = raw_size_summaries_;
-  result.refined_success_size_groups = refined_success_size_summaries_;
-  result.refined_with_fallback_size_groups = refined_with_fallback_size_summaries_;
-  result.raw_solve_summary = raw_solve_snapshot_;
-  result.refined_solve_summary = refined_solve_snapshot_;
+  result.detection_summary = detection_summary_;
+  result.distance_groups = distance_summaries_;
+  result.angle_groups = angle_summaries_;
+  result.size_groups = size_summaries_;
+  result.solve_summary = solve_snapshot_;
   result.refinement_summary = refinement_snapshot_;
   return result;
 }

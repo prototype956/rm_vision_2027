@@ -13,7 +13,7 @@ roi:
 
 exposure:
   auto: false
-  time_us: 3000
+  time_us: 1500
 
 capture:
   timeout_ms: 100

@@ -60,14 +60,14 @@ struct PreparedFrame {
   std::optional<::foxglove::schemas::SceneUpdate> frustum;            ///< 三维视锥图元。
   std::optional<::foxglove::schemas::SceneUpdate> ground_truth;       ///< 三维仿真真值。
   std::optional<::foxglove::schemas::ImageAnnotations> projection_annotations;  ///< 真值投影点。
-  std::optional<::foxglove::schemas::SceneUpdate> pnp_estimates;
-  std::optional<::foxglove::schemas::ImageAnnotations> pnp_corners;
-  std::optional<::foxglove::schemas::ImageAnnotations> pnp_reprojection;
-  std::optional<::foxglove::schemas::ImageAnnotations> pnp_error_vectors;
-  std::optional<::foxglove::schemas::ImageAnnotations> corner_refiner_axes;
-  std::optional<::foxglove::schemas::ImageAnnotations> corner_refiner_candidates;
-  std::optional<std::string> pnp_stats_json;
-  std::optional<double> jpeg_ms;   ///< JPEG 编码耗时，未编码图像时为空。
+  std::optional<::foxglove::schemas::SceneUpdate> pnp_estimates;     ///< PnP 三维估计图元。
+  std::optional<::foxglove::schemas::ImageAnnotations> pnp_corners;  ///< PnP 输入角点。
+  std::optional<::foxglove::schemas::ImageAnnotations> pnp_reprojection;  ///< 模型重投影线框。
+  std::optional<::foxglove::schemas::ImageAnnotations> pnp_error_vectors;    ///< 角点误差线。
+  std::optional<::foxglove::schemas::ImageAnnotations> corner_refiner_axes;  ///< 灯条 PCA 轴。
+  std::optional<::foxglove::schemas::ImageAnnotations> corner_refiner_candidates;  ///< 精修候选点。
+  std::optional<std::string> pnp_stats_json;  ///< 符合固定 Schema 的 PnP 指标。
+  std::optional<double> jpeg_ms;              ///< JPEG 编码耗时，未编码图像时为空。
   double publish_latency_ms{0.0};  ///< HAL 收帧到消息构造完成的延迟，单位为毫秒。
 };
 

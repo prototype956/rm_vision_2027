@@ -77,6 +77,7 @@ class VisionDebugPublisher final {
    * @param frame 原始相机帧；入队后调用方不得并发改写其像素。
    * @param detections 与该图像对应的检测结果，调用期间复制。
    * @param detector_stats 与该图像对应的检测性能统计。
+   * @param pnp_result 与该图像对应的 PnP 解算、基准及角点精修结果。
    */
   void Publish(const hal::CameraFrame& frame, std::span<const modules::ArmorDetection> detections,
                const modules::DetectorStats& detector_stats,

@@ -16,42 +16,42 @@ namespace mv::tool::foxglove::pipeline {
 
 /** @brief 统一视觉流水线发布的固定话题。 */
 enum class VisionTopic {
-  IMAGE,                   ///< JPEG 压缩原图。
-  ARMOR_ANNOTATIONS,       ///< 装甲四角框与标签。
-  ARMOR_STATS,             ///< 装甲检测器性能 JSON。
-  DEBUG_STATS,             ///< 调试发布流水线性能 JSON。
-  TRANSFORMS,              ///< world -> gimbal -> camera_optical TF。
-  CALIBRATION,             ///< 相机内参与畸变参数。
-  FRUSTUM,                 ///< camera_optical 下的三维视锥。
-  GROUND_TRUTH,            ///< world 下的仿真三维真值。
-  PROJECTION_ANNOTATIONS,  ///< 真值探针在相机图像上的重投影点。
-  PNP_ESTIMATES,
-  PNP_CORNERS,
-  PNP_REPROJECTION,
-  PNP_ERROR_VECTORS,
-  CORNER_REFINER_AXES,
-  CORNER_REFINER_CANDIDATES,
-  PNP_STATS,
+  IMAGE,                      ///< JPEG 压缩原图。
+  ARMOR_ANNOTATIONS,          ///< 装甲四角框与标签。
+  ARMOR_STATS,                ///< 装甲检测器性能 JSON。
+  DEBUG_STATS,                ///< 调试发布流水线性能 JSON。
+  TRANSFORMS,                 ///< world -> gimbal -> camera_optical TF。
+  CALIBRATION,                ///< 相机内参与畸变参数。
+  FRUSTUM,                    ///< camera_optical 下的三维视锥。
+  GROUND_TRUTH,               ///< world 下的仿真三维真值。
+  PROJECTION_ANNOTATIONS,     ///< 真值探针在相机图像上的重投影点。
+  PNP_ESTIMATES,              ///< 相机系与世界系下的 PnP 三维估计。
+  PNP_CORNERS,                ///< PnP 原始及精修输入角点。
+  PNP_REPROJECTION,           ///< PnP 模型重投影线框。
+  PNP_ERROR_VECTORS,          ///< 检测角点到仿真真值的误差向量。
+  CORNER_REFINER_AXES,        ///< 角点精修灯条 PCA 轴。
+  CORNER_REFINER_CANDIDATES,  ///< 角点精修搜索区间及候选点。
+  PNP_STATS,                  ///< PnP 解算与角点精修指标 JSON。
 };
 
 /** @brief 单个 Foxglove Context 中全部视觉频道的 SDK 标识。 */
 struct ChannelIds {
-  std::uint64_t image{0};                   ///< 压缩图像频道 ID。
-  std::uint64_t armor_annotations{0};       ///< 装甲标注频道 ID。
-  std::uint64_t armor_stats{0};             ///< 检测器指标频道 ID。
-  std::uint64_t debug_stats{0};             ///< 调试流水线指标频道 ID。
-  std::uint64_t transforms{0};              ///< TF 频道 ID。
-  std::uint64_t calibration{0};             ///< 相机标定频道 ID。
-  std::uint64_t frustum{0};                 ///< 三维视锥频道 ID。
-  std::uint64_t ground_truth{0};            ///< 三维真值频道 ID。
-  std::uint64_t projection_annotations{0};  ///< 真值重投影标注频道 ID。
-  std::uint64_t pnp_estimates{0};
-  std::uint64_t pnp_corners{0};
-  std::uint64_t pnp_reprojection{0};
-  std::uint64_t pnp_error_vectors{0};
-  std::uint64_t corner_refiner_axes{0};
-  std::uint64_t corner_refiner_candidates{0};
-  std::uint64_t pnp_stats{0};
+  std::uint64_t image{0};                      ///< 压缩图像频道 ID。
+  std::uint64_t armor_annotations{0};          ///< 装甲标注频道 ID。
+  std::uint64_t armor_stats{0};                ///< 检测器指标频道 ID。
+  std::uint64_t debug_stats{0};                ///< 调试流水线指标频道 ID。
+  std::uint64_t transforms{0};                 ///< TF 频道 ID。
+  std::uint64_t calibration{0};                ///< 相机标定频道 ID。
+  std::uint64_t frustum{0};                    ///< 三维视锥频道 ID。
+  std::uint64_t ground_truth{0};               ///< 三维真值频道 ID。
+  std::uint64_t projection_annotations{0};     ///< 真值重投影标注频道 ID。
+  std::uint64_t pnp_estimates{0};              ///< PnP 三维估计频道 ID。
+  std::uint64_t pnp_corners{0};                ///< PnP 输入角点频道 ID。
+  std::uint64_t pnp_reprojection{0};           ///< PnP 重投影频道 ID。
+  std::uint64_t pnp_error_vectors{0};          ///< PnP 角点误差向量频道 ID。
+  std::uint64_t corner_refiner_axes{0};        ///< 角点精修 PCA 轴频道 ID。
+  std::uint64_t corner_refiner_candidates{0};  ///< 角点精修候选点频道 ID。
+  std::uint64_t pnp_stats{0};                  ///< PnP 指标频道 ID。
 };
 
 /** @brief 单个话题的一次 Foxglove SDK 发布错误。 */
@@ -93,22 +93,28 @@ class VisionChannelSet final {
   void Close() noexcept;
 
  private:
-  std::unique_ptr<::foxglove::schemas::CompressedImageChannel> image_;
-  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> armor_annotations_;
-  std::unique_ptr<::foxglove::RawChannel> armor_stats_;
-  std::unique_ptr<::foxglove::RawChannel> debug_stats_;
-  std::unique_ptr<::foxglove::schemas::FrameTransformsChannel> transforms_;
-  std::unique_ptr<::foxglove::schemas::CameraCalibrationChannel> calibration_;
-  std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> frustum_;
-  std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> ground_truth_;
-  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> projection_annotations_;
-  std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> pnp_estimates_;
-  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> pnp_corners_;
-  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> pnp_reprojection_;
-  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> pnp_error_vectors_;
-  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> corner_refiner_axes_;
-  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> corner_refiner_candidates_;
-  std::unique_ptr<::foxglove::RawChannel> pnp_stats_;
+  std::unique_ptr<::foxglove::schemas::CompressedImageChannel> image_;  ///< JPEG 图像频道。
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel>
+      armor_annotations_;                                ///< 二维装甲标注频道。
+  std::unique_ptr<::foxglove::RawChannel> armor_stats_;  ///< 装甲检测器指标频道。
+  std::unique_ptr<::foxglove::RawChannel> debug_stats_;  ///< 调试流水线指标频道。
+  std::unique_ptr<::foxglove::schemas::FrameTransformsChannel> transforms_;     ///< TF 频道。
+  std::unique_ptr<::foxglove::schemas::CameraCalibrationChannel> calibration_;  ///< 标定频道。
+  std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> frustum_;  ///< 三维视锥频道。
+  std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> ground_truth_;  ///< 仿真真值频道。
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel>
+      projection_annotations_;  ///< 真值重投影频道。
+  std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> pnp_estimates_;  ///< PnP 估计频道。
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> pnp_corners_;  ///< 输入角点频道。
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel>
+      pnp_reprojection_;  ///< PnP 重投影频道。
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel>
+      pnp_error_vectors_;  ///< PnP 误差向量频道。
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel>
+      corner_refiner_axes_;  ///< 角点精修 PCA 轴频道。
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel>
+      corner_refiner_candidates_;                      ///< 角点精修候选点频道。
+  std::unique_ptr<::foxglove::RawChannel> pnp_stats_;  ///< PnP 指标频道。
   bool closed_{false};  ///< 保证显式 Close() 与析构关闭幂等。
 };
 

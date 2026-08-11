@@ -1,33 +1,34 @@
 # 装甲灯条角点精修
 
-配置 schema v4 提供三种互斥模式：`raw`、`percentile_pca_shadow` 和默认的
-`gradient_axis_shadow`。三种模式都只驱动影子 PnP，正式输出仍采用网络原始角点。
+当前实现逐逻辑复刻 JLU Vision 的 `LightCornerCorrector`。输入是网络输出的
+`TL/TR/BR/BL` 四角和当帧灰度图，输出是整体成功的四个精修端点，或未经修改的网络四角。
+精修结果直接进入唯一的正式 PnP 链，不运行 raw/refined 双 PnP。
 
-`gradient_axis_shadow` 在网络左右灯条附近建立紧凑有向 ROI，以
-`max(gray - ROI P50, 0)` 为权重直接求中心和协方差。PCA 只给出灯条中心轴；每个端点在
-中心外 `0.4L～0.6L` 范围进行 0.25 px 双线性采样。`12～30 px` 的短灯条使用 3 条、较长
-灯条使用 5 条法向扫描线；各轴向位置先取跨扫描线亮度中位数，再对融合的一维曲线做
-Gaussian 平滑和三点抛物线亚像素峰值拟合。梯度内侧必须高于 ROI 背景亮度与对比度共同
-确定的门槛，主峰必须与次峰充分分离，留一扫描线重算的峰值离散度不得超过 1 px。
+## 算法
 
-该路径不使用颜色连通域、形态学或 `2%/98%` 像素云端点。旧逻辑仅隔离保留在
-`percentile_pca_shadow`，用于 A/B 基线。
+左右灯条分别由 `TL-BL`、`TR-BR` 构造，长度取端点距离，宽度固定为 `length / 6.7`。
+宽度不大于 3 px 时跳过。灯条旋转矩形 ROI 扩张 7% 并裁剪至图像范围；原始平均灰度必须
+大于 30。ROI 灰度归一化至 0～25 后，使用灰度矩的质心和二阶中心矩计算主轴：
 
-所有阈值位于 `src/config/modules/armor_corner_refiner.yaml`。精修依次检查 ROI 面积、支撑
-像素、PCA 主次轴比例、轴偏差、中心偏移、融合梯度强度、峰值唯一性、重采样稳定度、固定
-2 px 移动上限与最终四边形合法性。灯条短于 12 px 时跳过。四个端点必须全部通过才允许
-进入精修 PnP；任意端点失败都会整块恢复原始四角，并通过 `reverted_by=armor_atomic` 保留
-已经有效但未应用的端点候选。整体几何非法或精修 PnP 失败同样整块回退。
+```text
+theta = 0.5 * atan2(2 * mu11, mu20 - mu02)
+```
 
-当前模块仅使用当帧 BGR 图像，不使用跟踪、历史姿态或滤波。主程序同时运行原始与精修
-PnP；精修 PnP 无解但原始 PnP 有解时，也会回退到原角点并记录 `pnp_fallback`。
+主轴统一指向图像上方。每个端点从灰度质心外 `0.4L` 搜索到 `0.6L`，以 1 px 步长寻找
+最大的正亮度下降 `I(prev) - I(cur)`，并要求下降前像素高于 ROI 原始平均亮度。扫描线按照
+JLU 实现仅沿图像 x 方向偏移，数量由灯条宽度决定；所有有效扫描线候选取算术平均。
 
-Foxglove 将输入角点、PnP 重投影和真值误差线分别发布到 `/vision/pnp/corners`、
-`/vision/pnp/reprojection` 和 `/vision/pnp/error_vectors`。PCA 轴与梯度候选分别发布到
-`/vision/corner_refiner/axes` 和 `/vision/corner_refiner/candidates`，可以独立显示或隐藏。
-融合候选在图像中以较大的红/绿点显示；完整数值诊断包含主次峰、峰值离散度、请求移动、
-最终移动和整块回退来源，保留在 `/vision/pnp/stats.attempts[].refinement`。
+左右灯条在副本上处理。只有两侧上下四端点全部找到时才提交精修结果；任何灯条过窄、
+ROI 无效、过暗、矩退化或端点未找到都会让整块装甲回退网络原四角。这里不包含双线性
+插值、高斯平滑、亚像素峰拟合、颜色连通域、移动上限或 PnP 二次回退。
 
-算法思想参考 FYT Vision Group 的 `LightCornerCorrector`（Apache License 2.0）：PCA
-估计灯条对称轴，再沿轴寻找亮度突降端点。本实现按本项目接口和安全门槛重新编写，未复制
-其代码片段。
+参数位于 `src/config/modules/armor_corner_refiner.yaml`，与 JLU 的默认参数保持一致。
+
+## Foxglove
+
+- `/vision/pnp/corners`：青色网络原框；精修成功时增加洋红色正式输入框。
+- `/vision/corner_refiner/axes`：浅蓝 PCA 轴和灰度质心。
+- `/vision/corner_refiner/candidates`：橙色搜索区间、黄色逐扫描线候选，以及绿色已提交或
+  红色被原子回退的平均端点。
+- `/vision/pnp/stats`：精修状态、失败灯条、逐端点候选、累计成功率、耗时和
+  raw/final 二维角点真值误差。

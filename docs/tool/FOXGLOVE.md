@@ -25,12 +25,12 @@ PASS/FAIL 判定。
 - `/vision/camera/frustum`：位于 `camera_optical` 下、深度 1 米的相机视锥。
 - `/simulation/ground_truth`：机器人中心、朝向及装甲姿态、四角和局部坐标轴真值。
 - `/simulation/ground_truth/annotations`：黄色装甲灯条端点真值及 `GT:TL/TR/BR/BL` 标签。
-- `/vision/pnp/estimate`：真值角点与检测角点两条 PnP 链的相机系/世界系三维估计。
+- `/vision/pnp/estimate`：正式检测单链 PnP 的相机系/世界系三维估计。
 - `/vision/pnp/corners`：青色原始角点和有效的洋红色精修角点。
-- `/vision/pnp/reprojection`：蓝色原始 PnP 与绿色精修 PnP 重投影。
-- `/vision/pnp/error_vectors`：原始检测角点到匹配真值的灰色误差线。
-- `/vision/corner_refiner/axes`：左右灯条 PCA 中心轴。
-- `/vision/corner_refiner/candidates`：橙色搜索区间及红/绿梯度候选点。
+- `/vision/pnp/reprojection`：绿色正式 PnP 重投影。
+- `/vision/pnp/error_vectors`：网络原角点到真值的灰线，以及成功精修角点到真值的洋红线。
+- `/vision/corner_refiner/axes`：左右灯条浅蓝 PCA 中心轴与质心。
+- `/vision/corner_refiner/candidates`：橙色搜索区间、黄色扫描线候选、绿色已提交或红色回退端点。
 - `/vision/pnp/stats`：逐次求解状态、候选、重投影和真值误差 JSON。
 
 将 Foxglove 连接到 `ws://<NUC-IP>:8765`，在 Image 面板选择图像话题，再将
@@ -41,14 +41,17 @@ ground truth；在 Image 面板额外启用 ground truth annotations。
 
 Plot 的 Y 值必须指向数值叶子，不能直接选择整个 stats 对象。例如检测耗时使用
 `/vision/armor/stats.total_ms`，PnP 成功数使用 `/vision/pnp/stats.successful`，累计检测链
-原始检测位置误差使用
-`/vision/pnp/stats.summary.detection_raw.position_error_m.p50`，精修路径使用
-`/vision/pnp/stats.summary.refined_with_fallback.position_error_m.p50`；仅看精修成功样本时
-使用 `summary.refined_success_only`，该集合只包含四个端点全部精修且未发生 PnP 回退的
-样本。精修统计只区分 `fully_refined` 与 `full_fallback`；端点候选可有效但不会与原始端点
-混合进入 PnP。逐次 PnP 指标位于
+最终检测位置误差使用 `/vision/pnp/stats.summary.detection.position_error_m.p50`；精修前后
+二维角点误差分别使用 `refinement.raw_mean_corner_error_px.p50` 和
+`refinement.final_mean_corner_error_px.p50`。精修失败时四角整体回退，不会把部分候选与原始
+端点混合进入 PnP。逐次 PnP 指标位于
 数组中，可用 `/vision/pnp/stats.attempts[0].reprojection_rmse_px` 选择指定元素；求解失败时
 该类可空指标为 `null`，Plot 会留下空点。
+
+推荐布局：一个 Image 面板选择 `/vision/camera/image`，叠加 ground truth、corners、
+reprojection、error vectors、axes 和 candidates；一个 Plot 面板观察精修成功/回退计数、
+raw/final 角点误差及最终深度误差；一个 3D 面板以 `world` 为固定坐标系叠加 transforms、
+frustum、ground truth 和 `/vision/pnp/estimate`。
 
 内部实现按 `image`、`armor_detector`、`spatial` 和 `simulation` 分离消息
 编码，由 `pipeline` 统一管理限流、后台线程和频道。各领域仍属于同一调试帧，
