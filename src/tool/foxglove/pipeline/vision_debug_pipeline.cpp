@@ -25,7 +25,11 @@ VisionDebugPipeline::VisionDebugPipeline(const Config& config, runtime::Foxglove
       session_.RegisterLiveChannel(live_channel_ids_.ground_truth);
       session_.RegisterLiveChannel(live_channel_ids_.projection_annotations);
       session_.RegisterLiveChannel(live_channel_ids_.pnp_estimates);
-      session_.RegisterLiveChannel(live_channel_ids_.pnp_annotations);
+      session_.RegisterLiveChannel(live_channel_ids_.pnp_corners);
+      session_.RegisterLiveChannel(live_channel_ids_.pnp_reprojection);
+      session_.RegisterLiveChannel(live_channel_ids_.pnp_error_vectors);
+      session_.RegisterLiveChannel(live_channel_ids_.corner_refiner_axes);
+      session_.RegisterLiveChannel(live_channel_ids_.corner_refiner_candidates);
       session_.RegisterLiveChannel(live_channel_ids_.pnp_stats);
     } catch (const std::exception& error) {
       live_channels_.reset();
@@ -78,7 +82,14 @@ TopicDemand VisionDebugPipeline::LiveDemand() const noexcept {
       .projection_annotations =
           session_.Subscription(live_channel_ids_.projection_annotations).subscribers > 0,
       .pnp_estimates = session_.Subscription(live_channel_ids_.pnp_estimates).subscribers > 0,
-      .pnp_annotations = session_.Subscription(live_channel_ids_.pnp_annotations).subscribers > 0,
+      .pnp_corners = session_.Subscription(live_channel_ids_.pnp_corners).subscribers > 0,
+      .pnp_reprojection = session_.Subscription(live_channel_ids_.pnp_reprojection).subscribers > 0,
+      .pnp_error_vectors =
+          session_.Subscription(live_channel_ids_.pnp_error_vectors).subscribers > 0,
+      .corner_refiner_axes =
+          session_.Subscription(live_channel_ids_.corner_refiner_axes).subscribers > 0,
+      .corner_refiner_candidates =
+          session_.Subscription(live_channel_ids_.corner_refiner_candidates).subscribers > 0,
       .pnp_stats = session_.Subscription(live_channel_ids_.pnp_stats).subscribers > 0,
   };
 }
@@ -140,7 +151,11 @@ void VisionDebugPipeline::ProcessFrame(const VisionDebugFrame& frame) {
                                                             .ground_truth = true,
                                                             .projection_annotations = true,
                                                             .pnp_estimates = true,
-                                                            .pnp_annotations = true,
+                                                            .pnp_corners = true,
+                                                            .pnp_reprojection = true,
+                                                            .pnp_error_vectors = true,
+                                                            .corner_refiner_axes = true,
+                                                            .corner_refiner_candidates = true,
                                                             .pnp_stats = true}
                                               : TopicDemand{};
   const auto COMBINED_DEMAND = Merge(LIVE_DEMAND, RECORDING_DEMAND);

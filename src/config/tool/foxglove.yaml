@@ -11,5 +11,5 @@ image:
   jpeg_quality: 75
 
 recording:
-  enabled: false
+  enabled: true
   output_dir: ../../../artifacts/foxglove

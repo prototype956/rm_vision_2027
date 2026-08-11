@@ -39,8 +39,9 @@ std::string EncodeDebugStats(const VisionDebugFrame& frame,
 
 bool TopicDemand::Any() const noexcept {
   return image || armor_annotations || armor_stats || debug_stats || transforms || calibration ||
-         frustum || ground_truth || projection_annotations || pnp_estimates || pnp_annotations ||
-         pnp_stats;
+         frustum || ground_truth || projection_annotations || pnp_estimates || pnp_corners ||
+         pnp_reprojection || pnp_error_vectors || corner_refiner_axes ||
+         corner_refiner_candidates || pnp_stats;
 }
 
 TopicDemand Merge(TopicDemand left, TopicDemand right) noexcept {
@@ -54,7 +55,12 @@ TopicDemand Merge(TopicDemand left, TopicDemand right) noexcept {
           .ground_truth = left.ground_truth || right.ground_truth,
           .projection_annotations = left.projection_annotations || right.projection_annotations,
           .pnp_estimates = left.pnp_estimates || right.pnp_estimates,
-          .pnp_annotations = left.pnp_annotations || right.pnp_annotations,
+          .pnp_corners = left.pnp_corners || right.pnp_corners,
+          .pnp_reprojection = left.pnp_reprojection || right.pnp_reprojection,
+          .pnp_error_vectors = left.pnp_error_vectors || right.pnp_error_vectors,
+          .corner_refiner_axes = left.corner_refiner_axes || right.corner_refiner_axes,
+          .corner_refiner_candidates =
+              left.corner_refiner_candidates || right.corner_refiner_candidates,
           .pnp_stats = left.pnp_stats || right.pnp_stats};
 }
 
@@ -113,8 +119,21 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
       result.pnp_estimates = pnp::EncodeEstimates(frame.pnp_result, geometry, TIMESTAMP);
     }
   }
-  if (demand.pnp_annotations) {
-    result.pnp_annotations = pnp::EncodeAnnotations(frame.pnp_result, TIMESTAMP);
+  if (demand.pnp_corners) {
+    result.pnp_corners = pnp::EncodeCorners(frame.pnp_result, TIMESTAMP);
+  }
+  if (demand.pnp_reprojection) {
+    result.pnp_reprojection = pnp::EncodeReprojection(frame.pnp_result, TIMESTAMP);
+  }
+  if (demand.pnp_error_vectors) {
+    result.pnp_error_vectors = pnp::EncodeErrorVectors(frame.pnp_result, TIMESTAMP);
+  }
+  if (demand.corner_refiner_axes) {
+    result.corner_refiner_axes = pnp::EncodeCornerRefinerAxes(frame.pnp_result, TIMESTAMP);
+  }
+  if (demand.corner_refiner_candidates) {
+    result.corner_refiner_candidates =
+        pnp::EncodeCornerRefinerCandidates(frame.pnp_result, TIMESTAMP);
   }
   if (demand.pnp_stats) {
     result.pnp_stats_json = pnp::EncodeStats(frame.pnp_result, frame.sequence, TIMESTAMP);
