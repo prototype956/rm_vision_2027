@@ -1,4 +1,10 @@
-add_library(mv-modules-armor-pnp STATIC armor_pnp.cpp)
+add_library(mv-modules-armor-pnp STATIC
+    armor_pnp.cpp
+    armor_pnp_config.cpp
+    detail/ippe_solver.cpp
+    detail/pnp_metrics.cpp
+    detail/truth_evaluator.cpp
+)
 
 target_include_directories(mv-modules-armor-pnp PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>

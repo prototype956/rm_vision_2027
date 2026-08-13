@@ -3,6 +3,7 @@
 #include "tool/foxglove/armor_detector/armor_message_encoder.hpp"
 #include "tool/foxglove/image/image_message_encoder.hpp"
 #include "tool/foxglove/pnp/pnp_message_encoder.hpp"
+#include "tool/foxglove/prediction/prediction_message_encoder.hpp"
 #include "tool/foxglove/simulation/simulation_message_encoder.hpp"
 #include "tool/foxglove/spatial/spatial_message_encoder.hpp"
 
@@ -41,27 +42,37 @@ bool TopicDemand::Any() const noexcept {
   return image || armor_annotations || armor_stats || debug_stats || transforms || calibration ||
          frustum || ground_truth || projection_annotations || pnp_estimates || pnp_corners ||
          pnp_reprojection || pnp_error_vectors || corner_refiner_axes ||
-         corner_refiner_candidates || pnp_stats;
+         corner_refiner_candidates || pnp_stats || prediction_scene || prediction_state ||
+         prediction_truth_overlay || prediction_current_annotations ||
+         prediction_future_annotations;
 }
 
 TopicDemand Merge(TopicDemand left, TopicDemand right) noexcept {
-  return {.image = left.image || right.image,
-          .armor_annotations = left.armor_annotations || right.armor_annotations,
-          .armor_stats = left.armor_stats || right.armor_stats,
-          .debug_stats = left.debug_stats || right.debug_stats,
-          .transforms = left.transforms || right.transforms,
-          .calibration = left.calibration || right.calibration,
-          .frustum = left.frustum || right.frustum,
-          .ground_truth = left.ground_truth || right.ground_truth,
-          .projection_annotations = left.projection_annotations || right.projection_annotations,
-          .pnp_estimates = left.pnp_estimates || right.pnp_estimates,
-          .pnp_corners = left.pnp_corners || right.pnp_corners,
-          .pnp_reprojection = left.pnp_reprojection || right.pnp_reprojection,
-          .pnp_error_vectors = left.pnp_error_vectors || right.pnp_error_vectors,
-          .corner_refiner_axes = left.corner_refiner_axes || right.corner_refiner_axes,
-          .corner_refiner_candidates =
-              left.corner_refiner_candidates || right.corner_refiner_candidates,
-          .pnp_stats = left.pnp_stats || right.pnp_stats};
+  return {
+      .image = left.image || right.image,
+      .armor_annotations = left.armor_annotations || right.armor_annotations,
+      .armor_stats = left.armor_stats || right.armor_stats,
+      .debug_stats = left.debug_stats || right.debug_stats,
+      .transforms = left.transforms || right.transforms,
+      .calibration = left.calibration || right.calibration,
+      .frustum = left.frustum || right.frustum,
+      .ground_truth = left.ground_truth || right.ground_truth,
+      .projection_annotations = left.projection_annotations || right.projection_annotations,
+      .pnp_estimates = left.pnp_estimates || right.pnp_estimates,
+      .pnp_corners = left.pnp_corners || right.pnp_corners,
+      .pnp_reprojection = left.pnp_reprojection || right.pnp_reprojection,
+      .pnp_error_vectors = left.pnp_error_vectors || right.pnp_error_vectors,
+      .corner_refiner_axes = left.corner_refiner_axes || right.corner_refiner_axes,
+      .corner_refiner_candidates =
+          left.corner_refiner_candidates || right.corner_refiner_candidates,
+      .pnp_stats = left.pnp_stats || right.pnp_stats,
+      .prediction_scene = left.prediction_scene || right.prediction_scene,
+      .prediction_state = left.prediction_state || right.prediction_state,
+      .prediction_truth_overlay = left.prediction_truth_overlay || right.prediction_truth_overlay,
+      .prediction_current_annotations =
+          left.prediction_current_annotations || right.prediction_current_annotations,
+      .prediction_future_annotations =
+          left.prediction_future_annotations || right.prediction_future_annotations};
 }
 
 VisionMessageEncoder::VisionMessageEncoder(const ImageConfig& config)
@@ -118,6 +129,24 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
     if (demand.pnp_estimates) {
       result.pnp_estimates = pnp::EncodeEstimates(frame.pnp_result, geometry, TIMESTAMP);
     }
+    if (demand.prediction_truth_overlay) {
+      result.prediction_truth_overlay =
+          prediction::EncodeTruthOverlay(frame.prediction_result, geometry, TIMESTAMP);
+    }
+  }
+  if (demand.prediction_current_annotations) {
+    result.prediction_current_annotations =
+        frame.geometry
+            ? prediction::EncodeAnnotations(frame.prediction_result, *frame.geometry,
+                                            prediction::ImagePredictionHorizon::CURRENT, TIMESTAMP)
+            : prediction::EncodeEmptyAnnotations(TIMESTAMP);
+  }
+  if (demand.prediction_future_annotations) {
+    result.prediction_future_annotations =
+        frame.geometry ? prediction::EncodeAnnotations(
+                             frame.prediction_result, *frame.geometry,
+                             prediction::ImagePredictionHorizon::FUTURE_100_MS, TIMESTAMP)
+                       : prediction::EncodeEmptyAnnotations(TIMESTAMP);
   }
   if (demand.pnp_corners) {
     result.pnp_corners = pnp::EncodeCorners(frame.pnp_result, TIMESTAMP);
@@ -137,6 +166,12 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
   }
   if (demand.pnp_stats) {
     result.pnp_stats_json = pnp::EncodeStats(frame.pnp_result, frame.sequence, TIMESTAMP);
+  }
+  if (demand.prediction_scene) {
+    result.prediction_scene = prediction::EncodeScene(frame.prediction_result, TIMESTAMP);
+  }
+  if (demand.prediction_state) {
+    result.prediction_state_json = prediction::EncodeState(frame.prediction_result, TIMESTAMP);
   }
 
   result.publish_latency_ms = Milliseconds(SteadyClock::now() - frame.receive_steady_time);

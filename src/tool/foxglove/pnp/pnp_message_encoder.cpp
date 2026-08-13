@@ -29,6 +29,7 @@ void AddEstimateEntity(::foxglove::schemas::SceneUpdate& update,
   ::foxglove::schemas::SceneEntity entity;
   entity.timestamp = timestamp;
   entity.frame_id = std::move(frame_id);
+  // source、input_index 和坐标系后缀组成稳定 ID，使 Foxglove 原位更新而不留下拖影。
   entity.id =
       fmt::format("pnp_{}_{}_{}", static_cast<int>(estimate.source), estimate.input_index, suffix);
   entity.lifetime = {.sec = 0, .nsec = 200'000'000};
@@ -125,9 +126,8 @@ std::string LightbarJson(const modules::LightbarRefinementDiagnostic& lightbar) 
       "\"width_px\":{:.9g},\"mean_brightness\":{:.9g},\"axis_valid\":{},"
       "\"success\":{}}}",
       PointJson(lightbar.center), PointJson(lightbar.axis), PointJson(lightbar.top),
-      PointJson(lightbar.bottom), lightbar.length_px, lightbar.width_px,
-      lightbar.mean_brightness, lightbar.axis_valid ? "true" : "false",
-      lightbar.success ? "true" : "false");
+      PointJson(lightbar.bottom), lightbar.length_px, lightbar.width_px, lightbar.mean_brightness,
+      lightbar.axis_valid ? "true" : "false", lightbar.success ? "true" : "false");
 }
 
 std::string RefinementJson(const modules::CornerRefinementResult& refinement) {
@@ -139,11 +139,11 @@ std::string RefinementJson(const modules::CornerRefinementResult& refinement) {
       refinement.success ? "true" : "false", refinement.fallback ? "true" : "false",
       modules::CornerRefinementStatusName(refinement.status), refinement.failure_light_index,
       refinement.elapsed_ms, LightbarJson(refinement.lightbars[0]),
-      LightbarJson(refinement.lightbars[1]),
-      EndpointJson(refinement.endpoints[0]), EndpointJson(refinement.endpoints[1]),
-      EndpointJson(refinement.endpoints[2]), EndpointJson(refinement.endpoints[3]),
-      PointJson(refinement.corner_displacements[0]), PointJson(refinement.corner_displacements[1]),
-      PointJson(refinement.corner_displacements[2]), PointJson(refinement.corner_displacements[3]));
+      LightbarJson(refinement.lightbars[1]), EndpointJson(refinement.endpoints[0]),
+      EndpointJson(refinement.endpoints[1]), EndpointJson(refinement.endpoints[2]),
+      EndpointJson(refinement.endpoints[3]), PointJson(refinement.corner_displacements[0]),
+      PointJson(refinement.corner_displacements[1]), PointJson(refinement.corner_displacements[2]),
+      PointJson(refinement.corner_displacements[3]));
 }
 
 bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
@@ -158,6 +158,7 @@ bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
   ::foxglove::schemas::SceneUpdate update;
   const auto world_t_camera =
       geometry::Compose(geometry.world_t_gimbal, geometry.gimbal_t_camera_optical);
+  // 真值链只用于数值基准，不叠加到绿色正式估计图层，避免与仿真真值频道重复。
   for (const auto& attempt : result.attempts) {
     if (!attempt.estimate || attempt.source == modules::PnpInputSource::GROUND_TRUTH)
       continue;
@@ -190,6 +191,7 @@ bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
     if (attempt.source != modules::PnpInputSource::DETECTION || !attempt.refinement)
       continue;
     const auto& refinement = *attempt.refinement;
+    // 青色始终表示原始网络输入；洋红色仅表示实际提交给 PnP 的成功精修结果。
     ::foxglove::schemas::PointsAnnotation raw;
     raw.timestamp = timestamp;
     raw.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
@@ -218,6 +220,7 @@ bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
   for (const auto& attempt : result.attempts) {
     if (!attempt.estimate || attempt.source == modules::PnpInputSource::GROUND_TRUTH)
       continue;
+    // 重投影与输入角点分属不同频道，便于独立开关并直接观察模型残差。
     ::foxglove::schemas::PointsAnnotation polygon;
     polygon.timestamp = timestamp;
     polygon.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
@@ -239,6 +242,7 @@ bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
         !attempt.estimate->mean_corner_error_px || !attempt.refinement)
       continue;
     for (std::size_t index = 0; index < 4; ++index) {
+      // truth = formal input - 已记录的有符号偏差；无需在消息结果中重复保存真值角点。
       const cv::Point2f truth(
           attempt.estimate->image_corners[index].x - attempt.estimate->corner_delta_u_px[index],
           attempt.estimate->image_corners[index].y - attempt.estimate->corner_delta_v_px[index]);
@@ -305,6 +309,7 @@ bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
     const auto& refinement = *attempt.refinement;
     for (const auto& endpoint : refinement.endpoints) {
       if (cv::norm(endpoint.search_end - endpoint.search_start) > 0.1) {
+        // 橙色线段表示沿 PCA 主轴实际扫描的区间，黄色点表示各扫描线局部候选。
         ::foxglove::schemas::PointsAnnotation search;
         search.timestamp = timestamp;
         search.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LIST;
@@ -324,6 +329,7 @@ bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
         annotations.points.push_back(std::move(candidate));
       }
       if (endpoint.found) {
+        // 融合候选即使因整块装甲原子回退未采用也保留，并用红色明确区分。
         ::foxglove::schemas::PointsAnnotation fused;
         fused.timestamp = timestamp;
         fused.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::POINTS;
@@ -340,6 +346,7 @@ bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
 
 std::string EncodeStats(const modules::ArmorPnpFrameResult& result, std::uint64_t sequence,
                         const ::foxglove::schemas::Timestamp& timestamp) {
+  // attempts 是当前帧明细；summary、groups、solve 和 refinement 是最近原子统计快照。
   std::string attempts;
   std::size_t successes = 0;
   for (const auto& attempt : result.attempts) {
@@ -415,9 +422,8 @@ std::string EncodeStats(const modules::ArmorPnpFrameResult& result, std::uint64_
       successes, DetailedSummaryJson(result.ground_truth_summary),
       DetailedSummaryJson(result.detection_summary), GroupJson(result.distance_groups),
       GroupJson(result.angle_groups), GroupJson(result.size_groups),
-      SolveSummaryJson(result.solve_summary),
-      result.refinement_summary.attempted, result.refinement_summary.succeeded,
-      result.refinement_summary.fallback,
+      SolveSummaryJson(result.solve_summary), result.refinement_summary.attempted,
+      result.refinement_summary.succeeded, result.refinement_summary.fallback,
       FailureReasonsJson(result.refinement_summary.failure_reasons),
       PercentilesJson(result.refinement_summary.elapsed_ms),
       PercentilesJson(result.refinement_summary.raw_mean_corner_error_px),

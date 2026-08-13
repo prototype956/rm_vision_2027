@@ -4,6 +4,7 @@ add_subdirectory(armor_detector)
 add_subdirectory(spatial)
 add_subdirectory(simulation)
 add_subdirectory(pnp)
+add_subdirectory(prediction)
 add_subdirectory(pipeline)
 
 add_library(mv-tool-foxglove STATIC
@@ -23,6 +24,7 @@ target_link_libraries(mv-tool-foxglove
         mv-hal-camera
         mv-modules-armor-detector
         mv-modules-armor-pnp
+        mv-modules-armor-predictor
     PRIVATE
         mv-tool-foxglove-pipeline
         mv-tool-foxglove-runtime

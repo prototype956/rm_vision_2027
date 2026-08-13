@@ -23,6 +23,11 @@ constexpr char K_PNP_ERROR_VECTORS_TOPIC[] = "/vision/pnp/error_vectors";
 constexpr char K_CORNER_REFINER_AXES_TOPIC[] = "/vision/corner_refiner/axes";
 constexpr char K_CORNER_REFINER_CANDIDATES_TOPIC[] = "/vision/corner_refiner/candidates";
 constexpr char K_PNP_STATS_TOPIC[] = "/vision/pnp/stats";
+constexpr char K_PREDICTION_SCENE_TOPIC[] = "/vision/prediction/scene";
+constexpr char K_PREDICTION_STATE_TOPIC[] = "/vision/prediction/state";
+constexpr char K_PREDICTION_TRUTH_OVERLAY_TOPIC[] = "/vision/prediction/truth_overlay";
+constexpr char K_PREDICTION_CURRENT_ANNOTATIONS_TOPIC[] = "/vision/prediction/current_annotations";
+constexpr char K_PREDICTION_FUTURE_ANNOTATIONS_TOPIC[] = "/vision/prediction/future_annotations";
 
 // RawChannel 必须携带稳定 JSON Schema，Foxglove Plot/Raw Messages 才能解析字段。
 constexpr char K_ARMOR_STATS_SCHEMA[] = R"json({
@@ -71,6 +76,24 @@ constexpr char K_PNP_STATS_SCHEMA[] = R"json({
     "attempts":{"type":"array","items":{"type":"object"}}
   },
   "required":["timestamp","sequence","summary_sequence","attempted","successful","summary","groups","solve","refinement","attempts"]
+})json";
+
+constexpr char K_PREDICTION_STATE_SCHEMA[] = R"json({
+  "type":"object",
+  "properties":{
+    "timestamp":{"type":"object","properties":{"sec":{"type":"integer"},"nsec":{"type":"integer"}},"required":["sec","nsec"]},
+    "sequence":{"type":"integer"},
+    "tracker_state":{"type":"string"},
+    "label":{"type":"integer"},
+    "dt_s":{"type":"number"},
+    "state":{"type":"array","items":{"type":"number"}},
+    "covariance_diagonal":{"type":"array","items":{"type":"number"}},
+    "innovation":{"type":"array","items":{"type":"number"}},
+    "nis":{"type":["number","null"]},
+    "associations":{"type":"array","items":{"type":"object"}},
+    "reset_reason":{"type":"string"}
+  },
+  "required":["timestamp","sequence","tracker_state","label","dt_s","state","covariance_diagonal","innovation","nis","associations","reset_reason"]
 })json";
 
 ::foxglove::Schema JsonSchema(const char* name, const char* data, std::size_t size) {
@@ -150,6 +173,21 @@ VisionChannelSet::VisionChannelSet(const ::foxglove::Context& context) {
       K_CORNER_REFINER_CANDIDATES_TOPIC, context, "create corner refiner candidates channel");
   pnp_stats_ = CreateRawChannel(K_PNP_STATS_TOPIC, "mv.vision.ArmorPnpStats", K_PNP_STATS_SCHEMA,
                                 sizeof(K_PNP_STATS_SCHEMA) - 1, context);
+  prediction_scene_ = CreateSchemaChannel<::foxglove::schemas::SceneUpdateChannel>(
+      K_PREDICTION_SCENE_TOPIC, context, "create prediction scene channel");
+  prediction_state_ =
+      CreateRawChannel(K_PREDICTION_STATE_TOPIC, "mv.vision.ArmorPredictionState",
+                       K_PREDICTION_STATE_SCHEMA, sizeof(K_PREDICTION_STATE_SCHEMA) - 1, context);
+  prediction_truth_overlay_ = CreateSchemaChannel<::foxglove::schemas::SceneUpdateChannel>(
+      K_PREDICTION_TRUTH_OVERLAY_TOPIC, context, "create prediction truth overlay channel");
+  prediction_current_annotations_ =
+      CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
+          K_PREDICTION_CURRENT_ANNOTATIONS_TOPIC, context,
+          "create current prediction annotations channel");
+  prediction_future_annotations_ =
+      CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
+          K_PREDICTION_FUTURE_ANNOTATIONS_TOPIC, context,
+          "create future prediction annotations channel");
 }
 
 VisionChannelSet::~VisionChannelSet() {
@@ -172,7 +210,12 @@ ChannelIds VisionChannelSet::Ids() const noexcept {
           .pnp_error_vectors = pnp_error_vectors_->id(),
           .corner_refiner_axes = corner_refiner_axes_->id(),
           .corner_refiner_candidates = corner_refiner_candidates_->id(),
-          .pnp_stats = pnp_stats_->id()};
+          .pnp_stats = pnp_stats_->id(),
+          .prediction_scene = prediction_scene_->id(),
+          .prediction_state = prediction_state_->id(),
+          .prediction_truth_overlay = prediction_truth_overlay_->id(),
+          .prediction_current_annotations = prediction_current_annotations_->id(),
+          .prediction_future_annotations = prediction_future_annotations_->id()};
 }
 
 ChannelPublishResult VisionChannelSet::Publish(const PreparedFrame& frame,
@@ -259,6 +302,34 @@ ChannelPublishResult VisionChannelSet::Publish(const PreparedFrame& frame,
     AddError(result, VisionTopic::PNP_STATS,
              pnp_stats_->log(data, frame.pnp_stats_json->size(), frame.epoch_nanos));
   }
+  if (demand.prediction_scene && frame.prediction_scene.has_value()) {
+    result.attempted = true;
+    AddError(result, VisionTopic::PREDICTION_SCENE,
+             prediction_scene_->log(*frame.prediction_scene, frame.epoch_nanos));
+  }
+  if (demand.prediction_state && frame.prediction_state_json.has_value()) {
+    result.attempted = true;
+    const auto* data = reinterpret_cast<const std::byte*>(frame.prediction_state_json->data());
+    AddError(result, VisionTopic::PREDICTION_STATE,
+             prediction_state_->log(data, frame.prediction_state_json->size(), frame.epoch_nanos));
+  }
+  if (demand.prediction_truth_overlay && frame.prediction_truth_overlay.has_value()) {
+    result.attempted = true;
+    AddError(result, VisionTopic::PREDICTION_TRUTH_OVERLAY,
+             prediction_truth_overlay_->log(*frame.prediction_truth_overlay, frame.epoch_nanos));
+  }
+  if (demand.prediction_current_annotations && frame.prediction_current_annotations.has_value()) {
+    result.attempted = true;
+    AddError(result, VisionTopic::PREDICTION_CURRENT_ANNOTATIONS,
+             prediction_current_annotations_->log(*frame.prediction_current_annotations,
+                                                  frame.epoch_nanos));
+  }
+  if (demand.prediction_future_annotations && frame.prediction_future_annotations.has_value()) {
+    result.attempted = true;
+    AddError(result, VisionTopic::PREDICTION_FUTURE_ANNOTATIONS,
+             prediction_future_annotations_->log(*frame.prediction_future_annotations,
+                                                 frame.epoch_nanos));
+  }
   return result;
 }
 
@@ -299,6 +370,16 @@ void VisionChannelSet::Close() noexcept {
     corner_refiner_candidates_->close();
   if (pnp_stats_)
     pnp_stats_->close();
+  if (prediction_scene_)
+    prediction_scene_->close();
+  if (prediction_state_)
+    prediction_state_->close();
+  if (prediction_truth_overlay_)
+    prediction_truth_overlay_->close();
+  if (prediction_current_annotations_)
+    prediction_current_annotations_->close();
+  if (prediction_future_annotations_)
+    prediction_future_annotations_->close();
 }
 
 const char* TopicName(VisionTopic topic) noexcept {
@@ -335,6 +416,16 @@ const char* TopicName(VisionTopic topic) noexcept {
       return "corner_refiner_candidates";
     case VisionTopic::PNP_STATS:
       return "pnp_stats";
+    case VisionTopic::PREDICTION_SCENE:
+      return "prediction_scene";
+    case VisionTopic::PREDICTION_STATE:
+      return "prediction_state";
+    case VisionTopic::PREDICTION_TRUTH_OVERLAY:
+      return "prediction_truth_overlay";
+    case VisionTopic::PREDICTION_CURRENT_ANNOTATIONS:
+      return "prediction_current_annotations";
+    case VisionTopic::PREDICTION_FUTURE_ANNOTATIONS:
+      return "prediction_future_annotations";
   }
   return "unknown";
 }

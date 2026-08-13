@@ -14,22 +14,27 @@ namespace mv::tool::foxglove::pipeline {
 
 /** @brief 某个 sink 在当前帧需要的视觉话题集合。 */
 struct TopicDemand {
-  bool image{false};                      ///< 是否需要 JPEG 原图。
-  bool armor_annotations{false};          ///< 是否需要二维装甲标注。
-  bool armor_stats{false};                ///< 是否需要装甲检测器指标。
-  bool debug_stats{false};                ///< 是否需要发布流水线指标。
-  bool transforms{false};                 ///< 是否需要同帧 TF。
-  bool calibration{false};                ///< 是否需要相机标定。
-  bool frustum{false};                    ///< 是否需要三维视锥。
-  bool ground_truth{false};               ///< 是否需要仿真三维真值。
-  bool projection_annotations{false};     ///< 是否需要真值二维重投影点。
-  bool pnp_estimates{false};              ///< 是否需要 PnP 三维估计。
-  bool pnp_corners{false};                ///< 是否需要原始/精修输入角点。
-  bool pnp_reprojection{false};           ///< 是否需要原始/精修 PnP 重投影。
-  bool pnp_error_vectors{false};          ///< 是否需要原始角点到真值的误差线。
-  bool corner_refiner_axes{false};        ///< 是否需要角点精修 PCA 轴。
-  bool corner_refiner_candidates{false};  ///< 是否需要梯度搜索区间与候选点。
-  bool pnp_stats{false};                  ///< 是否需要 PnP 指标。
+  bool image{false};                           ///< 是否需要 JPEG 原图。
+  bool armor_annotations{false};               ///< 是否需要二维装甲标注。
+  bool armor_stats{false};                     ///< 是否需要装甲检测器指标。
+  bool debug_stats{false};                     ///< 是否需要发布流水线指标。
+  bool transforms{false};                      ///< 是否需要同帧 TF。
+  bool calibration{false};                     ///< 是否需要相机标定。
+  bool frustum{false};                         ///< 是否需要三维视锥。
+  bool ground_truth{false};                    ///< 是否需要仿真三维真值。
+  bool projection_annotations{false};          ///< 是否需要真值二维重投影点。
+  bool pnp_estimates{false};                   ///< 是否需要 PnP 三维估计。
+  bool pnp_corners{false};                     ///< 是否需要原始/精修输入角点。
+  bool pnp_reprojection{false};                ///< 是否需要原始/精修 PnP 重投影。
+  bool pnp_error_vectors{false};               ///< 是否需要原始角点到真值的误差线。
+  bool corner_refiner_axes{false};             ///< 是否需要角点精修 PCA 轴。
+  bool corner_refiner_candidates{false};       ///< 是否需要梯度搜索区间与候选点。
+  bool pnp_stats{false};                       ///< 是否需要 PnP 指标。
+  bool prediction_scene{false};                ///< 是否需要预测三维场景。
+  bool prediction_state{false};                ///< 是否需要预测状态 JSON。
+  bool prediction_truth_overlay{false};        ///< 是否需要预测与仿真真值对照。
+  bool prediction_current_annotations{false};  ///< 是否需要当前预测二维重投影。
+  bool prediction_future_annotations{false};   ///< 是否需要 100 ms 预测二维重投影。
 
   /** @brief 查询是否至少需求一个话题。 */
   [[nodiscard]] bool Any() const noexcept;
@@ -67,7 +72,14 @@ struct PreparedFrame {
   std::optional<::foxglove::schemas::ImageAnnotations> corner_refiner_axes;  ///< 灯条 PCA 轴。
   std::optional<::foxglove::schemas::ImageAnnotations> corner_refiner_candidates;  ///< 精修候选点。
   std::optional<std::string> pnp_stats_json;  ///< 符合固定 Schema 的 PnP 指标。
-  std::optional<double> jpeg_ms;              ///< JPEG 编码耗时，未编码图像时为空。
+  std::optional<::foxglove::schemas::SceneUpdate> prediction_scene;  ///< 预测装甲场景。
+  std::optional<std::string> prediction_state_json;                  ///< EKF 状态诊断。
+  std::optional<::foxglove::schemas::SceneUpdate> prediction_truth_overlay;  ///< 真值误差线。
+  std::optional<::foxglove::schemas::ImageAnnotations>
+      prediction_current_annotations;  ///< 当前四装甲重投影。
+  std::optional<::foxglove::schemas::ImageAnnotations>
+      prediction_future_annotations;  ///< 100 ms 四装甲重投影。
+  std::optional<double> jpeg_ms;      ///< JPEG 编码耗时，未编码图像时为空。
   double publish_latency_ms{0.0};  ///< HAL 收帧到消息构造完成的延迟，单位为毫秒。
 };
 

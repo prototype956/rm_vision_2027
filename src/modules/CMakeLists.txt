@@ -1,3 +1,4 @@
 add_subdirectory(armor_detector)
 add_subdirectory(armor_corner_refiner)
 add_subdirectory(armor_pnp)
+add_subdirectory(armor_predictor)

@@ -24,6 +24,7 @@ target_link_libraries(mv-tool-foxglove-pipeline
         mv-tool-foxglove-spatial
         mv-tool-foxglove-simulation
         mv-tool-foxglove-pnp
+        mv-tool-foxglove-prediction
         fmt::fmt
 )
 

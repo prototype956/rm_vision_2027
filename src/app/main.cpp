@@ -7,6 +7,7 @@
 #include "modules/armor_detector/armor_detector.hpp"
 #include "modules/armor_detector/armor_detector_config.hpp"
 #include "modules/armor_pnp/armor_pnp.hpp"
+#include "modules/armor_predictor/armor_predictor.hpp"
 #include "tool/debug/armor_detection_overlay.hpp"
 #include "tool/debug/debug_window.hpp"
 #include "tool/foxglove/foxglove_config.hpp"
@@ -129,8 +130,8 @@ void LogPnpHealth(const modules::ArmorPnpFrameResult& result, std::uint64_t sequ
               result.refinement_summary.fallback,
               result.refinement_summary.raw_mean_corner_error_px.p95,
               result.refinement_summary.final_mean_corner_error_px.p95,
-              result.detection_summary.depth_error_m.p95,
-              dominant_refinement_failure, dominant_refinement_failure_count);
+              result.detection_summary.depth_error_m.p95, dominant_refinement_failure,
+              dominant_refinement_failure_count);
   const auto MATCHED_DETECTION = std::find_if(
       result.attempts.begin(), result.attempts.end(), [](const modules::ArmorPnpAttempt& attempt) {
         return attempt.source == modules::PnpInputSource::DETECTION && attempt.estimate &&
@@ -169,6 +170,9 @@ int Run() {
 
     const auto PNP_YAML = ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_pnp.yaml", 2);
     modules::ArmorPnp pnp(modules::ParseArmorPnpConfig(PNP_YAML));
+    const auto PREDICTOR_YAML =
+        ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_predictor.yaml", 2);
+    modules::ArmorPredictor predictor(modules::ParseArmorPredictorConfig(PREDICTOR_YAML));
     const auto REFINER_YAML =
         ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_corner_refiner.yaml");
     modules::ArmorCornerRefiner corner_refiner(
@@ -223,10 +227,11 @@ int Run() {
             refinements.push_back(corner_refiner.Refine(gray_image, detection.corners));
           }
           const auto PNP_RESULT = pnp.ProcessFrame(frame, DETECTIONS, refinements);
+          const auto PREDICTION_RESULT = predictor.ProcessFrame(frame, PNP_RESULT);
           LogPnpHealth(PNP_RESULT, frame.sequence,
                        frame.geometry ? frame.geometry->armors.size() : 0);
           if (foxglove_publisher) {
-            foxglove_publisher->Publish(frame, DETECTIONS, STATS, PNP_RESULT);
+            foxglove_publisher->Publish(frame, DETECTIONS, STATS, PNP_RESULT, PREDICTION_RESULT);
           }
           if (window) {
             cv::Mat debug_image = frame.image.clone();

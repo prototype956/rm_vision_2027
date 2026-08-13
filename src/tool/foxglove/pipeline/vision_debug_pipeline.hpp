@@ -39,7 +39,8 @@ class VisionDebugPipeline final {
   /** @brief 非阻塞提交同帧图像、检测结果和指标。 */
   void Publish(const hal::CameraFrame& frame, std::span<const modules::ArmorDetection> detections,
                const modules::DetectorStats& detector_stats,
-               const modules::ArmorPnpFrameResult& pnp_result) noexcept;
+               const modules::ArmorPnpFrameResult& pnp_result,
+               const modules::ArmorPredictionResult& prediction_result) noexcept;
   /** @brief 获取流水线、会话和关键实时订阅的线程安全组合快照。 */
   [[nodiscard]] VisionPublisherStats SnapshotStats() const noexcept;
   /** @brief 查询流水线是否仍接受帧且至少有一个 sink 可用。 */

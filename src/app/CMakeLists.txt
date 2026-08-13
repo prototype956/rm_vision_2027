@@ -9,6 +9,7 @@ target_link_libraries(mv-vision-main
         mv-modules-armor-detector
         mv-modules-armor-corner-refiner
         mv-modules-armor-pnp
+        mv-modules-armor-predictor
         mv-tool-armor-overlay
         mv-tool-debug
         mv-tool-foxglove

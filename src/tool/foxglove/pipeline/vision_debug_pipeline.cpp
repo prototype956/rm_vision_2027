@@ -31,6 +31,11 @@ VisionDebugPipeline::VisionDebugPipeline(const Config& config, runtime::Foxglove
       session_.RegisterLiveChannel(live_channel_ids_.corner_refiner_axes);
       session_.RegisterLiveChannel(live_channel_ids_.corner_refiner_candidates);
       session_.RegisterLiveChannel(live_channel_ids_.pnp_stats);
+      session_.RegisterLiveChannel(live_channel_ids_.prediction_scene);
+      session_.RegisterLiveChannel(live_channel_ids_.prediction_state);
+      session_.RegisterLiveChannel(live_channel_ids_.prediction_truth_overlay);
+      session_.RegisterLiveChannel(live_channel_ids_.prediction_current_annotations);
+      session_.RegisterLiveChannel(live_channel_ids_.prediction_future_annotations);
     } catch (const std::exception& error) {
       live_channels_.reset();
       session_.FailLiveSetup(error.what());
@@ -91,13 +96,21 @@ TopicDemand VisionDebugPipeline::LiveDemand() const noexcept {
       .corner_refiner_candidates =
           session_.Subscription(live_channel_ids_.corner_refiner_candidates).subscribers > 0,
       .pnp_stats = session_.Subscription(live_channel_ids_.pnp_stats).subscribers > 0,
+      .prediction_scene = session_.Subscription(live_channel_ids_.prediction_scene).subscribers > 0,
+      .prediction_state = session_.Subscription(live_channel_ids_.prediction_state).subscribers > 0,
+      .prediction_truth_overlay =
+          session_.Subscription(live_channel_ids_.prediction_truth_overlay).subscribers > 0,
+      .prediction_current_annotations =
+          session_.Subscription(live_channel_ids_.prediction_current_annotations).subscribers > 0,
+      .prediction_future_annotations =
+          session_.Subscription(live_channel_ids_.prediction_future_annotations).subscribers > 0,
   };
 }
 
-void VisionDebugPipeline::Publish(const hal::CameraFrame& frame,
-                                  std::span<const modules::ArmorDetection> detections,
-                                  const modules::DetectorStats& detector_stats,
-                                  const modules::ArmorPnpFrameResult& pnp_result) noexcept {
+void VisionDebugPipeline::Publish(
+    const hal::CameraFrame& frame, std::span<const modules::ArmorDetection> detections,
+    const modules::DetectorStats& detector_stats, const modules::ArmorPnpFrameResult& pnp_result,
+    const modules::ArmorPredictionResult& prediction_result) noexcept {
   metrics_.OnSubmitted();
   const auto LIVE_DEMAND = LiveDemand();
   // 无订阅且未录制时不复制图像和检测结果，调试功能保持近似零额外负载。
@@ -106,7 +119,8 @@ void VisionDebugPipeline::Publish(const hal::CameraFrame& frame,
     return;
   }
   try {
-    const auto RESULT = queue_.Push(frame, detections, detector_stats, pnp_result);
+    const auto RESULT =
+        queue_.Push(frame, detections, detector_stats, pnp_result, prediction_result);
     if (RESULT.rate_limited) {
       metrics_.OnRateLimited();
     } else if (RESULT.enqueued) {
@@ -156,7 +170,12 @@ void VisionDebugPipeline::ProcessFrame(const VisionDebugFrame& frame) {
                                                             .pnp_error_vectors = true,
                                                             .corner_refiner_axes = true,
                                                             .corner_refiner_candidates = true,
-                                                            .pnp_stats = true}
+                                                            .pnp_stats = true,
+                                                            .prediction_scene = true,
+                                                            .prediction_state = true,
+                                                            .prediction_truth_overlay = true,
+                                                            .prediction_current_annotations = true,
+                                                            .prediction_future_annotations = true}
                                               : TopicDemand{};
   const auto COMBINED_DEMAND = Merge(LIVE_DEMAND, RECORDING_DEMAND);
   if (!COMBINED_DEMAND.Any()) {

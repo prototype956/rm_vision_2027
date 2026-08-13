@@ -1,0 +1,29 @@
+schema_version: 2
+tracking:
+  min_detect_count: 5
+  max_temp_lost_count: 15
+  max_dt_s: 0.1
+association:
+  max_position_m: 0.8
+  max_yaw_rad: 1.2
+model:
+  vehicle_initial_radius_m: 0.21154
+  hero_initial_radius_m: 0.23930
+  vehicle_armor_roll_rad: -0.265216
+  hero_armor_roll_rad: -0.256525
+  min_radius_m: 0.05
+  max_radius_m: 0.5
+  linear_acceleration_variance: 100.0
+  angular_acceleration_variance: 400.0
+  initial_covariance_diagonal: [1, 64, 1, 64, 1, 64, 0.4, 100, 1, 1, 1]
+measurement:
+  variance_base: [0.004, 0.004, 1.0, 0.09]
+  distance_variance_angle_scale: 1.0
+  armor_yaw_variance_distance_scale: 0.005
+priority:
+  sentry: 3
+  one: 1
+  two: 2
+  three: 0
+  four: 0
+prediction_horizons_s: [0.0, 0.05, 0.1, 0.2]

@@ -35,7 +35,8 @@ class LatestFrameQueue final {
   [[nodiscard]] QueuePushResult Push(const hal::CameraFrame& frame,
                                      std::span<const modules::ArmorDetection> detections,
                                      const modules::DetectorStats& detector_stats,
-                                     const modules::ArmorPnpFrameResult& pnp_result);
+                                     const modules::ArmorPnpFrameResult& pnp_result,
+                                     const modules::ArmorPredictionResult& prediction_result);
   /** @brief 阻塞等待下一帧；停止且队列排空后返回空值。 */
   [[nodiscard]] std::optional<VisionDebugFrame> WaitPop() noexcept;
   /** @brief 幂等停止生产者并唤醒等待中的唯一消费者。 */
