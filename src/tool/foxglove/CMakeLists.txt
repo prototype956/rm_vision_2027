@@ -5,6 +5,7 @@ add_subdirectory(spatial)
 add_subdirectory(simulation)
 add_subdirectory(pnp)
 add_subdirectory(prediction)
+add_subdirectory(control)
 add_subdirectory(pipeline)
 
 add_library(mv-tool-foxglove STATIC
@@ -25,9 +26,11 @@ target_link_libraries(mv-tool-foxglove
         mv-modules-armor-detector
         mv-modules-armor-pnp
         mv-modules-armor-predictor
+        mv-modules-fire-control
     PRIVATE
         mv-tool-foxglove-pipeline
         mv-tool-foxglove-runtime
+        mv-tool-foxglove-control
 )
 
 message(STATUS "    + mv-tool-foxglove (WebSocket + MCAP vision diagnostics)")

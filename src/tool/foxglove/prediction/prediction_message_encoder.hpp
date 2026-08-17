@@ -2,6 +2,7 @@
 
 #include "hal/camera/i_camera.hpp"
 #include "modules/armor_predictor/armor_prediction_types.hpp"
+#include "modules/fire_control/fire_control.hpp"
 
 #include <string>
 
@@ -45,6 +46,12 @@ enum class ImagePredictionHorizon {
 
 /** @brief 生成只携带时间戳的空标注，使 Foxglove 清除上一帧预测线框。 */
 [[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeEmptyAnnotations(
+    const ::foxglove::schemas::Timestamp& timestamp);
+
+/** 将火控锁定槽位和待切换槽位重投影到与原图严格同帧的图像坐标。 */
+[[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeSelectedArmorAnnotations(
+    const modules::ArmorPredictionResult& result, const hal::CameraFrame::FrameGeometry& geometry,
+    const modules::ArmorSelectionSnapshot& selection,
     const ::foxglove::schemas::Timestamp& timestamp);
 
 }  // namespace mv::tool::foxglove::prediction

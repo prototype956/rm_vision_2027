@@ -37,6 +37,7 @@ enum class VisionTopic {
   PREDICTION_TRUTH_OVERLAY,        ///< 预测中心与仿真真值误差线。
   PREDICTION_CURRENT_ANNOTATIONS,  ///< 当前预测装甲二维重投影。
   PREDICTION_FUTURE_ANNOTATIONS,   ///< 100 ms 预测装甲二维重投影。
+  SELECTED_ARMOR_ANNOTATIONS,      ///< 火控选中装甲同帧二维重投影。
 };
 
 /** @brief 单个 Foxglove Context 中全部视觉频道的 SDK 标识。 */
@@ -62,6 +63,7 @@ struct ChannelIds {
   std::uint64_t prediction_truth_overlay{0};        ///< 预测真值对照频道 ID。
   std::uint64_t prediction_current_annotations{0};  ///< 当前预测图像标注频道 ID。
   std::uint64_t prediction_future_annotations{0};   ///< 100 ms 预测图像标注频道 ID。
+  std::uint64_t selected_armor_annotations{0};      ///< 火控选中装甲标注频道 ID。
 };
 
 /** @brief 单个话题的一次 Foxglove SDK 发布错误。 */
@@ -74,7 +76,7 @@ struct ChannelPublishError {
 struct ChannelPublishResult {
   bool attempted{false};                         ///< 是否至少调用了一个频道的 log()。
   bool success{true};                            ///< 所有已尝试频道是否均成功。
-  std::array<ChannelPublishError, 21> errors{};  ///< 每个固定话题最多记录一个错误。
+  std::array<ChannelPublishError, 22> errors{};  ///< 每个固定话题最多记录一个错误。
   std::size_t error_count{0};                    ///< errors 中的有效元素数量。
 };
 
@@ -130,6 +132,7 @@ class VisionChannelSet final {
   std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> prediction_truth_overlay_;
   std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> prediction_current_annotations_;
   std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> prediction_future_annotations_;
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> selected_armor_annotations_;
   bool closed_{false};  ///< 保证显式 Close() 与析构关闭幂等。
 };
 

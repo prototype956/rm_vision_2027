@@ -16,7 +16,8 @@ QueuePushResult LatestFrameQueue::Push(const hal::CameraFrame& frame,
                                        std::span<const modules::ArmorDetection> detections,
                                        const modules::DetectorStats& detector_stats,
                                        const modules::ArmorPnpFrameResult& pnp_result,
-                                       const modules::ArmorPredictionResult& prediction_result) {
+                                       const modules::ArmorPredictionResult& prediction_result,
+                                       std::optional<modules::ArmorSelectionSnapshot> selection) {
   std::lock_guard lock(mutex_);
   if (stopped_) {
     return {};
@@ -43,6 +44,7 @@ QueuePushResult LatestFrameQueue::Push(const hal::CameraFrame& frame,
   item.detector_stats = detector_stats;
   item.pnp_result = pnp_result;
   item.prediction_result = prediction_result;
+  item.armor_selection = std::move(selection);
 
   const bool OVERWRITTEN = queued_frame_.has_value();
   queued_frame_ = std::move(item);

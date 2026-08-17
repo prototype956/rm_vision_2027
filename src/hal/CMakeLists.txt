@@ -7,3 +7,4 @@
 message(STATUS "  Configuring HAL modules...")
 
 add_subdirectory(camera)
+add_subdirectory(gimbal)

@@ -9,7 +9,8 @@ namespace mv::hal {
 /**
  * @brief 从 Daedalus/Talos 共享内存读取同步仿真图像。
  *
- * 后端接受 Talos v2 RGB8 和 v3 RGB8/BGR8，向上层统一返回独立持有的 BGR8 图像。
+ * 后端消费 Talos v5 原子发布的图像、标定、坐标变换、云台遥测和仿真真值，
+ * 接受 RGB8/BGR8 像素并向上层统一返回独立持有的 BGR8 图像。
  */
 class TalosCamera final : public ICamera {
  public:
@@ -28,8 +29,8 @@ class TalosCamera final : public ICamera {
   [[nodiscard]] bool IsOpen() const override;
 
  private:
-  struct Impl;
-  std::unique_ptr<Impl> impl_;
+  struct Impl;                  ///< 隔离配置解析和共享内存设备实现。
+  std::unique_ptr<Impl> impl_;  ///< 当前相机唯一拥有的设备状态。
 };
 
 }  // namespace mv::hal

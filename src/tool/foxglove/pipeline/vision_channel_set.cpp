@@ -28,6 +28,7 @@ constexpr char K_PREDICTION_STATE_TOPIC[] = "/vision/prediction/state";
 constexpr char K_PREDICTION_TRUTH_OVERLAY_TOPIC[] = "/vision/prediction/truth_overlay";
 constexpr char K_PREDICTION_CURRENT_ANNOTATIONS_TOPIC[] = "/vision/prediction/current_annotations";
 constexpr char K_PREDICTION_FUTURE_ANNOTATIONS_TOPIC[] = "/vision/prediction/future_annotations";
+constexpr char K_SELECTED_ARMOR_ANNOTATIONS_TOPIC[] = "/vision/control/selected_armor_annotations";
 
 // RawChannel 必须携带稳定 JSON Schema，Foxglove Plot/Raw Messages 才能解析字段。
 constexpr char K_ARMOR_STATS_SCHEMA[] = R"json({
@@ -188,6 +189,8 @@ VisionChannelSet::VisionChannelSet(const ::foxglove::Context& context) {
       CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
           K_PREDICTION_FUTURE_ANNOTATIONS_TOPIC, context,
           "create future prediction annotations channel");
+  selected_armor_annotations_ = CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
+      K_SELECTED_ARMOR_ANNOTATIONS_TOPIC, context, "create selected armor annotations channel");
 }
 
 VisionChannelSet::~VisionChannelSet() {
@@ -215,7 +218,8 @@ ChannelIds VisionChannelSet::Ids() const noexcept {
           .prediction_state = prediction_state_->id(),
           .prediction_truth_overlay = prediction_truth_overlay_->id(),
           .prediction_current_annotations = prediction_current_annotations_->id(),
-          .prediction_future_annotations = prediction_future_annotations_->id()};
+          .prediction_future_annotations = prediction_future_annotations_->id(),
+          .selected_armor_annotations = selected_armor_annotations_->id()};
 }
 
 ChannelPublishResult VisionChannelSet::Publish(const PreparedFrame& frame,
@@ -330,6 +334,12 @@ ChannelPublishResult VisionChannelSet::Publish(const PreparedFrame& frame,
              prediction_future_annotations_->log(*frame.prediction_future_annotations,
                                                  frame.epoch_nanos));
   }
+  if (demand.selected_armor_annotations && frame.selected_armor_annotations.has_value()) {
+    result.attempted = true;
+    AddError(
+        result, VisionTopic::SELECTED_ARMOR_ANNOTATIONS,
+        selected_armor_annotations_->log(*frame.selected_armor_annotations, frame.epoch_nanos));
+  }
   return result;
 }
 
@@ -380,6 +390,8 @@ void VisionChannelSet::Close() noexcept {
     prediction_current_annotations_->close();
   if (prediction_future_annotations_)
     prediction_future_annotations_->close();
+  if (selected_armor_annotations_)
+    selected_armor_annotations_->close();
 }
 
 const char* TopicName(VisionTopic topic) noexcept {
@@ -426,6 +438,8 @@ const char* TopicName(VisionTopic topic) noexcept {
       return "prediction_current_annotations";
     case VisionTopic::PREDICTION_FUTURE_ANNOTATIONS:
       return "prediction_future_annotations";
+    case VisionTopic::SELECTED_ARMOR_ANNOTATIONS:
+      return "selected_armor_annotations";
   }
   return "unknown";
 }

@@ -1,6 +1,7 @@
 #include "talos_device.hpp"
 
 #include "core/logger.hpp"
+#include "talos_ipc_layout.hpp"
 
 #include <array>
 #include <chrono>
@@ -18,159 +19,7 @@
 
 namespace mv::hal::detail {
 namespace {
-
-// 以下常量和结构必须与 Daedalus 的 Talos 共享内存 ABI 保持一致。元数据区使用
-// 固定布局，图像像素则按三个连续缓冲区存放在独立文件中。
-constexpr uint32_t K_SHM_MAGIC = 0x54414C05;
-constexpr uint32_t K_SHM_VERSION = 5;
-constexpr uint8_t K_FLAG_NEW = 0x80;
-constexpr uint8_t K_INDEX_MASK = 0x03;
-constexpr uint8_t K_FORMAT_RGB8 = 0;
-constexpr uint8_t K_FORMAT_BGR8 = 1;
-constexpr std::size_t K_BUFFER_COUNT = 3;
-constexpr std::size_t K_GROUND_TRUTH_MAX_TARGETS = 16;
-constexpr std::size_t K_GROUND_TRUTH_MAX_ARMORS = 32;
-
-struct alignas(64) ShmHeader {
-  uint32_t magic;
-  uint32_t version;
-  uint64_t created_ns;
-  uint64_t heartbeat_ns;
-  uint32_t image_width;
-  uint32_t image_height;
-  uint8_t pad[32];
-};
-
-struct QuaternionF32 {
-  float x;  ///< Hamilton 四元数虚部 X。
-  float y;  ///< Hamilton 四元数虚部 Y。
-  float z;  ///< Hamilton 四元数虚部 Z。
-  float w;  ///< Hamilton 四元数实部。
-};
-
-// Talos v5 的刚体变换约定与 geometry::RigidTransform 相同：parent_t_child
-// 将 child 中的坐标变换到 parent，平移单位为米。
-struct alignas(32) RigidTransformF32 {
-  float translation[3];
-  QuaternionF32 rotation;
-  uint8_t pad[4];
-};
-
-struct alignas(64) CameraCalibrationMeta {
-  uint64_t timestamp_ns;  ///< 所属采集快照的 Unix epoch 纳秒时间。
-  double fx;              ///< 水平焦距，单位为像素。
-  double fy;              ///< 垂直焦距，单位为像素。
-  double cx;              ///< 主点横坐标，单位为像素。
-  double cy;              ///< 主点纵坐标，单位为像素。
-  double distortion[5];   ///< plumb_bob 顺序：k1、k2、p1、p2、k3。
-  uint32_t width;         ///< 标定适用的图像宽度。
-  uint32_t height;        ///< 标定适用的图像高度。
-  uint8_t pad[24];
-};
-
-// 下列未消费的协议区仍必须占位，以保持与 Rust #[repr(C, align(...))] ABI 一致。
-struct alignas(64) ChassisObservationMeta {
-  uint8_t bytes[128];
-};
-
-struct alignas(32) GroundTruthTargetMeta {
-  uint64_t frame_sequence;  ///< 所属图像帧序号。
-  uint64_t timestamp_ns;    ///< 所属采集快照的 Unix epoch 纳秒时间。
-  uint64_t id;              ///< 本次仿真运行内的目标标识。
-  uint8_t team;             ///< 0 为红方，1 为蓝方。
-  uint8_t armor_label;      ///< Talos 装甲类别编码。
-  uint8_t is_outpost;       ///< 非零表示特殊旋转目标。
-  uint8_t pad1;
-  float position[3];   ///< world 坐标系位置，单位为米。
-  float yaw_velocity;  ///< 绕 world +Z 的角速度，单位为弧度每秒。
-  float yaw;           ///< 绕 world +Z 的航向角，单位为弧度。
-  uint8_t pad[16];
-};
-
-struct alignas(64) GroundTruthRuneMeta {
-  uint8_t bytes[128];
-};
-
-struct alignas(64) GroundTruthArmorMeta {
-  uint64_t id;
-  uint8_t team;
-  uint8_t label;
-  uint8_t armor_type;
-  uint8_t pad1;
-  float width_m;
-  float height_m;
-  uint8_t pad2[12];
-  RigidTransformF32 world_t_armor;
-  float corners_world[4][3];
-  uint8_t pad3[16];
-};
-
-struct alignas(64) GroundTruthBatchMeta {
-  uint64_t frame_sequence;  ///< 整批真值所属图像帧序号。
-  uint64_t timestamp_ns;    ///< 整批真值所属采集快照时间。
-  uint32_t target_count;    ///< targets 中的有效元素数量。
-  uint32_t rune_count;
-  uint32_t armor_count;
-  uint32_t pad1;
-  GroundTruthTargetMeta targets[K_GROUND_TRUTH_MAX_TARGETS];
-  GroundTruthRuneMeta runes[4];
-  GroundTruthArmorMeta armors[K_GROUND_TRUTH_MAX_ARMORS];
-};
-
-struct alignas(64) CapturedFrameMeta {
-  uint64_t frame_sequence;        ///< 发布端启动后严格递增的帧序号。
-  uint64_t capture_timestamp_ns;  ///< 整个快照共用的 Unix epoch 纳秒时间。
-  uint32_t width;
-  uint32_t height;
-  uint8_t buffer_id;
-  uint8_t format;
-  uint8_t pad1[30];
-  CameraCalibrationMeta camera_info;
-  RigidTransformF32 world_t_gimbal;           ///< gimbal 到 world 的变换。
-  RigidTransformF32 gimbal_t_camera_optical;  ///< camera_optical 到 gimbal 的变换。
-  RigidTransformF32 gimbal_t_muzzle;          ///< muzzle 到 gimbal 的变换。
-  uint8_t pad2[32];
-  ChassisObservationMeta chassis_observation;
-  GroundTruthBatchMeta ground_truth;
-};
-
-struct alignas(64) FrameTripleBuffer {
-  uint8_t state;
-  uint8_t write_index;
-  uint8_t read_index;
-  uint8_t pad[61];
-  CapturedFrameMeta slots[3];
-};
-
-struct alignas(64) GimbalCmdMeta {
-  uint8_t bytes[192];
-};
-
-struct alignas(64) RuntimeStateMeta {
-  uint8_t bytes[64];
-};
-
-struct alignas(64) ShmMetaRegion {
-  ShmHeader header;
-  FrameTripleBuffer frame;
-  GimbalCmdMeta gimbal_cmd;
-  RuntimeStateMeta runtime_state;
-};
-
-// 编译期校验可防止字段或对齐方式变化后静默破坏跨进程协议。
-static_assert(sizeof(ShmHeader) == 64);
-static_assert(sizeof(QuaternionF32) == 16);
-static_assert(sizeof(RigidTransformF32) == 32);
-static_assert(sizeof(CameraCalibrationMeta) == 128);
-static_assert(sizeof(GroundTruthTargetMeta) == 64);
-static_assert(sizeof(GroundTruthArmorMeta) == 128);
-static_assert(sizeof(GroundTruthBatchMeta) == 5696);
-static_assert(sizeof(CapturedFrameMeta) == 6144);
-static_assert(sizeof(FrameTripleBuffer) == 18496);
-static_assert(offsetof(ShmMetaRegion, frame) == 64);
-static_assert(offsetof(ShmMetaRegion, gimbal_cmd) == 18560);
-static_assert(offsetof(ShmMetaRegion, runtime_state) == 18752);
-static_assert(sizeof(ShmMetaRegion) == 18816);
+using namespace talos_ipc;
 
 uint64_t SystemNowNs() noexcept {
   return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -274,6 +123,22 @@ CameraFrame::FrameGeometry ConvertGeometry(const CapturedFrameMeta& metadata) {
   geometry.world_t_gimbal = ConvertTransform(metadata.world_t_gimbal);
   geometry.gimbal_t_camera_optical = ConvertTransform(metadata.gimbal_t_camera_optical);
   geometry.gimbal_t_muzzle = ConvertTransform(metadata.gimbal_t_muzzle);
+  if (metadata.gimbal_telemetry_valid != 0) {
+    const auto FORWARD = geometry.world_t_gimbal.rotation * mv::geometry::Vector3::UnitX();
+    geometry.gimbal_actuator = GimbalActuatorTelemetry{
+        .valid = true,
+        .state_timestamp_ns = metadata.capture_timestamp_ns,
+        .consumed_command_timestamp_ns = metadata.gimbal_consumed_command_timestamp_ns,
+        .mode = static_cast<GimbalActuatorMode>(metadata.gimbal_actuator_mode),
+        .command_valid = metadata.gimbal_command_valid != 0,
+        .saturation_flags = metadata.gimbal_saturation_flags,
+        .actual_yaw = std::atan2(FORWARD.y(), FORWARD.x()),
+        .actual_pitch = std::atan2(FORWARD.z(), std::hypot(FORWARD.x(), FORWARD.y())),
+        .yaw_velocity = metadata.gimbal_yaw_velocity_rad_s,
+        .pitch_velocity = metadata.gimbal_pitch_velocity_rad_s,
+        .yaw_acceleration = metadata.gimbal_yaw_acceleration_rad_s2,
+        .pitch_acceleration = metadata.gimbal_pitch_acceleration_rad_s2};
+  }
 
   const auto& truth = metadata.ground_truth;
   geometry.targets.reserve(truth.target_count);
@@ -547,18 +412,18 @@ GrabStatus TalosDevice::Grab(CameraFrame& frame) {
                       Finite(armor.corners_world[corner][2]);
       }
       if (truth_valid) {
-        const auto pose = ConvertTransform(armor.world_t_armor);
-        const std::array<mv::geometry::Vector3, 4> expected{
+        const auto POSE = ConvertTransform(armor.world_t_armor);
+        const std::array<mv::geometry::Vector3, 4> EXPECTED{
             mv::geometry::Vector3(-armor.width_m * 0.5, armor.height_m * 0.5, 0.0),
             mv::geometry::Vector3(armor.width_m * 0.5, armor.height_m * 0.5, 0.0),
             mv::geometry::Vector3(armor.width_m * 0.5, -armor.height_m * 0.5, 0.0),
             mv::geometry::Vector3(-armor.width_m * 0.5, -armor.height_m * 0.5, 0.0)};
-        for (std::size_t corner = 0; truth_valid && corner < expected.size(); ++corner) {
-          const mv::geometry::Vector3 actual(armor.corners_world[corner][0],
+        for (std::size_t corner = 0; truth_valid && corner < EXPECTED.size(); ++corner) {
+          const mv::geometry::Vector3 ACTUAL(armor.corners_world[corner][0],
                                              armor.corners_world[corner][1],
                                              armor.corners_world[corner][2]);
           truth_valid =
-              (actual - mv::geometry::TransformPoint(pose, expected[corner])).norm() <= 0.002;
+              (ACTUAL - mv::geometry::TransformPoint(POSE, EXPECTED[corner])).norm() <= 0.002;
         }
       }
     }
@@ -573,6 +438,12 @@ GrabStatus TalosDevice::Grab(CameraFrame& frame) {
         !ValidTransform(metadata.world_t_gimbal) ||
         !ValidTransform(metadata.gimbal_t_camera_optical) ||
         !ValidTransform(metadata.gimbal_t_muzzle) || !truth_valid ||
+        (metadata.gimbal_telemetry_valid != 0 &&
+         (metadata.gimbal_telemetry_valid != 1 || metadata.gimbal_actuator_mode > 2 ||
+          metadata.gimbal_command_valid > 1 || !Finite(metadata.gimbal_yaw_velocity_rad_s) ||
+          !Finite(metadata.gimbal_pitch_velocity_rad_s) ||
+          !Finite(metadata.gimbal_yaw_acceleration_rad_s2) ||
+          !Finite(metadata.gimbal_pitch_acceleration_rad_s2))) ||
         (impl_->last_frame_sequence.has_value() &&
          metadata.frame_sequence <= *impl_->last_frame_sequence) ||
         (impl_->last_capture_timestamp_ns.has_value() &&

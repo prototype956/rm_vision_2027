@@ -35,6 +35,7 @@ struct TopicDemand {
   bool prediction_truth_overlay{false};        ///< 是否需要预测与仿真真值对照。
   bool prediction_current_annotations{false};  ///< 是否需要当前预测二维重投影。
   bool prediction_future_annotations{false};   ///< 是否需要 100 ms 预测二维重投影。
+  bool selected_armor_annotations{false};      ///< 是否需要火控选中装甲同帧标注。
 
   /** @brief 查询是否至少需求一个话题。 */
   [[nodiscard]] bool Any() const noexcept;
@@ -79,7 +80,9 @@ struct PreparedFrame {
       prediction_current_annotations;  ///< 当前四装甲重投影。
   std::optional<::foxglove::schemas::ImageAnnotations>
       prediction_future_annotations;  ///< 100 ms 四装甲重投影。
-  std::optional<double> jpeg_ms;      ///< JPEG 编码耗时，未编码图像时为空。
+  std::optional<::foxglove::schemas::ImageAnnotations>
+      selected_armor_annotations;  ///< 火控选中/待切换装甲重投影。
+  std::optional<double> jpeg_ms;   ///< JPEG 编码耗时，未编码图像时为空。
   double publish_latency_ms{0.0};  ///< HAL 收帧到消息构造完成的延迟，单位为毫秒。
 };
 

@@ -4,6 +4,7 @@
 #include "modules/armor_detector/armor_detector.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -51,7 +52,9 @@ struct PredictionHorizon {
 
 /** @brief 单帧跟踪输出及供日志、Foxglove 使用的完整滤波诊断。 */
 struct ArmorPredictionResult {
-  std::uint64_t sequence{0};               ///< 对应输入 CameraFrame::sequence。
+  std::uint64_t sequence{0};  ///< 对应输入 CameraFrame::sequence。
+  std::optional<std::uint64_t> source_capture_timestamp_ns;  ///< 状态对应的数据源采集时刻。
+  std::chrono::steady_clock::time_point source_receive_steady_time{};  ///< 本机收到源帧的时刻。
   TrackerState state{TrackerState::LOST};  ///< 当前帧处理完成后的状态机状态。
   std::optional<ArmorLabel> label;         ///< 当前跟踪标签；LOST 时为空。
   std::optional<hal::CameraFrame::ArmorType> type;  ///< 当前跟踪装甲尺寸；LOST 时为空。
@@ -62,9 +65,17 @@ struct ArmorPredictionResult {
   std::vector<ArmorAssociation> associations;    ///< 当前帧候选的槽位关联诊断。
   std::vector<double> innovation;  ///< 按匹配观测拼接的方位、俯仰、距离和 yaw 残差。
   std::optional<double> nis;  ///< 当前量测更新的归一化创新平方；无更新时为空。
+  double armor_roll_rad{0.0};               ///< 当前标签对应的装甲安装滚转角。
   std::vector<PredictionHorizon> horizons;  ///< 配置中全部时域的预测结果。
   geometry::Vector3 velocity_world{geometry::Vector3::Zero()};  ///< 车辆中心世界系速度。
   std::string reset_reason;  ///< 最近一次重置原因；重新初始化成功后清空。
 };
+
+/**
+ * @brief 从不可变预测快照按匀速模型外推任意未来时域。
+ * @throws std::invalid_argument seconds 非有限或为负数。
+ */
+[[nodiscard]] PredictionHorizon ExtrapolatePrediction(const ArmorPredictionResult& prediction,
+                                                      double seconds);
 
 }  // namespace mv::modules

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "geometry/rigid_transform.hpp"
+#include "hal/gimbal/gimbal_types.hpp"
 
 #include <array>
 #include <chrono>
@@ -104,8 +105,9 @@ struct CameraFrame {
     geometry::RigidTransform world_t_gimbal;  ///< gimbal 到 world 的变换。
     geometry::RigidTransform gimbal_t_camera_optical;  ///< camera_optical 到 gimbal 的变换。
     geometry::RigidTransform gimbal_t_muzzle;          ///< muzzle 到 gimbal 的变换。
-    std::vector<GroundTruthTarget> targets;            ///< 当前快照中的机器人真值。
-    std::vector<GroundTruthArmor> armors;              ///< 当前快照中的单块装甲真值。
+    std::optional<GimbalActuatorTelemetry> gimbal_actuator;  ///< 与图像同帧的执行器状态。
+    std::vector<GroundTruthTarget> targets;  ///< 当前快照中的机器人真值。
+    std::vector<GroundTruthArmor> armors;    ///< 当前快照中的单块装甲真值。
   };
 
   cv::Mat image;                                                ///< OpenCV 图像矩阵。

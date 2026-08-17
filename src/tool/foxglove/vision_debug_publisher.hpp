@@ -4,6 +4,7 @@
 #include "modules/armor_detector/armor_detector.hpp"
 #include "modules/armor_pnp/armor_pnp_types.hpp"
 #include "modules/armor_predictor/armor_prediction_types.hpp"
+#include "modules/fire_control/fire_control.hpp"
 #include "tool/foxglove/foxglove_config.hpp"
 
 #include <cstdint>
@@ -27,6 +28,7 @@ struct VisionPublisherStats {
   std::uint64_t enqueued_frames{0};           ///< 通过限流并写入队列的帧数。
   std::uint64_t rate_limited_frames{0};       ///< 因 max_fps 跳过的帧数。
   std::uint64_t queue_overwritten_frames{0};  ///< 尚未消费便被新帧覆盖的帧数。
+  std::uint64_t dropped_control_samples{0};   ///< 控制队列满时丢弃的最旧样本数。
   std::uint64_t encoded_frames{0};            ///< 完成 JPEG 编码的帧数。
   std::uint64_t live_published_frames{0};     ///< 全部适用实时话题发布成功的帧数。
   std::uint64_t recorded_frames{0};           ///< 全部适用 MCAP 话题写入成功的帧数。
@@ -84,6 +86,8 @@ class VisionDebugPublisher final {
                const modules::DetectorStats& detector_stats,
                const modules::ArmorPnpFrameResult& pnp_result,
                const modules::ArmorPredictionResult& prediction_result) noexcept;
+  /** @brief 非阻塞提交一个 100 Hz 控制诊断样本。 */
+  void PublishControl(const modules::FireControlResult& result) noexcept;
   /** @brief 获取自启动以来的线程安全累计统计。 */
   [[nodiscard]] VisionPublisherStats SnapshotStats() const noexcept;
   /** @brief 查询至少一个 sink 可用且流水线仍接受帧。 */

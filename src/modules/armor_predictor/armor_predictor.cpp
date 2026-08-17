@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -52,7 +53,7 @@ struct ArmorPredictor::Impl {
       const hal::CameraFrame& frame, const ArmorPnpFrameResult& pnp_result) const;
   void Reset(std::string reason);
   void Initialize(const detail::Observation& observation);
-  [[nodiscard]] ArmorPredictionResult Snapshot(std::uint64_t sequence, double dt) const;
+  [[nodiscard]] ArmorPredictionResult Snapshot(const hal::CameraFrame& frame, double dt) const;
   [[nodiscard]] ArmorPredictionResult ProcessFrame(const hal::CameraFrame& frame,
                                                    const ArmorPnpFrameResult& pnp_result);
 
@@ -139,9 +140,12 @@ void ArmorPredictor::Impl::Initialize(const detail::Observation& observation) {
   last_reset_reason.clear();
 }
 
-ArmorPredictionResult ArmorPredictor::Impl::Snapshot(std::uint64_t sequence, double dt) const {
+ArmorPredictionResult ArmorPredictor::Impl::Snapshot(const hal::CameraFrame& frame,
+                                                     double dt) const {
   ArmorPredictionResult result;
-  result.sequence = sequence;
+  result.sequence = frame.sequence;
+  result.source_capture_timestamp_ns = frame.capture_timestamp_ns;
+  result.source_receive_steady_time = frame.receive_steady_time;
   result.state = tracker_state;
   result.label = label;
   result.type = type;
@@ -157,6 +161,7 @@ ArmorPredictionResult ArmorPredictor::Impl::Snapshot(std::uint64_t sequence, dou
   }
   result.velocity_world = {state[1], state[3], state[5]};
   const double ARMOR_ROLL_RAD = label ? ArmorRollForLabel(*label, config) : 0.0;
+  result.armor_roll_rad = ARMOR_ROLL_RAD;
   // Horizon 只对当前后验状态做匀速外推，不修改滤波器本身及其协方差。
   result.horizons.reserve(config.prediction_horizons_s.size());
   for (double seconds : config.prediction_horizons_s) {
@@ -212,24 +217,24 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(const hal::CameraFrame&
 
   if (tracker_state == TrackerState::LOST) {
     if (!frame.geometry || OBSERVATIONS.empty())
-      return Snapshot(frame.sequence, dt);
+      return Snapshot(frame, dt);
     const auto& calibration = frame.geometry->calibration;
     // 优先选择战术优先级更高的标签；同优先级选择离主点更近、PnP 通常更稳定的观测。
     const auto BEST = std::min_element(
         OBSERVATIONS.begin(), OBSERVATIONS.end(),
         [&](const detail::Observation& left, const detail::Observation& right) {
-          const int left_priority = LabelPriority(left.label, config);
-          const int right_priority = LabelPriority(right.label, config);
-          if (left_priority != right_priority)
-            return left_priority < right_priority;
-          const double left_distance = std::hypot(left.image_center.x - calibration.cx,
+          const int LEFT_PRIORITY = LabelPriority(left.label, config);
+          const int RIGHT_PRIORITY = LabelPriority(right.label, config);
+          if (LEFT_PRIORITY != RIGHT_PRIORITY)
+            return LEFT_PRIORITY < RIGHT_PRIORITY;
+          const double LEFT_DISTANCE = std::hypot(left.image_center.x - calibration.cx,
                                                   left.image_center.y - calibration.cy);
-          const double right_distance = std::hypot(right.image_center.x - calibration.cx,
+          const double RIGHT_DISTANCE = std::hypot(right.image_center.x - calibration.cx,
                                                    right.image_center.y - calibration.cy);
-          return left_distance < right_distance;
+          return LEFT_DISTANCE < RIGHT_DISTANCE;
         });
     Initialize(*BEST);
-    auto result = Snapshot(frame.sequence, dt);
+    auto result = Snapshot(frame, dt);
     result.associations.push_back({.input_index = BEST->input_index,
                                    .slot = 0,
                                    .position_error_m = 0.0,
@@ -246,7 +251,7 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(const hal::CameraFrame&
     if (observation.label == *label && observation.type == *type)
       candidates.push_back(observation);
   }
-  auto result = Snapshot(frame.sequence, dt);
+  auto result = Snapshot(frame, dt);
   std::vector<int> slots;
   if (frame.geometry) {
     slots = detail::AssociateArmors(candidates, filter.State(), config, result.associations);
@@ -279,7 +284,7 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(const hal::CameraFrame&
   if (tracker_state != TrackerState::LOST && filter.Diverged(config))
     Reset("state_diverged");
 
-  auto final_result = Snapshot(frame.sequence, dt);
+  auto final_result = Snapshot(frame, dt);
   final_result.associations = std::move(result.associations);
   final_result.innovation = std::move(result.innovation);
   final_result.nis = result.nis;
@@ -307,6 +312,31 @@ ArmorPredictor& ArmorPredictor::operator=(ArmorPredictor&& other) noexcept = def
 ArmorPredictionResult ArmorPredictor::ProcessFrame(const hal::CameraFrame& frame,
                                                    const ArmorPnpFrameResult& pnp_result) {
   return impl_->ProcessFrame(frame, pnp_result);
+}
+
+PredictionHorizon ExtrapolatePrediction(const ArmorPredictionResult& prediction, double seconds) {
+  if (!std::isfinite(seconds) || seconds < 0.0) {
+    throw std::invalid_argument("prediction horizon must be finite and nonnegative");
+  }
+  detail::StateVector state;
+  for (int index = 0; index < detail::K_STATE_SIZE; ++index) {
+    state[index] = prediction.state_vector[static_cast<std::size_t>(index)];
+  }
+  state[0] += state[1] * seconds;
+  state[2] += state[3] * seconds;
+  state[4] += state[5] * seconds;
+  state[6] = detail::WrapAngle(state[6] + state[7] * seconds);
+
+  PredictionHorizon horizon;
+  horizon.seconds = seconds;
+  horizon.center_world = {state[0], state[2], state[4]};
+  horizon.yaw = state[6];
+  for (int slot = 0; slot < 4; ++slot) {
+    horizon.armors[slot] = {
+        .slot = slot,
+        .world_t_armor = detail::WorldArmorPose(state, slot, prediction.armor_roll_rad)};
+  }
+  return horizon;
 }
 
 }  // namespace mv::modules

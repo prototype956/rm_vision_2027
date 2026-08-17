@@ -44,7 +44,7 @@ bool TopicDemand::Any() const noexcept {
          pnp_reprojection || pnp_error_vectors || corner_refiner_axes ||
          corner_refiner_candidates || pnp_stats || prediction_scene || prediction_state ||
          prediction_truth_overlay || prediction_current_annotations ||
-         prediction_future_annotations;
+         prediction_future_annotations || selected_armor_annotations;
 }
 
 TopicDemand Merge(TopicDemand left, TopicDemand right) noexcept {
@@ -72,7 +72,9 @@ TopicDemand Merge(TopicDemand left, TopicDemand right) noexcept {
       .prediction_current_annotations =
           left.prediction_current_annotations || right.prediction_current_annotations,
       .prediction_future_annotations =
-          left.prediction_future_annotations || right.prediction_future_annotations};
+          left.prediction_future_annotations || right.prediction_future_annotations,
+      .selected_armor_annotations =
+          left.selected_armor_annotations || right.selected_armor_annotations};
 }
 
 VisionMessageEncoder::VisionMessageEncoder(const ImageConfig& config)
@@ -147,6 +149,13 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
                              frame.prediction_result, *frame.geometry,
                              prediction::ImagePredictionHorizon::FUTURE_100_MS, TIMESTAMP)
                        : prediction::EncodeEmptyAnnotations(TIMESTAMP);
+  }
+  if (demand.selected_armor_annotations) {
+    result.selected_armor_annotations =
+        frame.geometry && frame.armor_selection
+            ? prediction::EncodeSelectedArmorAnnotations(frame.prediction_result, *frame.geometry,
+                                                         *frame.armor_selection, TIMESTAMP)
+            : prediction::EncodeEmptyAnnotations(TIMESTAMP);
   }
   if (demand.pnp_corners) {
     result.pnp_corners = pnp::EncodeCorners(frame.pnp_result, TIMESTAMP);

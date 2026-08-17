@@ -55,35 +55,35 @@ std::optional<::foxglove::schemas::Point2> ProjectPoint(
     const geometry::Vector3& point_camera, const hal::CameraFrame::Calibration& calibration) {
   if (!point_camera.allFinite() || point_camera.z() <= 0.0)
     return std::nullopt;
-  const double x = point_camera.x() / point_camera.z();
-  const double y = point_camera.y() / point_camera.z();
-  const double r2 = x * x + y * y;
-  const double r4 = r2 * r2;
-  const double r6 = r4 * r2;
-  const double k1 = calibration.distortion[0];
-  const double k2 = calibration.distortion[1];
-  const double p1 = calibration.distortion[2];
-  const double p2 = calibration.distortion[3];
-  const double k3 = calibration.distortion[4];
+  const double X = point_camera.x() / point_camera.z();
+  const double Y = point_camera.y() / point_camera.z();
+  const double R2 = X * X + Y * Y;
+  const double R4 = R2 * R2;
+  const double R6 = R4 * R2;
+  const double K1 = calibration.distortion[0];
+  const double K2 = calibration.distortion[1];
+  const double P1 = calibration.distortion[2];
+  const double P2 = calibration.distortion[3];
+  const double K3 = calibration.distortion[4];
   // 与 HAL 标定契约一致，按 plumb_bob 的 k1,k2,p1,p2,k3 顺序应用畸变。
-  const double radial = 1.0 + k1 * r2 + k2 * r4 + k3 * r6;
-  const double distorted_x = x * radial + 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x);
-  const double distorted_y = y * radial + p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y;
-  const double u = calibration.fx * distorted_x + calibration.cx;
-  const double v = calibration.fy * distorted_y + calibration.cy;
-  if (!std::isfinite(u) || !std::isfinite(v))
+  const double RADIAL = 1.0 + K1 * R2 + K2 * R4 + K3 * R6;
+  const double DISTORTED_X = X * RADIAL + 2.0 * P1 * X * Y + P2 * (R2 + 2.0 * X * X);
+  const double DISTORTED_Y = Y * RADIAL + P1 * (R2 + 2.0 * Y * Y) + 2.0 * P2 * X * Y;
+  const double U = calibration.fx * DISTORTED_X + calibration.cx;
+  const double V = calibration.fy * DISTORTED_Y + calibration.cy;
+  if (!std::isfinite(U) || !std::isfinite(V))
     return std::nullopt;
-  return ::foxglove::schemas::Point2{.x = u, .y = v};
+  return ::foxglove::schemas::Point2{.x = U, .y = V};
 }
 
 const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionResult& result,
                                               ImagePredictionHorizon requested) {
-  const double target = requested == ImagePredictionHorizon::CURRENT ? 0.0 : 0.1;
-  const auto found = std::find_if(result.horizons.begin(), result.horizons.end(),
-                                  [target](const modules::PredictionHorizon& value) {
-                                    return std::abs(value.seconds - target) < 1.0e-9;
+  const double TARGET = requested == ImagePredictionHorizon::CURRENT ? 0.0 : 0.1;
+  const auto FOUND = std::find_if(result.horizons.begin(), result.horizons.end(),
+                                  [TARGET](const modules::PredictionHorizon& value) {
+                                    return std::abs(value.seconds - TARGET) < 1.0e-9;
                                   });
-  return found == result.horizons.end() ? nullptr : &*found;
+  return FOUND == result.horizons.end() ? nullptr : &*FOUND;
 }
 
 }  // namespace
@@ -122,14 +122,14 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionResu
     ring.thickness = 0.006;
     ring.color = pair == 0 ? ::foxglove::schemas::Color{.r = 0.2, .g = 1.0, .b = 0.3, .a = 0.55}
                            : ::foxglove::schemas::Color{.r = 0.1, .g = 0.7, .b = 1.0, .a = 0.55};
-    const double radius = result.state_vector[8] + (pair == 1 ? result.state_vector[9] : 0.0);
-    const double height = current.center_world.z() + (pair == 1 ? result.state_vector[10] : 0.0);
+    const double RADIUS = result.state_vector[8] + (pair == 1 ? result.state_vector[9] : 0.0);
+    const double HEIGHT = current.center_world.z() + (pair == 1 ? result.state_vector[10] : 0.0);
     constexpr int SEGMENTS = 48;
     for (int index = 0; index < SEGMENTS; ++index) {
-      const double angle = 2.0 * std::numbers::pi * static_cast<double>(index) / SEGMENTS;
-      ring.points.push_back({.x = current.center_world.x() + radius * std::cos(angle),
-                             .y = current.center_world.y() + radius * std::sin(angle),
-                             .z = height});
+      const double ANGLE = 2.0 * std::numbers::pi * static_cast<double>(index) / SEGMENTS;
+      ring.points.push_back({.x = current.center_world.x() + RADIUS * std::cos(ANGLE),
+                             .y = current.center_world.y() + RADIUS * std::sin(ANGLE),
+                             .z = HEIGHT});
     }
     target.lines.push_back(std::move(ring));
   }
@@ -157,7 +157,7 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionResu
     target.lines.push_back(std::move(associations));
   update.entities.push_back(std::move(target));
 
-  const double width = result.type == hal::CameraFrame::ArmorType::LARGE ? 0.225 : 0.135;
+  const double WIDTH = result.type == hal::CameraFrame::ArmorType::LARGE ? 0.225 : 0.135;
   constexpr double HEIGHT = 0.055;
   for (std::size_t horizon_index = 0; horizon_index < result.horizons.size(); ++horizon_index) {
     // 每个时域使用稳定 entity id，Foxglove 可原位更新而不会留下历史拖影。
@@ -170,16 +170,16 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionResu
     entity.metadata = {{.key = "horizon_s", .value = fmt::format("{:.3f}", horizon.seconds)}};
     for (const auto& armor : horizon.armors) {
       const auto& pose = armor.world_t_armor;
-      const auto x_axis = geometry::TransformVector(pose, geometry::Vector3::UnitX());
-      const auto y_axis = geometry::TransformVector(pose, geometry::Vector3::UnitY());
+      const auto X_AXIS = geometry::TransformVector(pose, geometry::Vector3::UnitX());
+      const auto Y_AXIS = geometry::TransformVector(pose, geometry::Vector3::UnitY());
       ::foxglove::schemas::LinePrimitive outline;
       outline.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LOOP;
       outline.thickness = horizon_index == 0 ? 0.014 : 0.008;
       outline.color = HorizonColor(horizon_index);
-      outline.points = {Point(pose.translation - x_axis * width * 0.5 + y_axis * HEIGHT * 0.5),
-                        Point(pose.translation + x_axis * width * 0.5 + y_axis * HEIGHT * 0.5),
-                        Point(pose.translation + x_axis * width * 0.5 - y_axis * HEIGHT * 0.5),
-                        Point(pose.translation - x_axis * width * 0.5 - y_axis * HEIGHT * 0.5)};
+      outline.points = {Point(pose.translation - X_AXIS * WIDTH * 0.5 + Y_AXIS * HEIGHT * 0.5),
+                        Point(pose.translation + X_AXIS * WIDTH * 0.5 + Y_AXIS * HEIGHT * 0.5),
+                        Point(pose.translation + X_AXIS * WIDTH * 0.5 - Y_AXIS * HEIGHT * 0.5),
+                        Point(pose.translation - X_AXIS * WIDTH * 0.5 - Y_AXIS * HEIGHT * 0.5)};
       entity.lines.push_back(std::move(outline));
     }
     update.entities.push_back(std::move(entity));
@@ -226,10 +226,10 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
     if (target.armor_label != static_cast<std::uint8_t>(*result.label))
       continue;
     // 仿真目标没有与检测稳定共享的 ID，因此在同标签集合中选择中心最近者用于展示。
-    const double distance = (target.position_world - center).norm();
-    if (distance < best_distance) {
+    const double DISTANCE = (target.position_world - center).norm();
+    if (DISTANCE < best_distance) {
       best = &target;
-      best_distance = distance;
+      best_distance = DISTANCE;
     }
   }
   if (!best)
@@ -267,13 +267,13 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
       geometry::Compose(geometry.world_t_gimbal, geometry.gimbal_t_camera_optical);
   const auto CAMERA_T_WORLD = geometry::Inverse(WORLD_T_CAMERA);
   const auto& calibration = geometry.calibration;
-  const double width = *result.type == hal::CameraFrame::ArmorType::LARGE ? 0.225 : 0.135;
+  const double WIDTH = *result.type == hal::CameraFrame::ArmorType::LARGE ? 0.225 : 0.135;
   constexpr double HEIGHT = 0.055;
   const std::array<geometry::Vector3, 4> LOCAL_CORNERS{
-      geometry::Vector3(-width * 0.5, HEIGHT * 0.5, 0.0),
-      geometry::Vector3(width * 0.5, HEIGHT * 0.5, 0.0),
-      geometry::Vector3(width * 0.5, -HEIGHT * 0.5, 0.0),
-      geometry::Vector3(-width * 0.5, -HEIGHT * 0.5, 0.0)};
+      geometry::Vector3(-WIDTH * 0.5, HEIGHT * 0.5, 0.0),
+      geometry::Vector3(WIDTH * 0.5, HEIGHT * 0.5, 0.0),
+      geometry::Vector3(WIDTH * 0.5, -HEIGHT * 0.5, 0.0),
+      geometry::Vector3(-WIDTH * 0.5, -HEIGHT * 0.5, 0.0)};
   const bool FUTURE = requested == ImagePredictionHorizon::FUTURE_100_MS;
 
   for (const auto& armor : horizon->armors) {
@@ -307,10 +307,10 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
     if (!valid || !INTERSECTS)
       continue;
 
-    const double alpha = FRONT ? 1.0 : 0.35;
+    const double ALPHA = FRONT ? 1.0 : 0.35;
     const ::foxglove::schemas::Color COLOR =
-        FUTURE ? ::foxglove::schemas::Color{.r = 0.75, .g = 0.25, .b = 1.0, .a = alpha}
-               : ::foxglove::schemas::Color{.r = 0.1, .g = 1.0, .b = 0.2, .a = alpha};
+        FUTURE ? ::foxglove::schemas::Color{.r = 0.75, .g = 0.25, .b = 1.0, .a = ALPHA}
+               : ::foxglove::schemas::Color{.r = 0.1, .g = 1.0, .b = 0.2, .a = ALPHA};
     ::foxglove::schemas::PointsAnnotation polygon;
     polygon.timestamp = timestamp;
     polygon.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
@@ -337,6 +337,101 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
     const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::ImageAnnotations annotations;
   AddTimestampCarrier(annotations, timestamp);
+  return annotations;
+}
+
+::foxglove::schemas::ImageAnnotations EncodeSelectedArmorAnnotations(
+    const modules::ArmorPredictionResult& result, const hal::CameraFrame::FrameGeometry& geometry,
+    const modules::ArmorSelectionSnapshot& selection,
+    const ::foxglove::schemas::Timestamp& timestamp) {
+  ::foxglove::schemas::ImageAnnotations annotations;
+  AddTimestampCarrier(annotations, timestamp);
+  if (result.state == modules::TrackerState::LOST || !result.type)
+    return annotations;
+  const auto* horizon = FindHorizon(result, ImagePredictionHorizon::CURRENT);
+  if (!horizon)
+    return annotations;
+
+  const auto WORLD_T_CAMERA =
+      geometry::Compose(geometry.world_t_gimbal, geometry.gimbal_t_camera_optical);
+  const auto camera_t_world = geometry::Inverse(WORLD_T_CAMERA);
+  const double WIDTH = *result.type == hal::CameraFrame::ArmorType::LARGE ? 0.225 : 0.135;
+  constexpr double HEIGHT = 0.055;
+  const std::array<geometry::Vector3, 4> local_corners{
+      geometry::Vector3(-WIDTH * 0.5, HEIGHT * 0.5, 0.0),
+      geometry::Vector3(WIDTH * 0.5, HEIGHT * 0.5, 0.0),
+      geometry::Vector3(WIDTH * 0.5, -HEIGHT * 0.5, 0.0),
+      geometry::Vector3(-WIDTH * 0.5, -HEIGHT * 0.5, 0.0)};
+
+  auto add_slot = [&](int slot, bool selected) {
+    if (slot < 0 || slot >= static_cast<int>(horizon->armors.size()))
+      return;
+    const auto camera_t_armor = geometry::Compose(
+        camera_t_world, horizon->armors[static_cast<std::size_t>(slot)].world_t_armor);
+    std::array<::foxglove::schemas::Point2, 4> pixels{};
+    double min_u = std::numeric_limits<double>::infinity();
+    double min_v = std::numeric_limits<double>::infinity();
+    double max_u = -std::numeric_limits<double>::infinity();
+    double max_v = -std::numeric_limits<double>::infinity();
+    for (std::size_t index = 0; index < local_corners.size(); ++index) {
+      const auto point = geometry::TransformPoint(camera_t_armor, local_corners[index]);
+      const auto projected = ProjectPoint(point, geometry.calibration);
+      if (!projected)
+        return;
+      pixels[index] = *projected;
+      min_u = std::min(min_u, projected->x);
+      min_v = std::min(min_v, projected->y);
+      max_u = std::max(max_u, projected->x);
+      max_v = std::max(max_v, projected->y);
+    }
+    if (max_u < 0.0 || max_v < 0.0 || min_u >= static_cast<double>(geometry.calibration.width) ||
+        min_v >= static_cast<double>(geometry.calibration.height)) {
+      return;
+    }
+
+    const ::foxglove::schemas::Color color =
+        selected ? ::foxglove::schemas::Color{.r = 0.1, .g = 1.0, .b = 0.2, .a = 1.0}
+                 : ::foxglove::schemas::Color{.r = 1.0, .g = 0.8, .b = 0.0, .a = 1.0};
+    ::foxglove::schemas::PointsAnnotation outline;
+    outline.timestamp = timestamp;
+    outline.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
+    outline.outline_color = color;
+    outline.thickness = selected ? 5.0 : 3.0;
+    outline.points.assign(pixels.begin(), pixels.end());
+    annotations.points.push_back(std::move(outline));
+
+    const ::foxglove::schemas::Point2 center{
+        .x = 0.25 * (pixels[0].x + pixels[1].x + pixels[2].x + pixels[3].x),
+        .y = 0.25 * (pixels[0].y + pixels[1].y + pixels[2].y + pixels[3].y)};
+    ::foxglove::schemas::PointsAnnotation cross;
+    cross.timestamp = timestamp;
+    cross.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LIST;
+    cross.outline_color = color;
+    cross.thickness = selected ? 4.0 : 2.0;
+    cross.points = {{.x = center.x - 8.0, .y = center.y},
+                    {.x = center.x + 8.0, .y = center.y},
+                    {.x = center.x, .y = center.y - 8.0},
+                    {.x = center.x, .y = center.y + 8.0}};
+    annotations.points.push_back(std::move(cross));
+
+    ::foxglove::schemas::TextAnnotation text;
+    text.timestamp = timestamp;
+    text.position = {
+        .x = std::clamp(min_u, 0.0, static_cast<double>(geometry.calibration.width)),
+        .y = std::clamp(min_v - 4.0, 0.0, static_cast<double>(geometry.calibration.height))};
+    text.text = selected ? fmt::format("SELECTED slot {}", slot)
+                         : fmt::format("PENDING slot {} {:.0f}/{:.0f}ms", slot,
+                                       selection.pending_duration_s * 1.0e3,
+                                       selection.switch_confirmation_s * 1.0e3);
+    text.font_size = 14.0;
+    text.text_color = color;
+    text.background_color = {.a = 0.7};
+    annotations.texts.push_back(std::move(text));
+  };
+
+  add_slot(selection.selected_slot, true);
+  if (selection.pending_slot != selection.selected_slot)
+    add_slot(selection.pending_slot, false);
   return annotations;
 }
 

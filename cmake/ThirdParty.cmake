@@ -4,6 +4,11 @@
 
 message(STATUS "Configuring third-party dependencies...")
 
+if(USE_OPENVINO)
+    add_subdirectory(3rdparty/tinympc)
+    message(STATUS "  ✓ TinyMPC enabled")
+endif()
+
 # ----------------------------------------------------------------------------
 # Foxglove SDK - WebSocket 与 MCAP 调试输出
 # ----------------------------------------------------------------------------

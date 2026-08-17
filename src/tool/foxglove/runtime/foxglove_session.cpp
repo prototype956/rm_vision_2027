@@ -120,6 +120,7 @@ struct FoxgloveSession::Impl {
   std::unique_ptr<::foxglove::WebSocketServer> server;
   std::unique_ptr<::foxglove::McapWriter> writer;
   std::filesystem::path recording_path;
+  std::mutex publish_mutex;
 
   std::atomic<bool> started{false};
   std::atomic<bool> stopped{false};
@@ -267,6 +268,10 @@ SessionSnapshot FoxgloveSession::Snapshot() const noexcept {
 
 const std::filesystem::path& FoxgloveSession::RecordingPath() const noexcept {
   return impl_->recording_path;
+}
+
+std::mutex& FoxgloveSession::PublishMutex() noexcept {
+  return impl_->publish_mutex;
 }
 
 bool IsFatalSinkError(::foxglove::FoxgloveError error) noexcept {

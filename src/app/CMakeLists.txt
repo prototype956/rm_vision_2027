@@ -6,10 +6,12 @@ target_link_libraries(mv-vision-main
     PRIVATE
         mv-core
         mv-hal-camera
+        mv-hal-gimbal-talos
         mv-modules-armor-detector
         mv-modules-armor-corner-refiner
         mv-modules-armor-pnp
         mv-modules-armor-predictor
+        mv-modules-fire-control
         mv-tool-armor-overlay
         mv-tool-debug
         mv-tool-foxglove

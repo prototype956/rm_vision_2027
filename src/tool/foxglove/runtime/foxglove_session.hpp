@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string_view>
 
 #include <filesystem>
@@ -91,6 +92,8 @@ class FoxgloveSession final {
   [[nodiscard]] SessionSnapshot Snapshot() const noexcept;
   /** @brief 获取本次会话选择的 MCAP 路径，未启用录制时为空。 */
   [[nodiscard]] const std::filesystem::path& RecordingPath() const noexcept;
+  /** @brief 串行化视觉与控制后台线程对共享 WebSocket/MCAP Context 的写入。 */
+  [[nodiscard]] std::mutex& PublishMutex() noexcept;
 
  private:
   struct Impl;

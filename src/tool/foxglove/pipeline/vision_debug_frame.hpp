@@ -4,6 +4,7 @@
 #include "modules/armor_detector/armor_detector.hpp"
 #include "modules/armor_pnp/armor_pnp_types.hpp"
 #include "modules/armor_predictor/armor_prediction_types.hpp"
+#include "modules/fire_control/fire_control.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -32,6 +33,7 @@ struct VisionDebugFrame {
   modules::DetectorStats detector_stats;             ///< 当前帧检测性能指标副本。
   modules::ArmorPnpFrameResult pnp_result;           ///< 当前帧 PnP 基准与检测结果。
   modules::ArmorPredictionResult prediction_result;  ///< 当前帧四装甲预测与诊断。
+  std::optional<modules::ArmorSelectionSnapshot> armor_selection;  ///< 匹配的控制选择快照。
 };
 
 }  // namespace mv::tool::foxglove::pipeline
