@@ -1,0 +1,4 @@
+interface:
+  display_name: "RM Vision MCAP"
+  short_description: "Analyze rm_vision MCAP recordings safely"
+  default_prompt: "Use $rm-vision-mcap to inspect this recording, identify anomalies, and extract concise visual evidence."

@@ -78,3 +78,26 @@ Foxglove 配置无法解析、端口被占用或某个 sink 初始化失败时�
 检测。开启 `recording.enabled` 后，正常退出会排空最后一帧并关闭 MCAP；录制文件写入
 配置的 `recording.output_dir`。WebSocket 订阅、重连和 MCAP 完整性由使用者按需观察，
 不设置独立测试目标或自动验收门槛。
+
+## 使用 Codex 分析 MCAP
+
+仓库级 `rm-vision-mcap` skill 位于
+`.agents/skills/rm-vision-mcap/`，只在本仓库及其子目录中向 Codex 提供只读分析流程。
+分析器要求 `PATH` 中已有兼容的 `mcap` CLI；skill 不负责安装软件或修改系统环境。
+分析器保留在 skill 内，不安装全局包装命令：
+
+```bash
+MCAP_ANALYZE=.agents/skills/rm-vision-mcap/scripts/mcap_analyze.py
+python3 "$MCAP_ANALYZE" inspect artifacts/foxglove/example.mcap
+python3 "$MCAP_ANALYZE" preset artifacts/foxglove/example.mcap pnp
+python3 "$MCAP_ANALYZE" stats artifacts/foxglove/example.mcap \
+  --topic /vision/armor/stats --field total_ms
+python3 "$MCAP_ANALYZE" frames artifacts/foxglove/example.mcap \
+  --start 1786977451.0 --end 1786977453.0 --count 6 --layers pnp
+```
+
+`inspect` 会把视觉与火控后台写入交错产生的大量时间顺序警告按话题汇总；其他结构错误仍
+单独报告。`query` 默认最多输出 20 条消息，`stats` 使用有界样本计算大文件分位数，
+`frames` 默认抽取 6 帧且最多 50 帧。抽帧、叠加图和 manifest 默认写入
+`/tmp/mcap-analysis/`。所有命令只读源 MCAP；禁止用该工作流执行 `add`、`filter`、
+`compress`、`recover` 等改写操作。
