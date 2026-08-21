@@ -32,7 +32,7 @@ class LatestFrameQueue final {
    * @brief 尝试限流并用当前同帧数据更新队列。
    * @throws std::bad_alloc 复制检测结果或空间元数据失败。
    */
-  [[nodiscard]] QueuePushResult Push(const hal::CameraFrame& frame,
+  [[nodiscard]] QueuePushResult Push(const frame::FramePacket& packet,
                                      std::span<const modules::ArmorDetection> detections,
                                      const modules::DetectorStats& detector_stats,
                                      const modules::LightbarDetectionResult& lightbar_result,

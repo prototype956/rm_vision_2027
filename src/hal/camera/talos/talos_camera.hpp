@@ -24,7 +24,7 @@ class TalosCamera final : public ICamera {
 
   bool Open(const YAML::Node& config) override;
   void Close() override;
-  GrabStatus Grab(CameraFrame& frame) override;
+  GrabStatus Grab(frame::FramePacket& packet) override;
   [[nodiscard]] CameraInfo Info() const override;
   [[nodiscard]] bool IsOpen() const override;
 

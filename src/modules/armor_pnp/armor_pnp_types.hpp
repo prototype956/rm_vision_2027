@@ -1,6 +1,7 @@
 #pragma once
 
-#include "hal/camera/i_camera.hpp"
+#include "geometry/armor_type.hpp"
+#include "geometry/rigid_transform.hpp"
 #include "modules/armor_corner_refiner/armor_corner_refiner.hpp"
 #include "modules/armor_detector/armor_detector.hpp"
 
@@ -44,7 +45,7 @@ struct ArmorPoseEstimate {
   std::size_t input_index{0};             ///< 在当前帧对应来源数组中的索引。
   std::optional<std::uint64_t> truth_id;  ///< 匹配的仿真装甲 ID；无可靠匹配时为空。
   std::uint8_t label{0};                  ///< 检测标签或仿真真值标签的数值表示。
-  hal::CameraFrame::ArmorType type{hal::CameraFrame::ArmorType::SMALL};  ///< PnP 物点尺寸类型。
+  geometry::ArmorType type{geometry::ArmorType::SMALL};  ///< PnP 物点尺寸类型。
   double width_m{0.0};                               ///< 本次解算使用的装甲物理宽度。
   double height_m{0.0};                              ///< 本次解算使用的装甲物理高度。
   geometry::RigidTransform camera_t_armor;           ///< armor 到 camera_optical 的变换。
@@ -59,12 +60,12 @@ struct ArmorPoseEstimate {
   double viewing_angle_deg{0.0};                  ///< 装甲法向与指向相机方向的夹角。
   std::optional<double> truth_distance_m;         ///< 匹配真值的相机距离。
   std::optional<double> truth_viewing_angle_deg;  ///< 匹配真值的观察角。
-  std::optional<hal::CameraFrame::ArmorType> truth_type;  ///< 匹配真值的装甲尺寸。
-  std::optional<double> mean_corner_error_px;  ///< 输入角点到真值投影的平均距离。
-  std::array<double, 4> corner_errors_px{};    ///< 四个输入角点到真值投影的距离。
-  std::array<double, 4> corner_delta_u_px{};   ///< 输入角点减真值角点的水平偏差。
-  std::array<double, 4> corner_delta_v_px{};   ///< 输入角点减真值角点的垂直偏差。
-  std::optional<double> position_error_m;      ///< 估计与真值平移误差的欧氏距离。
+  std::optional<geometry::ArmorType> truth_type;  ///< 匹配真值的装甲尺寸。
+  std::optional<double> mean_corner_error_px;     ///< 输入角点到真值投影的平均距离。
+  std::array<double, 4> corner_errors_px{};       ///< 四个输入角点到真值投影的距离。
+  std::array<double, 4> corner_delta_u_px{};      ///< 输入角点减真值角点的水平偏差。
+  std::array<double, 4> corner_delta_v_px{};      ///< 输入角点减真值角点的垂直偏差。
+  std::optional<double> position_error_m;         ///< 估计与真值平移误差的欧氏距离。
   std::optional<std::array<double, 3>> position_error_camera_m;  ///< 相机系 XYZ 有符号误差。
   std::optional<double> depth_error_m;                           ///< 相机 Z 轴误差绝对值。
   std::optional<double> signed_depth_error_m;                    ///< 估计深度减真值深度。
@@ -131,6 +132,6 @@ struct ArmorPnpFrameResult {
 };
 
 /** @brief 将检测标签映射到物点尺寸；ONE 与 BASE_BIG 使用大装甲。 */
-[[nodiscard]] hal::CameraFrame::ArmorType ArmorTypeForLabel(ArmorLabel label) noexcept;
+[[nodiscard]] geometry::ArmorType ArmorTypeForLabel(ArmorLabel label) noexcept;
 
 }  // namespace mv::modules

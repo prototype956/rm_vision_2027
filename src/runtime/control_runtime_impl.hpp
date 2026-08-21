@@ -30,7 +30,8 @@ class ControlRuntimeImpl final {
 
   void Start();
   void Update(const modules::ArmorPredictionResult& prediction,
-              const hal::CameraFrame::FrameGeometry& geometry);
+              const frame::FrameKinematics& kinematics,
+              const std::optional<hal::GimbalActuatorTelemetry>& gimbal_actuator);
   void Stop() noexcept;
   [[nodiscard]] bool Failed() const noexcept;
 

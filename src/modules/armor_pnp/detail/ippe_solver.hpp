@@ -1,5 +1,6 @@
 #pragma once
 
+#include "frame/frame_types.hpp"
 #include "modules/armor_pnp/armor_pnp_config.hpp"
 #include "modules/armor_pnp/armor_pnp_types.hpp"
 
@@ -13,8 +14,8 @@ namespace mv::modules::detail {
  */
 [[nodiscard]] ArmorPnpAttempt SolveIppe(const ArmorPnpConfig& config,
                                         std::span<const cv::Point2f, 4> image_corners,
-                                        hal::CameraFrame::ArmorType type,
-                                        const hal::CameraFrame::Calibration& calibration,
+                                        geometry::ArmorType type,
+                                        const frame::CameraModel& calibration,
                                         PnpInputSource source, std::size_t input_index,
                                         std::uint8_t label);
 

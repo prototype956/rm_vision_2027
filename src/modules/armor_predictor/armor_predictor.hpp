@@ -1,15 +1,17 @@
 #pragma once
 
-#include "hal/camera/i_camera.hpp"
+#include "frame/frame_types.hpp"
 #include "modules/armor_corner_refiner/armor_corner_refiner.hpp"
 #include "modules/armor_detector/armor_detector.hpp"
 #include "modules/armor_light_detector/armor_light_detector.hpp"
 #include "modules/armor_pnp/armor_pnp_types.hpp"
 #include "modules/armor_predictor/armor_prediction_types.hpp"
 #include "modules/armor_predictor/armor_predictor_config.hpp"
+#include "simulation/simulation_frame_data.hpp"
 
 #include <memory>
 
+#include <optional>
 #include <span>
 
 namespace mv::modules {
@@ -40,7 +42,9 @@ class ArmorPredictor final {
    * @return 状态、关联、滤波诊断及各配置时域的四装甲位姿。
    */
   [[nodiscard]] ArmorPredictionResult ProcessFrame(
-      const hal::CameraFrame& frame, std::span<const ArmorDetection> detections,
+      const frame::FrameStamp& stamp, std::optional<frame::SpatialFrameView> spatial,
+      const simulation::SimulationFrameData* simulation_data,
+      std::span<const ArmorDetection> detections,
       std::span<const CornerRefinementResult> refinements, const ArmorPnpFrameResult& pnp_result,
       const LightbarDetectionResult& lightbar_result);
 

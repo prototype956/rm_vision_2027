@@ -19,12 +19,12 @@ class OpenCvCamera : public ICamera {
 
   OpenCvCamera(const OpenCvCamera&) = delete;
   OpenCvCamera& operator=(const OpenCvCamera&) = delete;
-  OpenCvCamera(OpenCvCamera&& other) noexcept ;
+  OpenCvCamera(OpenCvCamera&& other) noexcept;
   OpenCvCamera& operator=(OpenCvCamera&& other) noexcept;
 
   bool Open(const YAML::Node& config) override;
   void Close() override;
-  GrabStatus Grab(CameraFrame& frame) override;
+  GrabStatus Grab(frame::FramePacket& packet) override;
   [[nodiscard]] CameraInfo Info() const override;
   [[nodiscard]] bool IsOpen() const override;
 

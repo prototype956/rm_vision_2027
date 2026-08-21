@@ -111,22 +111,22 @@ VisionRunStatus VisionRuntime::Run(const std::function<bool()>& stop_requested) 
       MV_LOG_ERROR("App", "control thread failed; stopping vision pipeline safely");
       return VisionRunStatus::CONTROL_FAILURE;
     }
-    hal::CameraFrame frame;
-    const auto STATUS = camera_.Grab(frame);
+    frame::FramePacket packet;
+    const auto STATUS = camera_.Grab(packet);
 
     if (STATUS == hal::GrabStatus::OK) {
       try {
-        const auto RESULT = pipeline_.Process(frame);
-        if (control_ && frame.geometry)
-          control_->Update(RESULT.prediction, *frame.geometry);
-        LogPnpHealth(RESULT.pnp, frame.sequence,
-                     frame.geometry ? frame.geometry->armors.size() : 0);
+        const auto RESULT = pipeline_.Process(packet);
+        if (control_ && packet.camera_model && packet.kinematics)
+          control_->Update(RESULT.prediction, *packet.kinematics, packet.gimbal_actuator);
+        LogPnpHealth(RESULT.pnp, packet.capture.stamp.sequence,
+                     packet.simulation ? packet.simulation->armors.size() : 0);
         if (diagnostics_) {
-          diagnostics_->Publish(frame, RESULT.detections, RESULT.detector_stats, RESULT.lightbars,
+          diagnostics_->Publish(packet, RESULT.detections, RESULT.detector_stats, RESULT.lightbars,
                                 RESULT.pnp, RESULT.prediction);
         }
         if (window_) {
-          cv::Mat debug_image = frame.image.clone();
+          cv::Mat debug_image = packet.capture.image.clone();
           DrawDetections(debug_image, RESULT.detections, RESULT.detector_stats);
           window_->Show(debug_image);
         }

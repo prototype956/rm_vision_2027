@@ -1,6 +1,7 @@
 #pragma once
 
-#include "hal/camera/i_camera.hpp"
+#include "frame/frame_types.hpp"
+#include "hal/gimbal/gimbal_types.hpp"
 #include "modules/armor_predictor/armor_prediction_types.hpp"
 #include "modules/fire_control/fire_control_config.hpp"
 #include "modules/gimbal_trajectory_planner/gimbal_trajectory_planner_config.hpp"
@@ -37,7 +38,8 @@ class ControlRuntime final {
   void Start();
   /** @brief 原子替换控制线程下一周期读取的同帧预测与空间快照。 */
   void Update(const modules::ArmorPredictionResult& prediction,
-              const hal::CameraFrame::FrameGeometry& geometry);
+              const frame::FrameKinematics& kinematics,
+              const std::optional<hal::GimbalActuatorTelemetry>& gimbal_actuator);
   /** @brief 停止并等待控制线程，随后向命令后端发送停止命令。 */
   void Stop() noexcept;
   /** @brief 查询控制线程是否因未处理异常安全退出。 */

@@ -1,6 +1,7 @@
 #pragma once
 
-#include "hal/camera/i_camera.hpp"
+#include "geometry/armor_type.hpp"
+#include "geometry/rigid_transform.hpp"
 #include "modules/armor_detector/armor_detector.hpp"
 
 #include <array>
@@ -76,7 +77,7 @@ struct ArmorPredictionResult {
   std::chrono::steady_clock::time_point source_receive_steady_time{};
   TrackerState state{TrackerState::LOST};
   std::optional<ArmorLabel> label;
-  std::optional<hal::CameraFrame::ArmorType> type;
+  std::optional<geometry::ArmorType> type;
   double dt_s{0.0};
   /** @brief cx,vx,cy,vy,cz,vz,rot_x,rot_y,rot_z,vyaw,log_r1,log_r2,h。 */
   std::array<double, 13> state_vector{};

@@ -1,7 +1,8 @@
 #pragma once
 
+#include "frame/frame_types.hpp"
+#include "geometry/armor_type.hpp"
 #include "geometry/rigid_transform.hpp"
-#include "hal/camera/i_camera.hpp"
 
 #include <array>
 #include <cmath>
@@ -248,8 +249,8 @@ template <typename T>
 }
 
 template <typename T>
-[[nodiscard]] inline Eigen::Matrix<T, 2, 1> ProjectPoint(
-    const Eigen::Matrix<T, 3, 1>& point_camera, const hal::CameraFrame::Calibration& calibration) {
+[[nodiscard]] inline Eigen::Matrix<T, 2, 1> ProjectPoint(const Eigen::Matrix<T, 3, 1>& point_camera,
+                                                         const frame::CameraModel& calibration) {
   const T X = point_camera.x() / point_camera.z();
   const T Y = point_camera.y() / point_camera.z();
   const T R2 = X * X + Y * Y;
@@ -267,9 +268,9 @@ template <typename T>
 
 template <typename T>
 [[nodiscard]] inline std::array<Eigen::Matrix<T, 2, 1>, 4> ProjectArmorCorners(
-    const StateValue<T>& state, ArmorMount mount, hal::CameraFrame::ArmorType type,
-    const hal::CameraFrame::FrameGeometry& geometry) {
-  const double WIDTH = type == hal::CameraFrame::ArmorType::LARGE ? 0.225 : 0.135;
+    const StateValue<T>& state, ArmorMount mount, geometry::ArmorType type,
+    const frame::SpatialFrameView& geometry) {
+  const double WIDTH = type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
   constexpr double HEIGHT = 0.055;
   const std::array<Eigen::Matrix<T, 3, 1>, 4> CORNERS{
       Eigen::Matrix<T, 3, 1>(T(-0.5 * WIDTH), T(0.5 * HEIGHT), T(0.0)),

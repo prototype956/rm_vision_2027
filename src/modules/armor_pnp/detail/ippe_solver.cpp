@@ -17,10 +17,9 @@ namespace {
 
 constexpr double K_RAD_TO_DEG = 180.0 / std::numbers::pi;
 
-std::array<cv::Point3d, 4> ObjectPoints(hal::CameraFrame::ArmorType type,
-                                        const ArmorPnpConfig& config) {
+std::array<cv::Point3d, 4> ObjectPoints(geometry::ArmorType type, const ArmorPnpConfig& config) {
   const double width =
-      type == hal::CameraFrame::ArmorType::LARGE ? config.large_width_m : config.small_width_m;
+      type == geometry::ArmorType::LARGE ? config.large_width_m : config.small_width_m;
   const double half_width = width * 0.5;
   const double half_height = config.height_m * 0.5;
   // armor 坐标系中的 TL、TR、BR、BL 顺序必须与检测角点顺序严格一致。
@@ -28,11 +27,11 @@ std::array<cv::Point3d, 4> ObjectPoints(hal::CameraFrame::ArmorType type,
           cv::Point3d(half_width, -half_height, 0.0), cv::Point3d(-half_width, -half_height, 0.0)};
 }
 
-cv::Matx33d CameraMatrix(const hal::CameraFrame::Calibration& value) {
+cv::Matx33d CameraMatrix(const frame::CameraModel& value) {
   return {value.fx, 0.0, value.cx, 0.0, value.fy, value.cy, 0.0, 0.0, 1.0};
 }
 
-cv::Vec<double, 5> Distortion(const hal::CameraFrame::Calibration& value) {
+cv::Vec<double, 5> Distortion(const frame::CameraModel& value) {
   return {value.distortion[0], value.distortion[1], value.distortion[2], value.distortion[3],
           value.distortion[4]};
 }
@@ -57,9 +56,8 @@ bool Finite(const cv::Point2f& point) {
 }  // namespace
 
 ArmorPnpAttempt SolveIppe(const ArmorPnpConfig& config,
-                          std::span<const cv::Point2f, 4> image_corners,
-                          hal::CameraFrame::ArmorType type,
-                          const hal::CameraFrame::Calibration& calibration, PnpInputSource source,
+                          std::span<const cv::Point2f, 4> image_corners, geometry::ArmorType type,
+                          const frame::CameraModel& calibration, PnpInputSource source,
                           std::size_t input_index, std::uint8_t label) {
   ArmorPnpAttempt result{.source = source,
                          .input_index = input_index,
@@ -136,8 +134,7 @@ ArmorPnpAttempt SolveIppe(const ArmorPnpConfig& config,
         .truth_id = std::nullopt,
         .label = label,
         .type = type,
-        .width_m = type == hal::CameraFrame::ArmorType::LARGE ? config.large_width_m
-                                                              : config.small_width_m,
+        .width_m = type == geometry::ArmorType::LARGE ? config.large_width_m : config.small_width_m,
         .height_m = config.height_m,
         .camera_t_armor = pose,
         .candidate_index = candidate,

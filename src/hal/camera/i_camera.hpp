@@ -1,16 +1,10 @@
 #pragma once
 
-#include "geometry/rigid_transform.hpp"
-#include "hal/gimbal/gimbal_types.hpp"
+#include "frame/frame_packet.hpp"
 
-#include <array>
-#include <chrono>
 #include <cstdint>
 #include <string>
-#include <vector>
 
-#include <opencv2/core.hpp>
-#include <optional>
 #include <yaml-cpp/yaml.h>
 
 namespace mv::hal {
@@ -51,81 +45,6 @@ enum class GrabStatus : uint8_t { OK = 0, TIMEOUT, DISCONNECTED, INVALID_FRAME, 
   }
   return "unknown";
 }
-
-/**
- * @brief HAL 成功抓取的一帧图像及其元数据。
- *
- * 仅当 ICamera::Grab() 返回 GrabStatus::OK 时，调用者才能读取本结构中的内容。
- * image 独立持有有效像素数据，不依赖相机驱动的 DMA 缓冲区生命周期。
- */
-struct CameraFrame {
-  /** @brief 与当前图像对应的针孔相机内参和 plumb_bob 畸变参数。 */
-  struct Calibration {
-    std::uint32_t width{0};              ///< 标定适用的图像宽度，单位为像素。
-    std::uint32_t height{0};             ///< 标定适用的图像高度，单位为像素。
-    double fx{0.0};                      ///< 水平方向焦距，单位为像素。
-    double fy{0.0};                      ///< 垂直方向焦距，单位为像素。
-    double cx{0.0};                      ///< 主点横坐标，单位为像素。
-    double cy{0.0};                      ///< 主点纵坐标，单位为像素。
-    std::array<double, 5> distortion{};  ///< 依次为 k1、k2、p1、p2、k3。
-  };
-
-  /** @brief 仿真器在 world 坐标系中给出的单个机器人真值。 */
-  struct GroundTruthTarget {
-    std::uint64_t id{0};          ///< 本次仿真运行内区分目标的稳定标识。
-    std::uint8_t team{0};         ///< 队伍编码：0 为红方，1 为蓝方。
-    std::uint8_t armor_label{0};  ///< Talos 协议中的装甲类别编码。
-    bool is_outpost{false};       ///< 是否为前哨站等特殊旋转目标。
-    geometry::Vector3 position_world{geometry::Vector3::Zero()};  ///< 机器人中心世界位置。
-    double yaw{0.0};           ///< 绕 world +Z 轴的航向角，单位为弧度。
-    double yaw_velocity{0.0};  ///< 航向角速度，单位为弧度每秒。
-  };
-
-  enum class ArmorType : std::uint8_t { SMALL = 0, LARGE = 1 };
-
-  /** @brief 与图像同帧的单块装甲板灯条端点平面真值。 */
-  struct GroundTruthArmor {
-    std::uint64_t id{0};
-    std::uint8_t team{0};
-    std::uint8_t label{0};
-    ArmorType type{ArmorType::SMALL};
-    double width_m{0.0};
-    double height_m{0.0};
-    geometry::RigidTransform world_t_armor;
-    std::array<geometry::Vector3, 4> corners_world{};  ///< TL/TR/BR/BL。
-  };
-
-  /** @brief 与仿真图像同帧采样的弹丸累计统计。 */
-  struct ProjectileStatistics {
-    std::uint64_t bullet_launch_count{0};  ///< 已生成的 17 mm 弹丸累计数。
-    std::uint64_t armor_hit_count{0};      ///< 装甲有效碰撞累计数。
-    std::uint32_t rune_hit_count{0};       ///< 能量机关有效命中累计数。
-    std::uint32_t dart_launch_count{0};    ///< 飞镖发射累计数。
-  };
-
-  /**
-   * @brief 与图像在同一仿真采集快照中的标定、外参和真值。
-   *
-   * 仅能和所属 CameraFrame 的 image、capture_timestamp_ns 配套使用，不能跨帧组合。
-   */
-  struct FrameGeometry {
-    Calibration calibration;                  ///< camera_optical 对应的内参与畸变。
-    geometry::RigidTransform world_t_gimbal;  ///< gimbal 到 world 的变换。
-    geometry::RigidTransform gimbal_t_camera_optical;  ///< camera_optical 到 gimbal 的变换。
-    geometry::RigidTransform gimbal_t_muzzle;          ///< muzzle 到 gimbal 的变换。
-    std::optional<GimbalActuatorTelemetry> gimbal_actuator;  ///< 与图像同帧的执行器状态。
-    std::optional<ProjectileStatistics> projectile_statistics;  ///< 仿真弹丸累计统计。
-    std::vector<GroundTruthTarget> targets;  ///< 当前快照中的机器人真值。
-    std::vector<GroundTruthArmor> armors;    ///< 当前快照中的单块装甲真值。
-  };
-
-  cv::Mat image;                                                ///< OpenCV 图像矩阵。
-  std::chrono::steady_clock::time_point receive_steady_time{};  ///< HAL 收帧单调时钟。
-  std::optional<std::uint64_t> capture_timestamp_ns;  ///< 数据源采集 Unix epoch 纳秒时间。
-  std::optional<FrameGeometry> geometry;  ///< 同一采集快照的空间数据；实机后端通常为空。
-  uint64_t sequence{0};                   ///< 本次 Open() 后从 0 递增的帧序号。
-  uint64_t source_invalid_frames{0};  ///< 当前数据源自 Open() 以来拒绝的无效帧数。
-};
 
 /**
  * @brief 相机成功打开后实际生效的设备与成像参数。
@@ -188,7 +107,7 @@ class ICamera {
    * @param[out] frame 成功时写入完整图像和元数据；非 OK 状态下内容未定义。
    * @return 本次取帧状态，调用者应根据状态决定继续、重试或退出。
    */
-  virtual GrabStatus Grab(CameraFrame& frame) = 0;
+  virtual GrabStatus Grab(frame::FramePacket& packet) = 0;
 
   /**
    * @brief 获取当前相机参数快照。

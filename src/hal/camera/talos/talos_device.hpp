@@ -26,7 +26,7 @@ class TalosDevice final {
   /** @brief 解除全部映射并关闭文件描述符；允许重复调用。 */
   void Close() noexcept;
   /** @brief 等待、校验并复制一份独立持有的同步帧快照。 */
-  GrabStatus Grab(CameraFrame& frame);
+  GrabStatus Grab(frame::FramePacket& packet);
 
   /** @brief 返回 Open() 成功后生效的 Talos 输出信息。 */
   [[nodiscard]] CameraInfo Info() const;

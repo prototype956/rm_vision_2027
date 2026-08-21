@@ -119,7 +119,7 @@ TopicDemand VisionDebugPipeline::LiveDemand() const noexcept {
 }
 
 void VisionDebugPipeline::Publish(
-    const hal::CameraFrame& frame, std::span<const modules::ArmorDetection> detections,
+    const frame::FramePacket& packet, std::span<const modules::ArmorDetection> detections,
     const modules::DetectorStats& detector_stats,
     const modules::LightbarDetectionResult& lightbar_result,
     const modules::ArmorPnpFrameResult& pnp_result,
@@ -133,7 +133,7 @@ void VisionDebugPipeline::Publish(
     return;
   }
   try {
-    const auto RESULT = queue_.Push(frame, detections, detector_stats, lightbar_result, pnp_result,
+    const auto RESULT = queue_.Push(packet, detections, detector_stats, lightbar_result, pnp_result,
                                     prediction_result, selection);
     if (RESULT.rate_limited) {
       metrics_.OnRateLimited();

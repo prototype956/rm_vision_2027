@@ -107,11 +107,10 @@ mv::geometry::RigidTransform ConvertTransform(const RigidTransformF32& value) no
                                                value.rotation.z)};
 }
 
-CameraFrame::FrameGeometry ConvertGeometry(const CapturedFrameMeta& metadata) {
-  // Grab() 已完整验证数量、时间戳和数值范围，这里只负责从 ABI 类型提升到 HAL 类型。
-  CameraFrame::FrameGeometry geometry;
+void PopulateFrameContext(const CapturedFrameMeta& metadata, frame::FramePacket& packet) {
+  // Grab() 已完整验证数量、时间戳和数值范围，这里只负责从 ABI 类型提升到帧数据类型。
   const auto& camera = metadata.camera_info;
-  geometry.calibration = {
+  packet.camera_model = frame::CameraModel{
       .width = camera.width,
       .height = camera.height,
       .fx = camera.fx,
@@ -120,18 +119,22 @@ CameraFrame::FrameGeometry ConvertGeometry(const CapturedFrameMeta& metadata) {
       .cy = camera.cy,
       .distortion = {camera.distortion[0], camera.distortion[1], camera.distortion[2],
                      camera.distortion[3], camera.distortion[4]}};
-  geometry.world_t_gimbal = ConvertTransform(metadata.world_t_gimbal);
-  geometry.gimbal_t_camera_optical = ConvertTransform(metadata.gimbal_t_camera_optical);
-  geometry.gimbal_t_muzzle = ConvertTransform(metadata.gimbal_t_muzzle);
+  packet.kinematics = frame::FrameKinematics{
+      .world_t_gimbal = ConvertTransform(metadata.world_t_gimbal),
+      .gimbal_t_camera_optical = ConvertTransform(metadata.gimbal_t_camera_optical),
+      .gimbal_t_muzzle = ConvertTransform(metadata.gimbal_t_muzzle)};
+
+  simulation::SimulationFrameData simulation;
   const auto& projectiles = metadata.projectile_statistics;
-  geometry.projectile_statistics =
-      CameraFrame::ProjectileStatistics{.bullet_launch_count = projectiles.bullet_launch_count,
-                                        .armor_hit_count = projectiles.armor_hit_count,
-                                        .rune_hit_count = projectiles.rune_hit_count,
-                                        .dart_launch_count = projectiles.dart_launch_count};
+  simulation.projectile_statistics =
+      simulation::ProjectileStatistics{.bullet_launch_count = projectiles.bullet_launch_count,
+                                       .armor_hit_count = projectiles.armor_hit_count,
+                                       .rune_hit_count = projectiles.rune_hit_count,
+                                       .dart_launch_count = projectiles.dart_launch_count};
   if (metadata.gimbal_telemetry_valid != 0) {
-    const auto FORWARD = geometry.world_t_gimbal.rotation * mv::geometry::Vector3::UnitX();
-    geometry.gimbal_actuator = GimbalActuatorTelemetry{
+    const auto FORWARD =
+        packet.kinematics->world_t_gimbal.rotation * mv::geometry::Vector3::UnitX();
+    packet.gimbal_actuator = GimbalActuatorTelemetry{
         .valid = true,
         .state_timestamp_ns = metadata.capture_timestamp_ns,
         .consumed_command_timestamp_ns = metadata.gimbal_consumed_command_timestamp_ns,
@@ -147,26 +150,26 @@ CameraFrame::FrameGeometry ConvertGeometry(const CapturedFrameMeta& metadata) {
   }
 
   const auto& truth = metadata.ground_truth;
-  geometry.targets.reserve(truth.target_count);
+  simulation.targets.reserve(truth.target_count);
   for (std::size_t index = 0; index < truth.target_count; ++index) {
     const auto& target = truth.targets[index];
-    geometry.targets.push_back({.id = target.id,
-                                .team = target.team,
-                                .armor_label = target.armor_label,
-                                .is_outpost = target.is_outpost != 0,
-                                .position_world = mv::geometry::Vector3(
-                                    target.position[0], target.position[1], target.position[2]),
-                                .yaw = target.yaw,
-                                .yaw_velocity = target.yaw_velocity});
+    simulation.targets.push_back({.id = target.id,
+                                  .team = target.team,
+                                  .armor_label = target.armor_label,
+                                  .is_outpost = target.is_outpost != 0,
+                                  .position_world = mv::geometry::Vector3(
+                                      target.position[0], target.position[1], target.position[2]),
+                                  .yaw = target.yaw,
+                                  .yaw_velocity = target.yaw_velocity});
   }
-  geometry.armors.reserve(truth.armor_count);
+  simulation.armors.reserve(truth.armor_count);
   for (std::size_t index = 0; index < truth.armor_count; ++index) {
     const auto& armor = truth.armors[index];
-    CameraFrame::GroundTruthArmor converted{
+    simulation::GroundTruthArmor converted{
         .id = armor.id,
         .team = armor.team,
         .label = armor.label,
-        .type = static_cast<CameraFrame::ArmorType>(armor.armor_type),
+        .type = static_cast<geometry::ArmorType>(armor.armor_type),
         .width_m = armor.width_m,
         .height_m = armor.height_m,
         .world_t_armor = ConvertTransform(armor.world_t_armor)};
@@ -175,9 +178,9 @@ CameraFrame::FrameGeometry ConvertGeometry(const CapturedFrameMeta& metadata) {
           mv::geometry::Vector3(armor.corners_world[corner][0], armor.corners_world[corner][1],
                                 armor.corners_world[corner][2]);
     }
-    geometry.armors.push_back(std::move(converted));
+    simulation.armors.push_back(std::move(converted));
   }
-  return geometry;
+  packet.simulation = std::move(simulation);
 }
 
 }  // namespace
@@ -364,7 +367,7 @@ void TalosDevice::Close() noexcept {
   }
 }
 
-GrabStatus TalosDevice::Grab(CameraFrame& frame) {
+GrabStatus TalosDevice::Grab(frame::FramePacket& packet) {
   if (!impl_->is_open || impl_->meta == nullptr) {
     return GrabStatus::DISCONNECTED;
   }
@@ -466,25 +469,26 @@ GrabStatus TalosDevice::Grab(CameraFrame& frame) {
       return INVALID();
     }
 
+    packet = {};
     const auto* source = static_cast<const uint8_t*>(impl_->image_pool_mapping) + OFFSET;
     const cv::Mat SHARED_IMAGE(static_cast<int>(metadata.height), static_cast<int>(metadata.width),
                                CV_8UC3, const_cast<uint8_t*>(source));
     // 发布端会复用共享三缓冲槽位，返回前必须复制或转换到独立拥有的 cv::Mat。
     if (metadata.format == K_FORMAT_BGR8) {
-      frame.image = SHARED_IMAGE.clone();
+      packet.capture.image = SHARED_IMAGE.clone();
     } else {
-      cv::cvtColor(SHARED_IMAGE, frame.image, cv::COLOR_RGB2BGR);
+      cv::cvtColor(SHARED_IMAGE, packet.capture.image, cv::COLOR_RGB2BGR);
     }
-    if (frame.image.empty()) {
+    if (packet.capture.image.empty()) {
       return GrabStatus::FATAL;
     }
     impl_->last_frame_sequence = metadata.frame_sequence;
     impl_->last_capture_timestamp_ns = metadata.capture_timestamp_ns;
-    frame.receive_steady_time = std::chrono::steady_clock::now();
-    frame.capture_timestamp_ns = metadata.capture_timestamp_ns;
-    frame.geometry = ConvertGeometry(metadata);
-    frame.sequence = metadata.frame_sequence;
-    frame.source_invalid_frames = impl_->invalid_frames;
+    packet.capture.stamp.receive_steady_time = std::chrono::steady_clock::now();
+    packet.capture.stamp.capture_timestamp_ns = metadata.capture_timestamp_ns;
+    packet.capture.stamp.sequence = metadata.frame_sequence;
+    packet.capture.stamp.source_invalid_frames = impl_->invalid_frames;
+    PopulateFrameContext(metadata, packet);
     return GrabStatus::OK;
   }
   return GrabStatus::TIMEOUT;

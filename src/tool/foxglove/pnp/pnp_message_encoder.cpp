@@ -153,11 +153,11 @@ bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
 }  // namespace
 
 ::foxglove::schemas::SceneUpdate EncodeEstimates(const modules::ArmorPnpFrameResult& result,
-                                                 const hal::CameraFrame::FrameGeometry& geometry,
+                                                 const frame::FrameKinematics& kinematics,
                                                  const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::SceneUpdate update;
   const auto world_t_camera =
-      geometry::Compose(geometry.world_t_gimbal, geometry.gimbal_t_camera_optical);
+      geometry::Compose(kinematics.world_t_gimbal, kinematics.gimbal_t_camera_optical);
   // 真值链只用于数值基准，不叠加到绿色正式估计图层，避免与仿真真值频道重复。
   for (const auto& attempt : result.attempts) {
     if (!attempt.estimate || attempt.source == modules::PnpInputSource::GROUND_TRUTH)
@@ -377,9 +377,8 @@ std::string EncodeStats(const modules::ArmorPnpFrameResult& result, std::uint64_
         estimate ? OptionalNumber(estimate->truth_distance_m) : "null",
         estimate ? OptionalNumber(estimate->truth_viewing_angle_deg) : "null",
         estimate && estimate->truth_type
-            ? fmt::format("\"{}\"", *estimate->truth_type == hal::CameraFrame::ArmorType::LARGE
-                                        ? "large"
-                                        : "small")
+            ? fmt::format("\"{}\"",
+                          *estimate->truth_type == geometry::ArmorType::LARGE ? "large" : "small")
             : "null",
         estimate ? fmt::format("{:.9g}", estimate->image_width_px) : "null",
         estimate ? fmt::format("{:.9g}", estimate->image_height_px) : "null",

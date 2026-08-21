@@ -24,17 +24,20 @@ std::string EncodeDebugStats(const VisionDebugFrame& frame,
                              std::optional<double> jpeg_ms, double publish_latency_ms,
                              PipelineCounts counts) {
   const auto JPEG = jpeg_ms.has_value() ? fmt::format("{:.3f}", *jpeg_ms) : "null";
+  const auto& packet = frame.packet;
+  const auto& stamp = packet.capture.stamp;
   const auto CAPTURE_TIMESTAMP =
-      frame.capture_timestamp_ns.has_value() ? std::to_string(*frame.capture_timestamp_ns) : "null";
+      stamp.capture_timestamp_ns.has_value() ? std::to_string(*stamp.capture_timestamp_ns) : "null";
   return fmt::format(
       "{{\"timestamp\":{{\"sec\":{},\"nsec\":{}}},\"sequence\":{},"
       "\"capture_timestamp_ns\":{},\"geometry_valid\":{},"
       "\"source_invalid_frames\":{},\"jpeg_encode_ms\":{},"
       "\"publish_latency_ms\":{:.3f},\"rate_limited_frames\":{},"
       "\"queue_overwritten_frames\":{}}}",
-      timestamp.sec, timestamp.nsec, frame.sequence, CAPTURE_TIMESTAMP,
-      frame.geometry.has_value() ? "true" : "false", frame.source_invalid_frames, JPEG,
-      publish_latency_ms, counts.rate_limited_frames, counts.queue_overwritten_frames);
+      timestamp.sec, timestamp.nsec, stamp.sequence, CAPTURE_TIMESTAMP,
+      mv::frame::MakeSpatialFrameView(packet).has_value() ? "true" : "false",
+      stamp.source_invalid_frames, JPEG, publish_latency_ms, counts.rate_limited_frames,
+      counts.queue_overwritten_frames);
 }
 
 }  // namespace
@@ -89,12 +92,15 @@ VisionMessageEncoder::VisionMessageEncoder(const ImageConfig& config)
 
 PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicDemand demand,
                                            PipelineCounts counts) const {
+  const auto& packet = frame.packet;
+  const auto& stamp = packet.capture.stamp;
+  const auto SPATIAL_VIEW = mv::frame::MakeSpatialFrameView(packet);
   // 实机帧没有 epoch 时间时，用固定双时钟锚点换算，避免运行中系统校时造成时间跳变。
-  const auto SYSTEM_TIME = system_anchor_ + (frame.receive_steady_time - steady_anchor_);
+  const auto SYSTEM_TIME = system_anchor_ + (stamp.receive_steady_time - steady_anchor_);
   const auto FALLBACK_EPOCH_COUNT =
       std::chrono::duration_cast<std::chrono::nanoseconds>(SYSTEM_TIME.time_since_epoch()).count();
   // Talos 等仿真源优先保留原始采集 epoch，使图像、TF 和真值与仿真快照严格同帧。
-  const auto EPOCH_NANOS = frame.capture_timestamp_ns.value_or(
+  const auto EPOCH_NANOS = stamp.capture_timestamp_ns.value_or(
       FALLBACK_EPOCH_COUNT > 0 ? static_cast<std::uint64_t>(FALLBACK_EPOCH_COUNT) : 0);
   const ::foxglove::schemas::Timestamp TIMESTAMP{
       .sec = static_cast<std::uint32_t>(EPOCH_NANOS / K_NANOSECONDS_PER_SECOND),
@@ -104,7 +110,7 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
   result.epoch_nanos = EPOCH_NANOS;
   if (demand.image) {
     auto encoded =
-        image::EncodeJpeg(frame.image, config_.jpeg_quality, config_.frame_id, TIMESTAMP);
+        image::EncodeJpeg(packet.capture.image, config_.jpeg_quality, config_.frame_id, TIMESTAMP);
     result.jpeg_ms = encoded.jpeg_ms;
     result.image = std::move(encoded.message);
   }
@@ -113,7 +119,7 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
   }
   if (demand.armor_stats) {
     result.armor_stats_json =
-        armor_detector::EncodeDetectorStats(frame.detector_stats, frame.sequence, TIMESTAMP);
+        armor_detector::EncodeDetectorStats(frame.detector_stats, stamp.sequence, TIMESTAMP);
   }
   if (demand.lightbar_annotations) {
     result.lightbar_annotations = armor_light_detector::EncodeAnnotations(
@@ -121,56 +127,50 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
   }
   if (demand.lightbar_stats) {
     result.lightbar_stats_json = armor_light_detector::EncodeStats(
-        frame.lightbar_result, frame.prediction_result, frame.sequence, TIMESTAMP);
+        frame.lightbar_result, frame.prediction_result, stamp.sequence, TIMESTAMP);
   }
-  // 空间与仿真领域共用同一份 geometry；后端未提供时不构造任何默认坐标关系。
-  if (frame.geometry.has_value()) {
-    const auto& geometry = *frame.geometry;
-    if (demand.transforms) {
-      result.transforms = spatial::EncodeTransforms(geometry, TIMESTAMP);
-    }
-    if (demand.calibration) {
-      result.calibration = spatial::EncodeCalibration(geometry.calibration, TIMESTAMP);
-    }
-    if (demand.frustum) {
-      result.frustum = spatial::EncodeFrustum(geometry.calibration, TIMESTAMP);
-    }
-    if (demand.ground_truth) {
-      result.ground_truth = simulation::EncodeGroundTruth(geometry, TIMESTAMP);
-    }
-    if (demand.projectile_stats && geometry.projectile_statistics.has_value()) {
+  if (packet.kinematics && demand.transforms)
+    result.transforms = spatial::EncodeTransforms(*packet.kinematics, TIMESTAMP);
+  if (packet.camera_model && demand.calibration)
+    result.calibration = spatial::EncodeCalibration(*packet.camera_model, TIMESTAMP);
+  if (packet.camera_model && demand.frustum)
+    result.frustum = spatial::EncodeFrustum(*packet.camera_model, TIMESTAMP);
+  if (packet.simulation) {
+    if (demand.ground_truth)
+      result.ground_truth = simulation::EncodeGroundTruth(*packet.simulation, TIMESTAMP);
+    if (demand.projectile_stats && packet.simulation->projectile_statistics) {
       result.projectile_stats_json = simulation::EncodeProjectileStats(
-          *geometry.projectile_statistics, frame.sequence, TIMESTAMP);
+          *packet.simulation->projectile_statistics, stamp.sequence, TIMESTAMP);
     }
-    if (demand.projection_annotations) {
-      result.projection_annotations = simulation::EncodeProjectionAnnotations(geometry, TIMESTAMP);
-    }
-    if (demand.pnp_estimates) {
-      result.pnp_estimates = pnp::EncodeEstimates(frame.pnp_result, geometry, TIMESTAMP);
-    }
-    if (demand.prediction_truth_overlay) {
+    if (demand.prediction_truth_overlay)
       result.prediction_truth_overlay =
-          prediction::EncodeTruthOverlay(frame.prediction_result, geometry, TIMESTAMP);
-    }
+          prediction::EncodeTruthOverlay(frame.prediction_result, *packet.simulation, TIMESTAMP);
   }
+  if (packet.simulation && packet.camera_model && packet.kinematics &&
+      demand.projection_annotations) {
+    result.projection_annotations = simulation::EncodeProjectionAnnotations(
+        *packet.simulation, *packet.camera_model, *packet.kinematics, TIMESTAMP);
+  }
+  if (packet.kinematics && demand.pnp_estimates)
+    result.pnp_estimates = pnp::EncodeEstimates(frame.pnp_result, *packet.kinematics, TIMESTAMP);
   if (demand.prediction_current_annotations) {
     result.prediction_current_annotations =
-        frame.geometry
-            ? prediction::EncodeAnnotations(frame.prediction_result, *frame.geometry,
+        SPATIAL_VIEW
+            ? prediction::EncodeAnnotations(frame.prediction_result, *SPATIAL_VIEW,
                                             prediction::ImagePredictionHorizon::CURRENT, TIMESTAMP)
             : prediction::EncodeEmptyAnnotations(TIMESTAMP);
   }
   if (demand.prediction_future_annotations) {
     result.prediction_future_annotations =
-        frame.geometry ? prediction::EncodeAnnotations(
-                             frame.prediction_result, *frame.geometry,
-                             prediction::ImagePredictionHorizon::FUTURE_100_MS, TIMESTAMP)
-                       : prediction::EncodeEmptyAnnotations(TIMESTAMP);
+        SPATIAL_VIEW ? prediction::EncodeAnnotations(
+                           frame.prediction_result, *SPATIAL_VIEW,
+                           prediction::ImagePredictionHorizon::FUTURE_100_MS, TIMESTAMP)
+                     : prediction::EncodeEmptyAnnotations(TIMESTAMP);
   }
   if (demand.selected_armor_annotations) {
     result.selected_armor_annotations =
-        frame.geometry && frame.armor_selection
-            ? prediction::EncodeSelectedArmorAnnotations(frame.prediction_result, *frame.geometry,
+        SPATIAL_VIEW && frame.armor_selection
+            ? prediction::EncodeSelectedArmorAnnotations(frame.prediction_result, *SPATIAL_VIEW,
                                                          *frame.armor_selection, TIMESTAMP)
             : prediction::EncodeEmptyAnnotations(TIMESTAMP);
   }
@@ -191,7 +191,7 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
         pnp::EncodeCornerRefinerCandidates(frame.pnp_result, TIMESTAMP);
   }
   if (demand.pnp_stats) {
-    result.pnp_stats_json = pnp::EncodeStats(frame.pnp_result, frame.sequence, TIMESTAMP);
+    result.pnp_stats_json = pnp::EncodeStats(frame.pnp_result, stamp.sequence, TIMESTAMP);
   }
   if (demand.prediction_scene) {
     result.prediction_scene = prediction::EncodeScene(frame.prediction_result, TIMESTAMP);
@@ -200,7 +200,7 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
     result.prediction_state_json = prediction::EncodeState(frame.prediction_result, TIMESTAMP);
   }
 
-  result.publish_latency_ms = Milliseconds(SteadyClock::now() - frame.receive_steady_time);
+  result.publish_latency_ms = Milliseconds(SteadyClock::now() - stamp.receive_steady_time);
   if (demand.debug_stats) {
     result.debug_stats_json =
         EncodeDebugStats(frame, TIMESTAMP, result.jpeg_ms, result.publish_latency_ms, counts);

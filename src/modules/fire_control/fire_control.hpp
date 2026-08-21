@@ -1,6 +1,5 @@
 #pragma once
 
-#include "hal/camera/i_camera.hpp"
 #include "hal/gimbal/gimbal_types.hpp"
 #include "modules/armor_predictor/armor_prediction_types.hpp"
 #include "modules/fire_control/fire_control_config.hpp"
@@ -91,14 +90,14 @@ struct ArmorSelectionDiagnostics {
 /** @brief 供相机同帧调试标注使用的轻量控制选择快照，不包含 MPC 轨迹。 */
 struct ArmorSelectionSnapshot {
   bool valid{false};                 ///< 是否存在可与相机帧关联的选择结果。
-  std::uint64_t source_sequence{0};  ///< 对应输入 CameraFrame::sequence。
-  TrackerState tracker_state{TrackerState::LOST};  ///< 选择时的跟踪状态。
-  std::optional<ArmorLabel> tracked_label;         ///< 当前目标标签；未跟踪时为空。
-  std::optional<hal::CameraFrame::ArmorType> tracked_type;  ///< 当前装甲尺寸。
-  int selected_slot{-1};                                    ///< 已锁定的四装甲槽位。
-  int pending_slot{-1};                                     ///< 正等待切换确认的槽位。
-  double pending_duration_s{0.0};     ///< pending_slot 已持续更优的时间。
-  double switch_confirmation_s{0.0};  ///< 配置的切换确认时间。
+  std::uint64_t source_sequence{0};  ///< 对应输入采集帧序号。
+  TrackerState tracker_state{TrackerState::LOST};   ///< 选择时的跟踪状态。
+  std::optional<ArmorLabel> tracked_label;          ///< 当前目标标签；未跟踪时为空。
+  std::optional<geometry::ArmorType> tracked_type;  ///< 当前装甲尺寸。
+  int selected_slot{-1};                            ///< 已锁定的四装甲槽位。
+  int pending_slot{-1};                             ///< 正等待切换确认的槽位。
+  double pending_duration_s{0.0};                   ///< pending_slot 已持续更优的时间。
+  double switch_confirmation_s{0.0};                ///< 配置的切换确认时间。
 };
 
 /** @brief 单次火控计算所需的同一预测快照、坐标变换和控制使能状态。 */
@@ -134,9 +133,9 @@ struct FireControlResult {
   std::uint64_t source_sequence{0};  ///< 对应输入预测和相机帧序号。
   std::optional<std::uint64_t> source_capture_timestamp_ns;  ///< 数据源采集 Unix 时间。
   std::uint64_t command_timestamp_ns{0};  ///< 本周期命令生成的 Unix epoch 纳秒时间。
-  TrackerState tracker_state{TrackerState::LOST};           ///< 输入目标跟踪状态。
-  std::optional<ArmorLabel> tracked_label;                  ///< 输入目标标签。
-  std::optional<hal::CameraFrame::ArmorType> tracked_type;  ///< 输入目标装甲尺寸。
+  TrackerState tracker_state{TrackerState::LOST};   ///< 输入目标跟踪状态。
+  std::optional<ArmorLabel> tracked_label;          ///< 输入目标标签。
+  std::optional<geometry::ArmorType> tracked_type;  ///< 输入目标装甲尺寸。
   double prediction_age_s{0.0};  ///< 控制时刻相对预测源帧接收时刻的数据年龄。
   double feedback_age_s{0.0};    ///< 控制时刻相对融合反馈时刻的数据年龄。
   int selected_slot{-1};         ///< 当前选中的四装甲槽位；-1 表示无。
@@ -276,9 +275,9 @@ class FireControl final {
   int pending_slot_{-1};             ///< 等待延时确认的切换候选槽位。
   std::chrono::steady_clock::time_point pending_since_{};  ///< 候选首次持续更优的时刻。
   std::optional<ArmorLabel> tracked_label_;  ///< 上周期目标标签，用于检测目标变化。
-  std::optional<hal::CameraFrame::ArmorType> tracked_type_;  ///< 上周期装甲尺寸。
-  int last_stable_slot_{-1};  ///< 开火稳定计数对应的槽位。
-  int stable_cycles_{0};      ///< 当前槽位连续进入开火窗口的周期数。
+  std::optional<geometry::ArmorType> tracked_type_;  ///< 上周期装甲尺寸。
+  int last_stable_slot_{-1};                         ///< 开火稳定计数对应的槽位。
+  int stable_cycles_{0};  ///< 当前槽位连续进入开火窗口的周期数。
   std::chrono::steady_clock::time_point last_fire_start_{};  ///< 最近脉冲起始时刻。
   std::chrono::steady_clock::time_point pulse_until_{};  ///< 当前 fire=true 脉冲结束时刻。
   std::chrono::steady_clock::time_point temp_lost_since_{};  ///< TEMP_LOST 起始时刻。

@@ -18,12 +18,12 @@ class MindVisionCamera : public ICamera {
 
   MindVisionCamera(const MindVisionCamera&) = delete;
   MindVisionCamera& operator=(const MindVisionCamera&) = delete;
-  MindVisionCamera(MindVisionCamera&& other) noexcept ;
+  MindVisionCamera(MindVisionCamera&& other) noexcept;
   MindVisionCamera& operator=(MindVisionCamera&& other) noexcept;
 
   bool Open(const YAML::Node& config) override;
   void Close() override;
-  GrabStatus Grab(CameraFrame& frame) override;
+  GrabStatus Grab(frame::FramePacket& packet) override;
   [[nodiscard]] CameraInfo Info() const override;
   [[nodiscard]] bool IsOpen() const override;
 

@@ -50,10 +50,10 @@ double PolygonDiagonal(const std::array<cv::Point2f, 4>& polygon) {
 }  // namespace
 
 std::optional<std::array<cv::Point2f, 4>> ProjectVisibleTruth(
-    const hal::CameraFrame::GroundTruthArmor& armor,
-    const hal::CameraFrame::FrameGeometry& geometry) {
+    const simulation::GroundTruthArmor& armor, const frame::CameraModel& camera_model,
+    const frame::FrameKinematics& kinematics) {
   const auto world_t_camera =
-      geometry::Compose(geometry.world_t_gimbal, geometry.gimbal_t_camera_optical);
+      geometry::Compose(kinematics.world_t_gimbal, kinematics.gimbal_t_camera_optical);
   const auto camera_t_world = geometry::Inverse(world_t_camera);
   const auto camera_t_armor = geometry::Compose(camera_t_world, armor.world_t_armor);
   // 背面装甲和相机后方角点不能形成有物理意义的 PnP 基准，投影前直接剔除。
@@ -66,15 +66,13 @@ std::optional<std::array<cv::Point2f, 4>> ProjectVisibleTruth(
     if (point.z() <= 0.0)
       return std::nullopt;
     projected[index] =
-        cv::Point2f(static_cast<float>(geometry.calibration.fx * point.x() / point.z() +
-                                       geometry.calibration.cx),
-                    static_cast<float>(geometry.calibration.fy * point.y() / point.z() +
-                                       geometry.calibration.cy));
+        cv::Point2f(static_cast<float>(camera_model.fx * point.x() / point.z() + camera_model.cx),
+                    static_cast<float>(camera_model.fy * point.y() / point.z() + camera_model.cy));
   }
   const auto bounds =
       cv::boundingRect(std::vector<cv::Point2f>(projected.begin(), projected.end()));
-  const cv::Rect image_bounds(0, 0, static_cast<int>(geometry.calibration.width),
-                              static_cast<int>(geometry.calibration.height));
+  const cv::Rect image_bounds(0, 0, static_cast<int>(camera_model.width),
+                              static_cast<int>(camera_model.height));
   if ((bounds & image_bounds).empty())
     return std::nullopt;
   return projected;
@@ -177,11 +175,11 @@ std::vector<std::size_t> MatchDetectionsToTruth(std::span<const ArmorDetection> 
   return matches;
 }
 
-void AddTruthErrors(ArmorPoseEstimate& estimate, const hal::CameraFrame::GroundTruthArmor& truth,
-                    const hal::CameraFrame::FrameGeometry& geometry,
+void AddTruthErrors(ArmorPoseEstimate& estimate, const simulation::GroundTruthArmor& truth,
+                    const frame::FrameKinematics& kinematics,
                     const std::array<cv::Point2f, 4>& truth_pixels) {
   const auto world_t_camera =
-      geometry::Compose(geometry.world_t_gimbal, geometry.gimbal_t_camera_optical);
+      geometry::Compose(kinematics.world_t_gimbal, kinematics.gimbal_t_camera_optical);
   const auto actual = geometry::Compose(geometry::Inverse(world_t_camera), truth.world_t_armor);
   // 所有有符号误差统一定义为 estimate - truth，并在 camera_optical 坐标系表达。
   const auto position_error = estimate.camera_t_armor.translation - actual.translation;

@@ -54,8 +54,8 @@ std::string AngleGroup(double angle) {
   return "ge_45deg";
 }
 
-std::string SizeGroup(hal::CameraFrame::ArmorType type) {
-  return type == hal::CameraFrame::ArmorType::LARGE ? "large" : "small";
+std::string SizeGroup(geometry::ArmorType type) {
+  return type == geometry::ArmorType::LARGE ? "large" : "small";
 }
 
 void AddSamples(PnpMetricSamples& samples, const ArmorPoseEstimate& estimate) {

@@ -45,8 +45,8 @@ void TalosCamera::Close() {
   impl_->device.Close();
 }
 
-GrabStatus TalosCamera::Grab(CameraFrame& frame) {
-  return impl_->device.Grab(frame);
+GrabStatus TalosCamera::Grab(frame::FramePacket& packet) {
+  return impl_->device.Grab(packet);
 }
 
 CameraInfo TalosCamera::Info() const {

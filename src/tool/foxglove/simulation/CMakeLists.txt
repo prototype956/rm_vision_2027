@@ -11,7 +11,7 @@ target_include_directories(mv-tool-foxglove-simulation
 target_link_libraries(mv-tool-foxglove-simulation
     PUBLIC
         foxglove_sdk
-        mv-hal-camera
+        mv-frame-data
         mv-geometry
     PRIVATE
         fmt::fmt

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "hal/camera/i_camera.hpp"
+#include "frame/frame_packet.hpp"
 #include "modules/armor_detector/armor_detector.hpp"
 #include "modules/armor_light_detector/armor_light_detector.hpp"
 #include "modules/armor_pnp/armor_pnp_types.hpp"
@@ -24,12 +24,7 @@ using SteadyClock = std::chrono::steady_clock;
  * 入队时复制，后台线程不依赖检测器或相机对象的后续状态。
  */
 struct VisionDebugFrame {
-  cv::Mat image;                                ///< 与相机帧共享所有权的 BGR 原图。
-  SteadyClock::time_point receive_steady_time;  ///< HAL 收帧单调时钟，用于限流和延迟统计。
-  std::optional<std::uint64_t> capture_timestamp_ns;  ///< 数据源采集 Unix epoch 纳秒时间。
-  std::optional<hal::CameraFrame::FrameGeometry> geometry;  ///< 与图像原子同步的空间元数据。
-  std::uint64_t sequence{0};               ///< 当前相机 Open() 周期内递增的帧序号。
-  std::uint64_t source_invalid_frames{0};  ///< 数据源自 Open() 以来累计拒绝的无效帧数。
+  frame::FramePacket packet;  ///< 与源帧共享图像所有权的完整同帧数据包。
   std::vector<modules::ArmorDetection> detections;  ///< 当前帧检测结果副本。
   modules::DetectorStats detector_stats;            ///< 当前帧检测性能指标副本。
   modules::LightbarDetectionResult lightbar_result;  ///< 当前帧独立灯条及检测统计副本。

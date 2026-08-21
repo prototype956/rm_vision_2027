@@ -17,7 +17,7 @@ target_link_libraries(mv-tool-foxglove-pipeline
         mv-tool-foxglove-runtime
     PRIVATE
         mv-core
-        mv-hal-camera
+        mv-frame-data
         mv-modules-armor-detector
         mv-tool-foxglove-image
         mv-tool-foxglove-armor-detector

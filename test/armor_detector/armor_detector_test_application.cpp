@@ -111,13 +111,13 @@ void DrawOutlinedText(cv::Mat& image, const std::string& text, const cv::Point& 
 }
 
 // 在相机帧上叠加装甲四边形、分类结果以及检测链路的实时性能指标。
-void DrawOverlay(cv::Mat& image, const hal::CameraFrame& frame,
+void DrawOverlay(cv::Mat& image, const frame::FramePacket& packet,
                  const std::vector<modules::ArmorDetection>& detections,
                  const modules::DetectorStats& stats, double loop_fps, double elapsed_sec) {
   tool::DrawArmorDetections(image, detections);
 
   const std::vector<std::string> LINES = {
-      fmt::format("seq: {}", frame.sequence),
+      fmt::format("seq: {}", packet.capture.stamp.sequence),
       fmt::format("loop fps: {:.2f}", loop_fps),
       fmt::format("detections: {}  candidates: {}", detections.size(), stats.threshold_candidates),
       fmt::format("pre/infer/post: {:.2f}/{:.2f}/{:.2f} ms", stats.preprocess_ms,
@@ -254,19 +254,19 @@ int ArmorDetectorTestApplication::Run() {
       break;
     }
 
-    hal::CameraFrame frame;
-    auto status = camera_->Grab(frame);
+    frame::FramePacket packet;
+    auto status = camera_->Grab(packet);
     const auto NOW = Clock::now();
     ++metrics.grab_total;
 
     if (status == hal::GrabStatus::OK) {
       // SDK 返回成功后仍需检查图像尺寸和类型，避免非法输入进入检测器。
       bool valid = true;
-      if (frame.image.cols != 1280 || frame.image.rows != 720) {
+      if (packet.capture.image.cols != 1280 || packet.capture.image.rows != 720) {
         ++metrics.resolution_errors;
         valid = false;
       }
-      if (frame.image.type() != CV_8UC3) {
+      if (packet.capture.image.type() != CV_8UC3) {
         ++metrics.type_errors;
         valid = false;
       }
@@ -284,11 +284,11 @@ int ArmorDetectorTestApplication::Run() {
 
         try {
           // LastStats() 对应刚完成的 Detect()，因此二者必须在同一同步调用链中读取。
-          const auto DETECTIONS = detector_->Detect(frame.image);
+          const auto DETECTIONS = detector_->Detect(packet.capture.image);
           const auto STATS = detector_->LastStats();
           if (foxglove_publisher) {
             foxglove_publisher->Publish(
-                frame, DETECTIONS, STATS, modules::LightbarDetectionResult{},
+                packet, DETECTIONS, STATS, modules::LightbarDetectionResult{},
                 modules::ArmorPnpFrameResult{}, modules::ArmorPredictionResult{});
           }
           ++metrics.detection_success;
@@ -316,13 +316,13 @@ int ArmorDetectorTestApplication::Run() {
           const bool SAVE_SAMPLE = NOW >= next_sample;
           // 仅在需要预览或保存样本时克隆图像，避免绘制开销污染常规检测路径。
           if (preview_window || SAVE_SAMPLE) {
-            last_preview = frame.image.clone();
-            DrawOverlay(last_preview, frame, DETECTIONS, STATS, LOOP_FPS, ELAPSED);
+            last_preview = packet.capture.image.clone();
+            DrawOverlay(last_preview, packet, DETECTIONS, STATS, LOOP_FPS, ELAPSED);
           }
           if (SAVE_SAMPLE) {
             const auto SAMPLE_PATH =
                 settings_.output_dir /
-                ("sample_" + RUN_ID + "_" + std::to_string(frame.sequence) + ".jpg");
+                ("sample_" + RUN_ID + "_" + std::to_string(packet.capture.stamp.sequence) + ".jpg");
             if (!cv::imwrite(SAMPLE_PATH.string(), last_preview)) {
               MV_LOG_WARN("ArmorDetectorTest", "failed to save sample {}", SAMPLE_PATH.string());
             }
@@ -331,9 +331,10 @@ int ArmorDetectorTestApplication::Run() {
         } catch (const std::exception& error) {
           ++metrics.detection_errors;
           events << "{\"elapsed_sec\":" << Seconds(NOW - START)
-                 << ",\"event\":\"detection_failure\",\"sequence\":" << frame.sequence << "}\n";
-          MV_LOG_ERROR("ArmorDetectorTest", "detection failed at sequence {}: {}", frame.sequence,
-                       error.what());
+                 << ",\"event\":\"detection_failure\",\"sequence\":"
+                 << packet.capture.stamp.sequence << "}\n";
+          MV_LOG_ERROR("ArmorDetectorTest", "detection failed at sequence {}: {}",
+                       packet.capture.stamp.sequence, error.what());
           runtime_stopped = true;
         }
       }

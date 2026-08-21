@@ -23,7 +23,7 @@ target_include_directories(mv-tool-foxglove
 target_link_libraries(mv-tool-foxglove
     PUBLIC
         mv-core
-        mv-hal-camera
+        mv-frame-data
         mv-modules-armor-detector
         mv-modules-armor-light-detector
         mv-modules-armor-pnp

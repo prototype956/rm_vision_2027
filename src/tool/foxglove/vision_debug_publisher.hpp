@@ -1,6 +1,6 @@
 #pragma once
 
-#include "hal/camera/i_camera.hpp"
+#include "frame/frame_packet.hpp"
 #include "modules/armor_detector/armor_detector.hpp"
 #include "modules/armor_light_detector/armor_light_detector.hpp"
 #include "modules/armor_pnp/armor_pnp_types.hpp"
@@ -78,13 +78,14 @@ class VisionDebugPublisher final {
 
   /**
    * @brief 非阻塞提交一帧完整视觉调试数据。
-   * @param frame 原始相机帧；入队后调用方不得并发改写其像素。
+   * @param packet 原始同帧数据包；入队后调用方不得并发改写其像素。
    * @param detections 与该图像对应的检测结果，调用期间复制。
    * @param detector_stats 与该图像对应的检测性能统计。
    * @param lightbar_result 与该图像对应的独立灯条和检测统计。
    * @param pnp_result 与该图像对应的 PnP 解算、基准及角点精修结果。
    */
-  void Publish(const hal::CameraFrame& frame, std::span<const modules::ArmorDetection> detections,
+  void Publish(const frame::FramePacket& packet,
+               std::span<const modules::ArmorDetection> detections,
                const modules::DetectorStats& detector_stats,
                const modules::LightbarDetectionResult& lightbar_result,
                const modules::ArmorPnpFrameResult& pnp_result,

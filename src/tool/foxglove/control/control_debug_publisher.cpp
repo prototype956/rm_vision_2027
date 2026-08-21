@@ -868,8 +868,7 @@ geometry::Vector3 AimPoint(const geometry::Vector3& muzzle, double yaw, double p
       {.key = "selection_decision",
        .value = std::string(modules::ArmorSelectionDecisionName(value.armor_selection.decision))}};
 
-  const double ARMOR_WIDTH =
-      value.tracked_type == hal::CameraFrame::ArmorType::LARGE ? 0.225 : 0.135;
+  const double ARMOR_WIDTH = value.tracked_type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
   constexpr double ARMOR_HEIGHT = 0.055;
   for (const auto& candidate : value.armor_selection.candidates) {
     const auto& pose = candidate.predicted_pose.world_t_armor;

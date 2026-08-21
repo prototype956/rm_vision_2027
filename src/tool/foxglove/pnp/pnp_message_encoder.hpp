@@ -1,6 +1,6 @@
 #pragma once
 
-#include "hal/camera/i_camera.hpp"
+#include "frame/frame_types.hpp"
 #include "modules/armor_pnp/armor_pnp_types.hpp"
 
 #include <cstdint>
@@ -15,7 +15,7 @@ namespace mv::tool::foxglove::pnp {
  * @return 不包含有效检测估计时返回空 SceneUpdate。
  */
 [[nodiscard]] ::foxglove::schemas::SceneUpdate EncodeEstimates(
-    const modules::ArmorPnpFrameResult& result, const hal::CameraFrame::FrameGeometry& geometry,
+    const modules::ArmorPnpFrameResult& result, const frame::FrameKinematics& kinematics,
     const ::foxglove::schemas::Timestamp& timestamp);
 
 /** @brief 编码检测输入的青色原始角点，以及成功应用后的洋红色精修角点。 */

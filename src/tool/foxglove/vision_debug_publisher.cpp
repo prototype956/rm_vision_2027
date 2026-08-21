@@ -65,7 +65,7 @@ VisionDebugPublisher::VisionDebugPublisher(const Config& config)
 VisionDebugPublisher::~VisionDebugPublisher() = default;
 
 void VisionDebugPublisher::Publish(
-    const hal::CameraFrame& frame, std::span<const modules::ArmorDetection> detections,
+    const frame::FramePacket& packet, std::span<const modules::ArmorDetection> detections,
     const modules::DetectorStats& detector_stats,
     const modules::LightbarDetectionResult& lightbar_result,
     const modules::ArmorPnpFrameResult& pnp_result,
@@ -82,7 +82,7 @@ void VisionDebugPublisher::Publish(
                                !(prediction_result.state == modules::TrackerState::DETECTING &&
                                  SELECTION.source_sequence != prediction_result.sequence);
   impl_->pipeline.Publish(
-      frame, detections, detector_stats, lightbar_result, pnp_result, prediction_result,
+      packet, detections, detector_stats, lightbar_result, pnp_result, prediction_result,
       SEQUENCE_MATCHES && IDENTITY_MATCHES && TRACKER_MATCHES ? std::optional(SELECTION)
                                                               : std::nullopt);
 }

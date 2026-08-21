@@ -500,7 +500,7 @@ FireControlResult FireControl::Step(const ControlInputSnapshot& input,
   result.command_source = GimbalCommandSource::MPC;
   result.yaw_error = Wrap(result.target_yaw - feedback.yaw);
   result.pitch_error = result.target_pitch - feedback.pitch;
-  const double WIDTH = input.prediction.type == hal::CameraFrame::ArmorType::LARGE ? 0.225 : 0.135;
+  const double WIDTH = input.prediction.type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
   constexpr double HEIGHT = 0.055;
   result.fire_yaw_window =
       std::clamp(std::atan2(0.5 * WIDTH * config_.fire_window_scale, result.ballistic.distance_m),

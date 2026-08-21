@@ -52,14 +52,15 @@ void ControlRuntimeImpl::Start() {
   }
 }
 
-void ControlRuntimeImpl::Update(const modules::ArmorPredictionResult& prediction,
-                                const hal::CameraFrame::FrameGeometry& geometry) {
+void ControlRuntimeImpl::Update(
+    const modules::ArmorPredictionResult& prediction, const frame::FrameKinematics& kinematics,
+    const std::optional<hal::GimbalActuatorTelemetry>& gimbal_actuator) {
   auto snapshot = std::make_shared<modules::ControlInputSnapshot>();
   snapshot->prediction = prediction;
   // 仿真真值不进入控制快照，只保留同帧云台与枪口外参。
-  snapshot->world_t_gimbal = geometry.world_t_gimbal;
-  snapshot->gimbal_t_muzzle = geometry.gimbal_t_muzzle;
-  snapshot->frame_actuator = geometry.gimbal_actuator;
+  snapshot->world_t_gimbal = kinematics.world_t_gimbal;
+  snapshot->gimbal_t_muzzle = kinematics.gimbal_t_muzzle;
+  snapshot->frame_actuator = gimbal_actuator;
   std::atomic_store_explicit(&latest_snapshot_,
                              std::shared_ptr<const modules::ControlInputSnapshot>(snapshot),
                              std::memory_order_release);
@@ -160,8 +161,9 @@ void ControlRuntime::Start() {
 }
 
 void ControlRuntime::Update(const modules::ArmorPredictionResult& prediction,
-                            const hal::CameraFrame::FrameGeometry& geometry) {
-  impl_->Update(prediction, geometry);
+                            const frame::FrameKinematics& kinematics,
+                            const std::optional<hal::GimbalActuatorTelemetry>& gimbal_actuator) {
+  impl_->Update(prediction, kinematics, gimbal_actuator);
 }
 
 void ControlRuntime::Stop() noexcept {

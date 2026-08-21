@@ -25,7 +25,7 @@ namespace {
 
 }  // namespace
 
-std::string EncodeProjectileStats(const hal::CameraFrame::ProjectileStatistics& statistics,
+std::string EncodeProjectileStats(const mv::simulation::ProjectileStatistics& statistics,
                                   std::uint64_t sequence,
                                   const ::foxglove::schemas::Timestamp& timestamp) {
   const double HIT_RATE = statistics.bullet_launch_count == 0
@@ -46,12 +46,12 @@ std::string EncodeProjectileStats(const hal::CameraFrame::ProjectileStatistics& 
 }
 
 ::foxglove::schemas::SceneUpdate EncodeGroundTruth(
-    const hal::CameraFrame::FrameGeometry& geometry,
+    const mv::simulation::SimulationFrameData& simulation_data,
     const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::SceneUpdate update;
   // 生命周期略长于常见发布周期，目标从真值消失后无需额外发送删除实体消息。
   const ::foxglove::schemas::Duration LIFETIME{.sec = 0, .nsec = 200'000'000};
-  for (const auto& target : geometry.targets) {
+  for (const auto& target : simulation_data.targets) {
     ::foxglove::schemas::SceneEntity entity;
     entity.timestamp = timestamp;
     entity.frame_id = "world";
@@ -85,7 +85,7 @@ std::string EncodeProjectileStats(const hal::CameraFrame::ProjectileStatistics& 
     update.entities.push_back(std::move(entity));
   }
 
-  for (const auto& armor : geometry.armors) {
+  for (const auto& armor : simulation_data.armors) {
     ::foxglove::schemas::SceneEntity entity;
     entity.timestamp = timestamp;
     entity.frame_id = "world";
@@ -94,8 +94,7 @@ std::string EncodeProjectileStats(const hal::CameraFrame::ProjectileStatistics& 
     entity.metadata = {
         {.key = "team", .value = std::to_string(armor.team)},
         {.key = "label", .value = std::to_string(armor.label)},
-        {.key = "type",
-         .value = armor.type == hal::CameraFrame::ArmorType::LARGE ? "large" : "small"}};
+        {.key = "type", .value = armor.type == geometry::ArmorType::LARGE ? "large" : "small"}};
     ::foxglove::schemas::LinePrimitive outline;
     outline.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LOOP;
     outline.thickness = 0.012;
@@ -123,15 +122,16 @@ std::string EncodeProjectileStats(const hal::CameraFrame::ProjectileStatistics& 
 }
 
 ::foxglove::schemas::ImageAnnotations EncodeProjectionAnnotations(
-    const hal::CameraFrame::FrameGeometry& geometry,
+    const mv::simulation::SimulationFrameData& simulation_data,
+    const frame::CameraModel& camera_model, const frame::FrameKinematics& kinematics,
     const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::ImageAnnotations annotations;
   const auto WORLD_T_CAMERA =
-      mv::geometry::Compose(geometry.world_t_gimbal, geometry.gimbal_t_camera_optical);
+      mv::geometry::Compose(kinematics.world_t_gimbal, kinematics.gimbal_t_camera_optical);
   // 投影需要 camera_t_world，因此对同帧 world_t_camera 求逆后变换每个探针。
   const auto CAMERA_T_WORLD = mv::geometry::Inverse(WORLD_T_CAMERA);
-  const auto& calibration = geometry.calibration;
-  for (const auto& armor : geometry.armors) {
+  const auto& calibration = camera_model;
+  for (const auto& armor : simulation_data.armors) {
     const auto camera_t_armor = mv::geometry::Compose(CAMERA_T_WORLD, armor.world_t_armor);
     const auto normal_camera =
         mv::geometry::TransformVector(camera_t_armor, geometry::Vector3::UnitZ());

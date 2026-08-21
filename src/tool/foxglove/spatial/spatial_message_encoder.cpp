@@ -27,20 +27,18 @@ namespace {
 }  // namespace
 
 ::foxglove::schemas::FrameTransforms EncodeTransforms(
-    const hal::CameraFrame::FrameGeometry& geometry,
-    const ::foxglove::schemas::Timestamp& timestamp) {
+    const frame::FrameKinematics& kinematics, const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::FrameTransforms message;
-  // FrameGeometry 使用 parent_t_child 命名，方向可直接映射为 Foxglove parent/child。
+  // FrameKinematics 使用 parent_t_child 命名，方向可直接映射为 Foxglove parent/child。
   message.transforms.push_back(
-      MakeTransform("world", "gimbal", geometry.world_t_gimbal, timestamp));
+      MakeTransform("world", "gimbal", kinematics.world_t_gimbal, timestamp));
   message.transforms.push_back(
-      MakeTransform("gimbal", "camera_optical", geometry.gimbal_t_camera_optical, timestamp));
+      MakeTransform("gimbal", "camera_optical", kinematics.gimbal_t_camera_optical, timestamp));
   return message;
 }
 
 ::foxglove::schemas::CameraCalibration EncodeCalibration(
-    const hal::CameraFrame::Calibration& calibration,
-    const ::foxglove::schemas::Timestamp& timestamp) {
+    const frame::CameraModel& calibration, const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::CameraCalibration message;
   message.timestamp = timestamp;
   message.frame_id = "camera_optical";
@@ -66,7 +64,7 @@ namespace {
   return message;
 }
 
-::foxglove::schemas::SceneUpdate EncodeFrustum(const hal::CameraFrame::Calibration& calibration,
+::foxglove::schemas::SceneUpdate EncodeFrustum(const frame::CameraModel& calibration,
                                                const ::foxglove::schemas::Timestamp& timestamp) {
   // 用针孔模型反投影四个图像角点，固定深度只影响显示尺寸，不改变视场角。
   constexpr double DEPTH = 1.0;

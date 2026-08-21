@@ -32,7 +32,7 @@ Eigen::Matrix<T, 4, 1> PredictUvl(const UvlObservation& observation, const State
 template <typename T>
 T PredictDepthDifference(const DepthDifferenceObservation& observation,
                          const StateValue<T>& state) {
-  const double WIDTH = observation.type == hal::CameraFrame::ArmorType::LARGE ? 0.225 : 0.135;
+  const double WIDTH = observation.type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
   const auto WORLD_T_CAMERA =
       ComposeTransform(CastTransform<T>(observation.geometry->world_t_gimbal),
                        CastTransform<T>(observation.geometry->gimbal_t_camera_optical));
@@ -107,9 +107,9 @@ LinearizedObservation Linearize(const Observation& observation, const NominalSta
 }  // namespace
 
 std::array<UvlObservation, 2> MakeUvlObservations(const std::array<cv::Point2f, 4>& corners,
-                                                  const hal::CameraFrame::FrameGeometry& geometry,
-                                                  double armor_tilt_rad,
-                                                  hal::CameraFrame::ArmorType type, int slot) {
+                                                  const frame::SpatialFrameView& geometry,
+                                                  double armor_tilt_rad, geometry::ArmorType type,
+                                                  int slot) {
   const auto MAKE = [&](bool left) {
     const int TOP = left ? 0 : 1;
     const int BOTTOM = left ? 3 : 2;
@@ -130,8 +130,8 @@ std::array<UvlObservation, 2> MakeUvlObservations(const std::array<cv::Point2f, 
 }
 
 UvlObservation MakeStandaloneUvlObservation(cv::Point2f top, cv::Point2f bottom,
-                                            const hal::CameraFrame::FrameGeometry& geometry,
-                                            double armor_tilt_rad, hal::CameraFrame::ArmorType type,
+                                            const frame::SpatialFrameView& geometry,
+                                            double armor_tilt_rad, geometry::ArmorType type,
                                             int slot, bool left) {
   const cv::Point2f DELTA = bottom - top;
   UvlObservation result;

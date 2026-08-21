@@ -1,6 +1,6 @@
 #pragma once
 
-#include "hal/camera/i_camera.hpp"
+#include "frame/frame_packet.hpp"
 #include "modules/armor_corner_refiner/armor_corner_refiner.hpp"
 #include "modules/armor_detector/armor_detector.hpp"
 #include "modules/armor_light_detector/armor_light_detector.hpp"
@@ -46,7 +46,7 @@ class VisionPipeline final {
    * @param frame 相机 HAL 返回的完整帧。
    * @return 检测、PnP、预测和诊断结果。
    */
-  [[nodiscard]] VisionFrameResult Process(const hal::CameraFrame& frame);
+  [[nodiscard]] VisionFrameResult Process(const frame::FramePacket& packet);
 
  private:
   modules::YoloArmorDetector detector_;

@@ -51,8 +51,8 @@ void AddTimestampCarrier(::foxglove::schemas::ImageAnnotations& annotations,
   annotations.points.push_back(std::move(carrier));
 }
 
-std::optional<::foxglove::schemas::Point2> ProjectPoint(
-    const geometry::Vector3& point_camera, const hal::CameraFrame::Calibration& calibration) {
+std::optional<::foxglove::schemas::Point2> ProjectPoint(const geometry::Vector3& point_camera,
+                                                        const frame::CameraModel& calibration) {
   if (!point_camera.allFinite() || point_camera.z() <= 0.0)
     return std::nullopt;
   const double X = point_camera.x() / point_camera.z();
@@ -155,7 +155,7 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionResu
 
   update.entities.push_back(std::move(target));
 
-  const double WIDTH = result.type == hal::CameraFrame::ArmorType::LARGE ? 0.225 : 0.135;
+  const double WIDTH = result.type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
   constexpr double HEIGHT = 0.055;
   for (std::size_t horizon_index = 0; horizon_index < result.horizons.size(); ++horizon_index) {
     // 每个时域使用稳定 entity id，Foxglove 可原位更新而不会留下历史拖影。
@@ -284,15 +284,16 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
 }
 
 ::foxglove::schemas::SceneUpdate EncodeTruthOverlay(
-    const modules::ArmorPredictionResult& result, const hal::CameraFrame::FrameGeometry& geometry,
+    const modules::ArmorPredictionResult& result,
+    const simulation::SimulationFrameData& simulation_data,
     const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::SceneUpdate update;
   if (!result.label || result.horizons.empty())
     return update;
   const auto& center = result.horizons.front().center_world;
-  const hal::CameraFrame::GroundTruthTarget* best = nullptr;
+  const simulation::GroundTruthTarget* best = nullptr;
   double best_distance = std::numeric_limits<double>::infinity();
-  for (const auto& target : geometry.targets) {
+  for (const auto& target : simulation_data.targets) {
     if (target.armor_label != static_cast<std::uint8_t>(*result.label))
       continue;
     // 仿真目标没有与检测稳定共享的 ID，因此在同标签集合中选择中心最近者用于展示。
@@ -322,7 +323,7 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
 }
 
 ::foxglove::schemas::ImageAnnotations EncodeAnnotations(
-    const modules::ArmorPredictionResult& result, const hal::CameraFrame::FrameGeometry& geometry,
+    const modules::ArmorPredictionResult& result, const frame::SpatialFrameView& spatial,
     ImagePredictionHorizon requested, const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::ImageAnnotations annotations;
   // ImageAnnotations 没有顶层时间戳；即使 LOST 也发布载体，让 Foxglove 清除上一帧框。
@@ -334,10 +335,10 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
     return annotations;
 
   const auto WORLD_T_CAMERA =
-      geometry::Compose(geometry.world_t_gimbal, geometry.gimbal_t_camera_optical);
+      geometry::Compose(spatial.world_t_gimbal, spatial.gimbal_t_camera_optical);
   const auto CAMERA_T_WORLD = geometry::Inverse(WORLD_T_CAMERA);
-  const auto& calibration = geometry.calibration;
-  const double WIDTH = *result.type == hal::CameraFrame::ArmorType::LARGE ? 0.225 : 0.135;
+  const auto& calibration = spatial.calibration;
+  const double WIDTH = *result.type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
   constexpr double HEIGHT = 0.055;
   const std::array<geometry::Vector3, 4> LOCAL_CORNERS{
       geometry::Vector3(-WIDTH * 0.5, HEIGHT * 0.5, 0.0),
@@ -434,7 +435,7 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
 }
 
 ::foxglove::schemas::ImageAnnotations EncodeSelectedArmorAnnotations(
-    const modules::ArmorPredictionResult& result, const hal::CameraFrame::FrameGeometry& geometry,
+    const modules::ArmorPredictionResult& result, const frame::SpatialFrameView& spatial,
     const modules::ArmorSelectionSnapshot& selection,
     const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::ImageAnnotations annotations;
@@ -446,9 +447,9 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
     return annotations;
 
   const auto WORLD_T_CAMERA =
-      geometry::Compose(geometry.world_t_gimbal, geometry.gimbal_t_camera_optical);
+      geometry::Compose(spatial.world_t_gimbal, spatial.gimbal_t_camera_optical);
   const auto CAMERA_T_WORLD = geometry::Inverse(WORLD_T_CAMERA);
-  const double WIDTH = *result.type == hal::CameraFrame::ArmorType::LARGE ? 0.225 : 0.135;
+  const double WIDTH = *result.type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
   constexpr double HEIGHT = 0.055;
   const std::array<geometry::Vector3, 4> LOCAL_CORNERS{
       geometry::Vector3(-WIDTH * 0.5, HEIGHT * 0.5, 0.0),
@@ -468,7 +469,7 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
     double max_v = -std::numeric_limits<double>::infinity();
     for (std::size_t index = 0; index < LOCAL_CORNERS.size(); ++index) {
       const auto POINT = geometry::TransformPoint(CAMERA_T_ARMOR, LOCAL_CORNERS[index]);
-      const auto PROJECTED = ProjectPoint(POINT, geometry.calibration);
+      const auto PROJECTED = ProjectPoint(POINT, spatial.calibration);
       if (!PROJECTED)
         return;
       pixels[index] = *PROJECTED;
@@ -477,8 +478,8 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
       max_u = std::max(max_u, PROJECTED->x);
       max_v = std::max(max_v, PROJECTED->y);
     }
-    if (max_u < 0.0 || max_v < 0.0 || min_u >= static_cast<double>(geometry.calibration.width) ||
-        min_v >= static_cast<double>(geometry.calibration.height)) {
+    if (max_u < 0.0 || max_v < 0.0 || min_u >= static_cast<double>(spatial.calibration.width) ||
+        min_v >= static_cast<double>(spatial.calibration.height)) {
       return;
     }
 
@@ -510,8 +511,8 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
     ::foxglove::schemas::TextAnnotation text;
     text.timestamp = timestamp;
     text.position = {
-        .x = std::clamp(min_u, 0.0, static_cast<double>(geometry.calibration.width)),
-        .y = std::clamp(min_v - 4.0, 0.0, static_cast<double>(geometry.calibration.height))};
+        .x = std::clamp(min_u, 0.0, static_cast<double>(spatial.calibration.width)),
+        .y = std::clamp(min_v - 4.0, 0.0, static_cast<double>(spatial.calibration.height))};
     text.text = selected ? fmt::format("SELECTED slot {}", slot)
                          : fmt::format("PENDING slot {} {:.0f}/{:.0f}ms", slot,
                                        selection.pending_duration_s * 1.0e3,
