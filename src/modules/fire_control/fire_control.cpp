@@ -119,7 +119,7 @@ std::string_view GimbalCommandSourceName(GimbalCommandSource source) noexcept {
 }
 
 FireControl::FireControl(FireControlConfig config, GimbalTrajectoryPlannerConfig planner_config)
-    : config_(std::move(config)), planner_(std::move(planner_config)) {}
+    : config_(config), planner_(planner_config) {}
 
 void FireControl::ResetSelection() noexcept {
   locked_slot_ = -1;
@@ -285,7 +285,7 @@ BallisticSolution FireControl::SolveBallistic(const ControlInputSnapshot& input,
 
 std::vector<AimReferencePoint> FireControl::BuildReference(
     const ControlInputSnapshot& input, int slot, const geometry::RigidTransform& world_t_muzzle,
-    double prediction_age_s, double yaw_anchor, BallisticSolution& current) const {
+    double prediction_age_s, BallisticSolution& current, double yaw_anchor) const {
   const auto& planner_config = planner_.Config();
   std::vector<AimReferencePoint> reference(static_cast<std::size_t>(planner_config.horizon_steps));
   double previous_yaw = yaw_anchor;
@@ -331,10 +331,8 @@ FireControlResult FireControl::Step(const ControlInputSnapshot& input,
   result.feedback = feedback;
   result.external_control_enabled = input.external_control_enabled;
   result.auto_fire_enabled = config_.auto_fire;
-  result.target_linear_speed_mps =
-      std::hypot(std::hypot(input.prediction.state_vector[1], input.prediction.state_vector[3]),
-                 input.prediction.state_vector[5]);
-  result.target_spin_rate_rad_s = std::abs(input.prediction.state_vector[7]);
+  result.target_linear_speed_mps = input.prediction.velocity_world.norm();
+  result.target_spin_rate_rad_s = std::abs(input.prediction.yaw_velocity_rad_s);
   const auto& planner_config = planner_.Config();
   result.trajectory_dt_s = planner_config.dt_s;
   result.bullet_speed_mps = config_.bullet_speed_mps;
@@ -431,7 +429,7 @@ FireControlResult FireControl::Step(const ControlInputSnapshot& input,
   }
 
   auto reference = BuildReference(input, SLOT, WORLD_T_MUZZLE, result.prediction_age_s,
-                                  feedback.yaw, result.ballistic);
+                                  result.ballistic, feedback.yaw);
   if (reference.empty() || !result.ballistic.valid) {
     stable_cycles_ = 0;
     pulse_until_ = {};
@@ -511,10 +509,9 @@ FireControlResult FireControl::Step(const ControlInputSnapshot& input,
       std::clamp(std::atan2(0.5 * HEIGHT * config_.fire_window_scale, result.ballistic.distance_m),
                  config_.min_fire_pitch_rad, config_.max_fire_pitch_rad);
 
-  const double POSITION_STD = std::sqrt(
-      std::max({0.0, input.prediction.covariance_diagonal[0],
-                input.prediction.covariance_diagonal[2], input.prediction.covariance_diagonal[4]}));
-  const double YAW_STD = std::sqrt(std::max(0.0, input.prediction.covariance_diagonal[6]));
+  const double POSITION_STD =
+      std::sqrt(std::max(0.0, input.prediction.center_covariance_world.diagonal().maxCoeff()));
+  const double YAW_STD = std::sqrt(std::max(0.0, input.prediction.yaw_variance_rad2));
   const bool UNCERTAINTY_OK =
       POSITION_STD <= config_.max_center_position_std_m && YAW_STD <= config_.max_yaw_std_rad;
   const bool AIM_OK = std::abs(result.yaw_error) <= result.fire_yaw_window &&

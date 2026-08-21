@@ -25,6 +25,26 @@ namespace {
 
 }  // namespace
 
+std::string EncodeProjectileStats(const hal::CameraFrame::ProjectileStatistics& statistics,
+                                  std::uint64_t sequence,
+                                  const ::foxglove::schemas::Timestamp& timestamp) {
+  const double HIT_RATE = statistics.bullet_launch_count == 0
+                              ? 0.0
+                              : static_cast<double>(statistics.armor_hit_count) /
+                                    static_cast<double>(statistics.bullet_launch_count);
+  const std::uint64_t NOT_YET_HIT =
+      statistics.bullet_launch_count > statistics.armor_hit_count
+          ? statistics.bullet_launch_count - statistics.armor_hit_count
+          : 0;
+  return fmt::format(
+      "{{\"timestamp\":{{\"sec\":{},\"nsec\":{}}},\"sequence\":{},"
+      "\"bullet_launch_count\":{},\"armor_hit_count\":{},\"rune_hit_count\":{},"
+      "\"dart_launch_count\":{},\"armor_hit_rate\":{:.9f},\"not_yet_hit_count\":{}}}",
+      timestamp.sec, timestamp.nsec, sequence, statistics.bullet_launch_count,
+      statistics.armor_hit_count, statistics.rune_hit_count, statistics.dart_launch_count, HIT_RATE,
+      NOT_YET_HIT);
+}
+
 ::foxglove::schemas::SceneUpdate EncodeGroundTruth(
     const hal::CameraFrame::FrameGeometry& geometry,
     const ::foxglove::schemas::Timestamp& timestamp) {

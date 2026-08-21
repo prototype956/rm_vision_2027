@@ -102,7 +102,7 @@ bool ValidCalibration(const CameraCalibrationMeta& calibration, uint32_t width,
 mv::geometry::RigidTransform ConvertTransform(const RigidTransformF32& value) noexcept {
   return {.translation = mv::geometry::Vector3(value.translation[0], value.translation[1],
                                                value.translation[2]),
-          // Eigen 四元数构造顺序为 w/x/y/z；Talos v5 协议字段为 x/y/z/w。
+          // Eigen 四元数构造顺序为 w/x/y/z；Talos v6 协议字段为 x/y/z/w。
           .rotation = mv::geometry::Quaternion(value.rotation.w, value.rotation.x, value.rotation.y,
                                                value.rotation.z)};
 }
@@ -123,6 +123,12 @@ CameraFrame::FrameGeometry ConvertGeometry(const CapturedFrameMeta& metadata) {
   geometry.world_t_gimbal = ConvertTransform(metadata.world_t_gimbal);
   geometry.gimbal_t_camera_optical = ConvertTransform(metadata.gimbal_t_camera_optical);
   geometry.gimbal_t_muzzle = ConvertTransform(metadata.gimbal_t_muzzle);
+  const auto& projectiles = metadata.projectile_statistics;
+  geometry.projectile_statistics =
+      CameraFrame::ProjectileStatistics{.bullet_launch_count = projectiles.bullet_launch_count,
+                                        .armor_hit_count = projectiles.armor_hit_count,
+                                        .rune_hit_count = projectiles.rune_hit_count,
+                                        .dart_launch_count = projectiles.dart_launch_count};
   if (metadata.gimbal_telemetry_valid != 0) {
     const auto FORWARD = geometry.world_t_gimbal.rotation * mv::geometry::Vector3::UnitX();
     geometry.gimbal_actuator = GimbalActuatorTelemetry{
@@ -381,7 +387,7 @@ GrabStatus TalosDevice::Grab(CameraFrame& frame) {
     const auto INVALID = [&]() {
       const uint64_t COUNT = ++impl_->invalid_frames;
       if (COUNT == 1 || COUNT % 100 == 0) {
-        MV_LOG_WARN("HAL.Camera.Talos", "rejected invalid Talos v5 frame #{} (seq={})", COUNT,
+        MV_LOG_WARN("HAL.Camera.Talos", "rejected invalid Talos v6 frame #{} (seq={})", COUNT,
                     metadata.frame_sequence);
       }
       return GrabStatus::INVALID_FRAME;
@@ -390,6 +396,7 @@ GrabStatus TalosDevice::Grab(CameraFrame& frame) {
     // 图像、标定、TF 和真值必须来自同一个原子发布的采集快照。任一子结构不同步，
     // 整帧都不能交给上层，否则 Foxglove 的三维实体和二维重投影将产生假误差。
     const auto& truth = metadata.ground_truth;
+    const auto& projectiles = metadata.projectile_statistics;
     bool truth_valid = truth.frame_sequence == metadata.frame_sequence &&
                        truth.timestamp_ns == metadata.capture_timestamp_ns &&
                        truth.target_count <= K_GROUND_TRUTH_MAX_TARGETS &&
@@ -430,6 +437,7 @@ GrabStatus TalosDevice::Grab(CameraFrame& frame) {
 
     if (metadata.capture_timestamp_ns == 0 ||
         metadata.camera_info.timestamp_ns != metadata.capture_timestamp_ns ||
+        projectiles.timestamp_ns != metadata.capture_timestamp_ns ||
         metadata.width != static_cast<uint32_t>(impl_->info.output_width) ||
         metadata.height != static_cast<uint32_t>(impl_->info.output_height) ||
         metadata.buffer_id >= K_BUFFER_COUNT ||

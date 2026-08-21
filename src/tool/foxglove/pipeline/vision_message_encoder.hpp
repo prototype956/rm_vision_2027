@@ -17,11 +17,14 @@ struct TopicDemand {
   bool image{false};                           ///< 是否需要 JPEG 原图。
   bool armor_annotations{false};               ///< 是否需要二维装甲标注。
   bool armor_stats{false};                     ///< 是否需要装甲检测器指标。
+  bool lightbar_annotations{false};            ///< 是否需要独立灯条二维标注。
+  bool lightbar_stats{false};                  ///< 是否需要灯条检测与融合指标。
   bool debug_stats{false};                     ///< 是否需要发布流水线指标。
   bool transforms{false};                      ///< 是否需要同帧 TF。
   bool calibration{false};                     ///< 是否需要相机标定。
   bool frustum{false};                         ///< 是否需要三维视锥。
   bool ground_truth{false};                    ///< 是否需要仿真三维真值。
+  bool projectile_stats{false};                ///< 是否需要仿真弹丸累计统计。
   bool projection_annotations{false};          ///< 是否需要真值二维重投影点。
   bool pnp_estimates{false};                   ///< 是否需要 PnP 三维估计。
   bool pnp_corners{false};                     ///< 是否需要原始/精修输入角点。
@@ -60,11 +63,14 @@ struct PreparedFrame {
   std::optional<::foxglove::schemas::CompressedImage> image;  ///< 按需生成的 JPEG 消息。
   std::optional<::foxglove::schemas::ImageAnnotations> armor_annotations;  ///< 装甲标注。
   std::optional<std::string> armor_stats_json;  ///< 符合固定 Schema 的检测器指标。
-  std::optional<std::string> debug_stats_json;  ///< 符合固定 Schema 的流水线指标。
+  std::optional<::foxglove::schemas::ImageAnnotations> lightbar_annotations;  ///< 灯条标注。
+  std::optional<std::string> lightbar_stats_json;  ///< 灯条检测与融合指标。
+  std::optional<std::string> debug_stats_json;     ///< 符合固定 Schema 的流水线指标。
   std::optional<::foxglove::schemas::FrameTransforms> transforms;     ///< 同帧 TF 树。
   std::optional<::foxglove::schemas::CameraCalibration> calibration;  ///< 同帧标定。
   std::optional<::foxglove::schemas::SceneUpdate> frustum;            ///< 三维视锥图元。
   std::optional<::foxglove::schemas::SceneUpdate> ground_truth;       ///< 三维仿真真值。
+  std::optional<std::string> projectile_stats_json;  ///< 仿真弹丸累计统计。
   std::optional<::foxglove::schemas::ImageAnnotations> projection_annotations;  ///< 真值投影点。
   std::optional<::foxglove::schemas::SceneUpdate> pnp_estimates;     ///< PnP 三维估计图元。
   std::optional<::foxglove::schemas::ImageAnnotations> pnp_corners;  ///< PnP 输入角点。

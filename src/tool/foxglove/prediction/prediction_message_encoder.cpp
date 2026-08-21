@@ -107,7 +107,7 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionResu
                                           .orientation = ::foxglove::schemas::Quaternion{.w = 1.0}};
   center.size = {.x = 0.12, .y = 0.12, .z = 0.12};
   center.color = {.r = 0.1, .g = 1.0, .b = 0.2, .a = 0.9};
-  target.spheres.push_back(std::move(center));
+  target.spheres.push_back(center);
   ::foxglove::schemas::LinePrimitive velocity;
   velocity.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LIST;
   velocity.thickness = 0.02;
@@ -116,45 +116,43 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionResu
                      Point(current.center_world + result.velocity_world)};
   target.lines.push_back(std::move(velocity));
 
+  const std::array<geometry::Vector3, 3> BODY_AXES{
+      current.orientation_world * geometry::Vector3::UnitX(),
+      current.orientation_world * geometry::Vector3::UnitY(),
+      current.orientation_world * geometry::Vector3::UnitZ()};
+  const std::array<::foxglove::schemas::Color, 3> AXIS_COLORS{
+      ::foxglove::schemas::Color{.r = 1.0, .g = 0.1, .b = 0.1, .a = 1.0},
+      ::foxglove::schemas::Color{.r = 0.1, .g = 1.0, .b = 0.1, .a = 1.0},
+      ::foxglove::schemas::Color{.r = 0.1, .g = 0.3, .b = 1.0, .a = 1.0}};
+  for (int axis = 0; axis < 3; ++axis) {
+    ::foxglove::schemas::LinePrimitive line;
+    line.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LIST;
+    line.thickness = 0.012;
+    line.color = AXIS_COLORS[axis];
+    line.points = {Point(current.center_world),
+                   Point(current.center_world + 0.3 * BODY_AXES[axis])};
+    target.lines.push_back(std::move(line));
+  }
+
   for (int pair = 0; pair < 2; ++pair) {
     ::foxglove::schemas::LinePrimitive ring;
     ring.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LOOP;
     ring.thickness = 0.006;
     ring.color = pair == 0 ? ::foxglove::schemas::Color{.r = 0.2, .g = 1.0, .b = 0.3, .a = 0.55}
                            : ::foxglove::schemas::Color{.r = 0.1, .g = 0.7, .b = 1.0, .a = 0.55};
-    const double RADIUS = result.state_vector[8] + (pair == 1 ? result.state_vector[9] : 0.0);
-    const double HEIGHT = current.center_world.z() + (pair == 1 ? result.state_vector[10] : 0.0);
+    const double RADIUS = result.radii_m[pair];
+    geometry::Vector3 ring_center = current.center_world;
+    if (pair == 1)
+      ring_center += result.height_offset_m * BODY_AXES[2];
     constexpr int SEGMENTS = 48;
     for (int index = 0; index < SEGMENTS; ++index) {
       const double ANGLE = 2.0 * std::numbers::pi * static_cast<double>(index) / SEGMENTS;
-      ring.points.push_back({.x = current.center_world.x() + RADIUS * std::cos(ANGLE),
-                             .y = current.center_world.y() + RADIUS * std::sin(ANGLE),
-                             .z = HEIGHT});
+      ring.points.push_back(Point(ring_center + RADIUS * (std::cos(ANGLE) * BODY_AXES[0] +
+                                                          std::sin(ANGLE) * BODY_AXES[1])));
     }
     target.lines.push_back(std::move(ring));
   }
 
-  ::foxglove::schemas::LinePrimitive associations;
-  associations.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LIST;
-  associations.thickness = 0.01;
-  associations.color = {.r = 1.0, .g = 0.6, .b = 0.0, .a = 1.0};
-  for (const auto& association : result.associations) {
-    ::foxglove::schemas::SpherePrimitive observation;
-    observation.pose =
-        ::foxglove::schemas::Pose{.position = Vector(association.observed_position_world),
-                                  .orientation = ::foxglove::schemas::Quaternion{.w = 1.0}};
-    observation.size = {.x = 0.035, .y = 0.035, .z = 0.035};
-    observation.color = association.slot >= 0
-                            ? ::foxglove::schemas::Color{.r = 1.0, .g = 0.6, .a = 1.0}
-                            : ::foxglove::schemas::Color{.r = 1.0, .g = 0.1, .b = 0.1, .a = 1.0};
-    target.spheres.push_back(std::move(observation));
-    if (association.slot < 0)
-      continue;
-    associations.points.push_back(Point(association.observed_position_world));
-    associations.points.push_back(Point(association.predicted_position_world));
-  }
-  if (!associations.points.empty())
-    target.lines.push_back(std::move(associations));
   update.entities.push_back(std::move(target));
 
   const double WIDTH = result.type == hal::CameraFrame::ArmorType::LARGE ? 0.225 : 0.135;
@@ -195,22 +193,94 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
       associations += ',';
     const auto& value = result.associations[index];
     associations += fmt::format(
-        "{{\"input_index\":{},\"slot\":{},\"position_error_m\":{:.9g},"
-        "\"yaw_error_rad\":{:.9g},\"rejection_reason\":\"{}\"}}",
-        value.input_index, value.slot, value.position_error_m, value.yaw_error_rad,
-        value.rejection_reason);
+        "{{\"input_index\":{},\"slot\":{},\"candidate_slot\":{},\"accepted\":{},"
+        "\"gate\":{:.9g},\"center_error_px\":{:.9g},"
+        "\"edge_angle_error_rad\":{:.9g},\"perimeter_ratio_error\":{:.9g},"
+        "\"total_cost\":{:.9g},\"rejection_reason\":\"{}\"}}",
+        value.input_index, value.slot, value.candidate_slot, value.accepted, value.gate,
+        value.center_error_px, value.edge_angle_error_rad, value.perimeter_ratio_error,
+        value.total_cost, value.rejection_reason);
   }
   associations += ']';
+  std::string lightbar_associations = "[";
+  for (std::size_t index = 0; index < result.lightbar_associations.size(); ++index) {
+    if (index != 0)
+      lightbar_associations += ',';
+    const auto& value = result.lightbar_associations[index];
+    lightbar_associations += fmt::format(
+        "{{\"input_index\":{},\"slot\":{},\"candidate_slot\":{},\"left\":{},"
+        "\"candidate_left\":{},\"accepted\":{},\"duplicate_full_armor\":{},"
+        "\"center_error_px\":{:.9g},\"endpoint_distance_ratio\":{:.9g},"
+        "\"angle_error_rad\":{:.9g},\"log_length_error\":{:.9g},"
+        "\"total_cost\":{:.9g},\"observed_top\":[{:.9g},{:.9g}],"
+        "\"observed_bottom\":[{:.9g},{:.9g}],\"predicted_top\":[{:.9g},{:.9g}],"
+        "\"predicted_bottom\":[{:.9g},{:.9g}],\"rejection_reason\":\"{}\"}}",
+        value.input_index, value.slot, value.candidate_slot, value.left, value.candidate_left,
+        value.accepted, value.duplicate_full_armor, value.center_error_px,
+        value.endpoint_distance_ratio, value.angle_error_rad, value.log_length_error,
+        value.total_cost, value.observed_top.x, value.observed_top.y, value.observed_bottom.x,
+        value.observed_bottom.y, value.predicted_top.x, value.predicted_top.y,
+        value.predicted_bottom.x, value.predicted_bottom.y, value.rejection_reason);
+  }
+  lightbar_associations += ']';
   const auto NIS = result.nis ? fmt::format("{:.9g}", *result.nis) : "null";
+  const auto NIS_PER_DOF = result.nis_per_dof ? fmt::format("{:.9g}", *result.nis_per_dof) : "null";
+  const auto TRIAL_YAW_UPDATE = result.trial_yaw_velocity_update_rad_s
+                                    ? fmt::format("{:.9g}", *result.trial_yaw_velocity_update_rad_s)
+                                    : "null";
+  const auto CENTER_ERROR =
+      result.truth_center_error_m ? fmt::format("{:.9g}", *result.truth_center_error_m) : "null";
+  const auto YAW_ERROR =
+      result.truth_yaw_error_rad ? fmt::format("{:.9g}", *result.truth_yaw_error_rad) : "null";
+  const auto EQUIVALENT_YAW_ERROR =
+      result.truth_yaw_equivalent_error_rad
+          ? fmt::format("{:.9g}", *result.truth_yaw_equivalent_error_rad)
+          : "null";
+  const auto YAW_RATE_ERROR = result.truth_yaw_velocity_error_rad_s
+                                  ? fmt::format("{:.9g}", *result.truth_yaw_velocity_error_rad_s)
+                                  : "null";
   const int LABEL = result.label ? static_cast<int>(*result.label) : -1;
   return fmt::format(
       "{{\"timestamp\":{{\"sec\":{},\"nsec\":{}}},\"sequence\":{},"
       "\"tracker_state\":\"{}\",\"label\":{},\"dt_s\":{:.9g},"
+      "\"state_order\":[\"cx\",\"vx\",\"cy\",\"vy\",\"cz\",\"vz\",\"rot_x\","
+      "\"rot_y\",\"rot_z\",\"vyaw\",\"log_r1\",\"log_r2\",\"h\"],"
       "\"state\":{},\"covariance_diagonal\":{},\"innovation\":{},\"nis\":{},"
-      "\"associations\":{},\"reset_reason\":\"{}\"}}",
+      "\"nis_per_dof\":{},"
+      "\"iterations\":{},\"estimation_elapsed_ms\":{:.9g},"
+      "\"radii_m\":{},\"height_offset_m\":{:.9g},\"yaw_variance_rad2\":{:.9g},"
+      "\"truth_center_error_m\":{},\"truth_yaw_error_rad\":{},"
+      "\"truth_yaw_equivalent_error_rad\":{},\"truth_yaw_velocity_error_rad_s\":{},"
+      "\"maneuver_active\":{},\"maneuver_phase\":\"{}\","
+      "\"maneuver_trigger\":\"{}\",\"maneuver_evidence_frames\":{},"
+      "\"maneuver_evidence_cost\":{:.9g},"
+      "\"maneuver_confirmation_remaining_s\":{:.9g},"
+      "\"maneuver_remaining_s\":{:.9g},\"yaw_process_variance_used\":{:.9g},"
+      "\"trial_yaw_velocity_update_rad_s\":{},\"association_gate_used\":{:.9g},"
+      "\"accepted_association_count\":{},\"rejected_association_count\":{},"
+      "\"associations\":{},\"lightbar_associations\":{},"
+      "\"detected_lightbar_count\":{},\"deduplicated_lightbar_count\":{},"
+      "\"matched_lightbar_count\":{},\"accepted_lightbar_count\":{},"
+      "\"rejected_lightbar_count\":{},\"light_only_pair_count\":{},"
+      "\"light_only_update\":{},\"light_only_update_blocked\":{},"
+      "\"light_only_rejection_reason\":\"{}\","
+      "\"light_fusion_used\":{},\"armor_fallback_used\":{},"
+      "\"reset_count\":{},\"reset_reason\":\"{}\"}}",
       timestamp.sec, timestamp.nsec, result.sequence, modules::TrackerStateName(result.state),
       LABEL, result.dt_s, NumberArray(result.state_vector), NumberArray(result.covariance_diagonal),
-      NumberArray(result.innovation), NIS, associations, result.reset_reason);
+      NumberArray(result.innovation), NIS, NIS_PER_DOF, result.esekf_iterations,
+      result.estimation_elapsed_ms, NumberArray(result.radii_m), result.height_offset_m,
+      result.yaw_variance_rad2, CENTER_ERROR, YAW_ERROR, EQUIVALENT_YAW_ERROR, YAW_RATE_ERROR,
+      result.maneuver_active, result.maneuver_phase, result.maneuver_trigger,
+      result.maneuver_evidence_frames, result.maneuver_evidence_cost,
+      result.maneuver_confirmation_remaining_s, result.maneuver_remaining_s,
+      result.yaw_process_variance_used, TRIAL_YAW_UPDATE, result.association_gate_used,
+      result.accepted_association_count, result.rejected_association_count, associations,
+      lightbar_associations, result.detected_lightbar_count, result.deduplicated_lightbar_count,
+      result.matched_lightbar_count, result.accepted_lightbar_count, result.rejected_lightbar_count,
+      result.light_only_pair_count, result.light_only_update, result.light_only_update_blocked,
+      result.light_only_rejection_reason, result.light_fusion_used, result.armor_fallback_used,
+      result.reset_count, result.reset_reason);
 }
 
 ::foxglove::schemas::SceneUpdate EncodeTruthOverlay(
@@ -275,6 +345,29 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
       geometry::Vector3(WIDTH * 0.5, -HEIGHT * 0.5, 0.0),
       geometry::Vector3(-WIDTH * 0.5, -HEIGHT * 0.5, 0.0)};
   const bool FUTURE = requested == ImagePredictionHorizon::FUTURE_100_MS;
+
+  if (!FUTURE) {
+    for (const auto& association : result.associations) {
+      const auto ADD_OUTLINE = [&](const std::array<cv::Point2f, 4>& corners,
+                                   const ::foxglove::schemas::Color& color, double thickness) {
+        ::foxglove::schemas::PointsAnnotation polygon;
+        polygon.timestamp = timestamp;
+        polygon.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
+        polygon.outline_color = color;
+        polygon.thickness = thickness;
+        for (const auto& corner : corners)
+          polygon.points.push_back({.x = corner.x, .y = corner.y});
+        annotations.points.push_back(std::move(polygon));
+      };
+      ADD_OUTLINE(association.observed_corners, {.r = 1.0, .g = 0.65, .b = 0.0, .a = 1.0}, 2.0);
+      if (association.candidate_slot >= 0) {
+        const auto COLOR = association.accepted
+                               ? ::foxglove::schemas::Color{.r = 0.0, .g = 0.8, .b = 1.0, .a = 1.0}
+                               : ::foxglove::schemas::Color{.r = 1.0, .g = 0.1, .b = 0.8, .a = 1.0};
+        ADD_OUTLINE(association.predicted_corners, COLOR, 2.0);
+      }
+    }
+  }
 
   for (const auto& armor : horizon->armors) {
     const auto CAMERA_T_ARMOR = geometry::Compose(CAMERA_T_WORLD, armor.world_t_armor);
@@ -354,10 +447,10 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
 
   const auto WORLD_T_CAMERA =
       geometry::Compose(geometry.world_t_gimbal, geometry.gimbal_t_camera_optical);
-  const auto camera_t_world = geometry::Inverse(WORLD_T_CAMERA);
+  const auto CAMERA_T_WORLD = geometry::Inverse(WORLD_T_CAMERA);
   const double WIDTH = *result.type == hal::CameraFrame::ArmorType::LARGE ? 0.225 : 0.135;
   constexpr double HEIGHT = 0.055;
-  const std::array<geometry::Vector3, 4> local_corners{
+  const std::array<geometry::Vector3, 4> LOCAL_CORNERS{
       geometry::Vector3(-WIDTH * 0.5, HEIGHT * 0.5, 0.0),
       geometry::Vector3(WIDTH * 0.5, HEIGHT * 0.5, 0.0),
       geometry::Vector3(WIDTH * 0.5, -HEIGHT * 0.5, 0.0),
@@ -366,52 +459,52 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
   auto add_slot = [&](int slot, bool selected) {
     if (slot < 0 || slot >= static_cast<int>(horizon->armors.size()))
       return;
-    const auto camera_t_armor = geometry::Compose(
-        camera_t_world, horizon->armors[static_cast<std::size_t>(slot)].world_t_armor);
+    const auto CAMERA_T_ARMOR = geometry::Compose(
+        CAMERA_T_WORLD, horizon->armors[static_cast<std::size_t>(slot)].world_t_armor);
     std::array<::foxglove::schemas::Point2, 4> pixels{};
     double min_u = std::numeric_limits<double>::infinity();
     double min_v = std::numeric_limits<double>::infinity();
     double max_u = -std::numeric_limits<double>::infinity();
     double max_v = -std::numeric_limits<double>::infinity();
-    for (std::size_t index = 0; index < local_corners.size(); ++index) {
-      const auto point = geometry::TransformPoint(camera_t_armor, local_corners[index]);
-      const auto projected = ProjectPoint(point, geometry.calibration);
-      if (!projected)
+    for (std::size_t index = 0; index < LOCAL_CORNERS.size(); ++index) {
+      const auto POINT = geometry::TransformPoint(CAMERA_T_ARMOR, LOCAL_CORNERS[index]);
+      const auto PROJECTED = ProjectPoint(POINT, geometry.calibration);
+      if (!PROJECTED)
         return;
-      pixels[index] = *projected;
-      min_u = std::min(min_u, projected->x);
-      min_v = std::min(min_v, projected->y);
-      max_u = std::max(max_u, projected->x);
-      max_v = std::max(max_v, projected->y);
+      pixels[index] = *PROJECTED;
+      min_u = std::min(min_u, PROJECTED->x);
+      min_v = std::min(min_v, PROJECTED->y);
+      max_u = std::max(max_u, PROJECTED->x);
+      max_v = std::max(max_v, PROJECTED->y);
     }
     if (max_u < 0.0 || max_v < 0.0 || min_u >= static_cast<double>(geometry.calibration.width) ||
         min_v >= static_cast<double>(geometry.calibration.height)) {
       return;
     }
 
-    const ::foxglove::schemas::Color color =
+    const ::foxglove::schemas::Color COLOR =
         selected ? ::foxglove::schemas::Color{.r = 0.1, .g = 1.0, .b = 0.2, .a = 1.0}
                  : ::foxglove::schemas::Color{.r = 1.0, .g = 0.8, .b = 0.0, .a = 1.0};
     ::foxglove::schemas::PointsAnnotation outline;
     outline.timestamp = timestamp;
     outline.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
-    outline.outline_color = color;
+    outline.outline_color = COLOR;
     outline.thickness = selected ? 5.0 : 3.0;
     outline.points.assign(pixels.begin(), pixels.end());
     annotations.points.push_back(std::move(outline));
 
-    const ::foxglove::schemas::Point2 center{
+    const ::foxglove::schemas::Point2 CENTER{
         .x = 0.25 * (pixels[0].x + pixels[1].x + pixels[2].x + pixels[3].x),
         .y = 0.25 * (pixels[0].y + pixels[1].y + pixels[2].y + pixels[3].y)};
     ::foxglove::schemas::PointsAnnotation cross;
     cross.timestamp = timestamp;
     cross.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LIST;
-    cross.outline_color = color;
+    cross.outline_color = COLOR;
     cross.thickness = selected ? 4.0 : 2.0;
-    cross.points = {{.x = center.x - 8.0, .y = center.y},
-                    {.x = center.x + 8.0, .y = center.y},
-                    {.x = center.x, .y = center.y - 8.0},
-                    {.x = center.x, .y = center.y + 8.0}};
+    cross.points = {{.x = CENTER.x - 8.0, .y = CENTER.y},
+                    {.x = CENTER.x + 8.0, .y = CENTER.y},
+                    {.x = CENTER.x, .y = CENTER.y - 8.0},
+                    {.x = CENTER.x, .y = CENTER.y + 8.0}};
     annotations.points.push_back(std::move(cross));
 
     ::foxglove::schemas::TextAnnotation text;
@@ -424,7 +517,7 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
                                        selection.pending_duration_s * 1.0e3,
                                        selection.switch_confirmation_s * 1.0e3);
     text.font_size = 14.0;
-    text.text_color = color;
+    text.text_color = COLOR;
     text.background_color = {.a = 0.7};
     annotations.texts.push_back(std::move(text));
   };

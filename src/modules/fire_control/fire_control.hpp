@@ -264,7 +264,7 @@ class FireControl final {
   /** @brief 在 MPC 各离散时刻求解弹道角，并用中心差分生成速度参考。 */
   [[nodiscard]] std::vector<AimReferencePoint> BuildReference(
       const ControlInputSnapshot& input, int slot, const geometry::RigidTransform& world_t_muzzle,
-      double prediction_age_s, double yaw_anchor, BallisticSolution& current) const;
+      double prediction_age_s, BallisticSolution& current, double yaw_anchor) const;
   /** @brief 清除锁定、待切换槽位及开火稳定状态。 */
   void ResetSelection() noexcept;
   /** @brief 请求规划器重建 warm start，并合并本周期的稳定原因字符串。 */

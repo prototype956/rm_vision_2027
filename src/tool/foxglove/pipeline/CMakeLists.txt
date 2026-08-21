@@ -21,6 +21,7 @@ target_link_libraries(mv-tool-foxglove-pipeline
         mv-modules-armor-detector
         mv-tool-foxglove-image
         mv-tool-foxglove-armor-detector
+        mv-tool-foxglove-armor-light-detector
         mv-tool-foxglove-spatial
         mv-tool-foxglove-simulation
         mv-tool-foxglove-pnp

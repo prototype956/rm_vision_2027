@@ -13,7 +13,7 @@
 namespace mv::tool::foxglove {
 
 struct VisionDebugPublisher::Impl {
-  explicit Impl(Config config)
+  explicit Impl(const Config& config)
       : session(config), pipeline(config, session), control(config, session) {
     // pipeline 构造期间先创建并注册全部频道，会话启动时才能一次性暴露完整话题集合。
     session.Start();
@@ -59,14 +59,16 @@ struct VisionDebugPublisher::Impl {
   std::atomic<bool> stopped{false};
 };
 
-VisionDebugPublisher::VisionDebugPublisher(Config config)
-    : impl_(std::make_unique<Impl>(std::move(config))) {}
+VisionDebugPublisher::VisionDebugPublisher(const Config& config)
+    : impl_(std::make_unique<Impl>(config)) {}
 
 VisionDebugPublisher::~VisionDebugPublisher() = default;
 
 void VisionDebugPublisher::Publish(
     const hal::CameraFrame& frame, std::span<const modules::ArmorDetection> detections,
-    const modules::DetectorStats& detector_stats, const modules::ArmorPnpFrameResult& pnp_result,
+    const modules::DetectorStats& detector_stats,
+    const modules::LightbarDetectionResult& lightbar_result,
+    const modules::ArmorPnpFrameResult& pnp_result,
     const modules::ArmorPredictionResult& prediction_result) noexcept {
   const auto SELECTION = impl_->SelectionSnapshot();
   const bool SEQUENCE_MATCHES = SELECTION.valid &&
@@ -79,10 +81,10 @@ void VisionDebugPublisher::Publish(
                                prediction_result.reset_reason.empty() &&
                                !(prediction_result.state == modules::TrackerState::DETECTING &&
                                  SELECTION.source_sequence != prediction_result.sequence);
-  impl_->pipeline.Publish(frame, detections, detector_stats, pnp_result, prediction_result,
-                          SEQUENCE_MATCHES && IDENTITY_MATCHES && TRACKER_MATCHES
-                              ? std::optional(SELECTION)
-                              : std::nullopt);
+  impl_->pipeline.Publish(
+      frame, detections, detector_stats, lightbar_result, pnp_result, prediction_result,
+      SEQUENCE_MATCHES && IDENTITY_MATCHES && TRACKER_MATCHES ? std::optional(SELECTION)
+                                                              : std::nullopt);
 }
 
 void VisionDebugPublisher::PublishControl(const modules::FireControlResult& result) noexcept {

@@ -8,6 +8,7 @@
 #include "modules/armor_corner_refiner/armor_corner_refiner.hpp"
 #include "modules/armor_detector/armor_detector.hpp"
 #include "modules/armor_detector/armor_detector_config.hpp"
+#include "modules/armor_light_detector/armor_light_detector.hpp"
 #include "modules/armor_pnp/armor_pnp.hpp"
 #include "modules/armor_predictor/armor_predictor.hpp"
 #include "modules/fire_control/fire_control.hpp"
@@ -104,10 +105,10 @@ class ControlRuntime final {
                  modules::GimbalTrajectoryPlannerConfig planner_config,
                  std::unique_ptr<hal::IGimbalCommandSink> sink,
                  tool::foxglove::VisionDebugPublisher* diagnostics)
-      : period_(std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+      : PERIOD(std::chrono::duration_cast<std::chrono::steady_clock::duration>(
             std::chrono::duration<double>(planner_config.dt_s))),
-        planner_dt_s_(planner_config.dt_s),
-        fire_control_(std::move(fire_config), planner_config),
+        PLANNER_DT_S(planner_config.dt_s),
+        fire_control_(fire_config, planner_config),
         feedback_estimator_(planner_config.max_yaw_velocity_rad_s,
                             planner_config.max_pitch_velocity_rad_s),
         sink_(std::move(sink)),
@@ -225,21 +226,21 @@ class ControlRuntime final {
     modules::MatchedGimbalCommand matched_command;
     try {
       while (running_.load(std::memory_order_acquire)) {
-        const auto now = std::chrono::steady_clock::now();
-        const double control_period_s = std::chrono::duration<double>(now - previous_cycle).count();
-        previous_cycle = now;
-        const double deadline_lateness_us =
-            now > next ? std::chrono::duration<double, std::micro>(now - next).count() : 0.0;
+        const auto NOW = std::chrono::steady_clock::now();
+        const double CONTROL_PERIOD_S = std::chrono::duration<double>(NOW - previous_cycle).count();
+        previous_cycle = NOW;
+        const double DEADLINE_LATENESS_US =
+            NOW > next ? std::chrono::duration<double, std::micro>(NOW - next).count() : 0.0;
         auto snapshot = std::atomic_load_explicit(&latest_snapshot_, std::memory_order_acquire);
         if (snapshot) {
-          const auto system_now_ns = SystemNowNs();
-          const auto actuator = sink_->ActuatorTelemetry();
-          const std::optional<hal::GimbalActuatorMode> actuator_mode =
-              actuator.valid ? std::optional(actuator.mode) : std::nullopt;
-          if (actuator_mode != last_actuator_mode) {
+          const auto SYSTEM_NOW_NS = SystemNowNs();
+          const auto ACTUATOR = sink_->ActuatorTelemetry();
+          const std::optional<hal::GimbalActuatorMode> ACTUATOR_MODE =
+              ACTUATOR.valid ? std::optional(ACTUATOR.mode) : std::nullopt;
+          if (ACTUATOR_MODE != last_actuator_mode) {
             feedback_estimator_.ClearRuntimeActuator();
             ClearPublishedProjection("actuator_mode_changed");
-            last_actuator_mode = actuator_mode;
+            last_actuator_mode = ACTUATOR_MODE;
           }
 
           auto input = *snapshot;
@@ -258,9 +259,9 @@ class ControlRuntime final {
             last_external_control = input.external_control_enabled;
           }
 
-          const bool runtime_was_active = feedback_estimator_.RuntimeActuatorActive();
-          feedback_estimator_.ObserveActuatorTelemetry(actuator, now, system_now_ns);
-          if (runtime_was_active != feedback_estimator_.RuntimeActuatorActive()) {
+          const bool RUNTIME_WAS_ACTIVE = feedback_estimator_.RuntimeActuatorActive();
+          feedback_estimator_.ObserveActuatorTelemetry(ACTUATOR, NOW, SYSTEM_NOW_NS);
+          if (RUNTIME_WAS_ACTIVE != feedback_estimator_.RuntimeActuatorActive()) {
             ClearPublishedProjection(feedback_estimator_.RuntimeActuatorActive()
                                          ? "runtime_actuator_enabled"
                                          : "runtime_actuator_invalid");
@@ -276,30 +277,30 @@ class ControlRuntime final {
             matched_command = MatchCommand(snapshot->prediction.source_capture_timestamp_ns,
                                            snapshot->frame_actuator);
           }
-          const bool sink_healthy = sink_->IsHealthy();
-          if (!last_sink_healthy || *last_sink_healthy != sink_healthy) {
-            if (!sink_healthy)
+          const bool SINK_HEALTHY = sink_->IsHealthy();
+          if (!last_sink_healthy || *last_sink_healthy != SINK_HEALTHY) {
+            if (!SINK_HEALTHY)
               ClearPublishedProjection("talos_unhealthy");
-            last_sink_healthy = sink_healthy;
+            last_sink_healthy = SINK_HEALTHY;
           }
-          const auto feedback = feedback_estimator_.Estimate(now);
-          const auto feedback_source = feedback_estimator_.Source();
-          auto result = fire_control_.Step(input, feedback, now);
+          const auto FEEDBACK = feedback_estimator_.Estimate(NOW);
+          const auto FEEDBACK_SOURCE = feedback_estimator_.Source();
+          auto result = fire_control_.Step(input, FEEDBACK, NOW);
           if (result.tracking_object_reset && control_projection_active_) {
             feedback_estimator_.ClearRuntimeActuator();
             ClearPublishedProjection("tracking_object_changed");
           }
-          result.feedback_source = feedback_source;
+          result.feedback_source = FEEDBACK_SOURCE;
           result.measured_feedback = feedback_estimator_.LastMeasurement();
           result.measurement_fresh = measurement_fresh;
           result.measurement_age_s =
               result.measured_feedback.valid
                   ? std::max(0.0,
-                             std::chrono::duration<double>(now - result.measured_feedback.timestamp)
+                             std::chrono::duration<double>(NOW - result.measured_feedback.timestamp)
                                  .count())
                   : std::numeric_limits<double>::infinity();
           result.matched_prior_command = matched_command;
-          result.actuator_telemetry = actuator;
+          result.actuator_telemetry = ACTUATOR;
           result.frame_actuator_telemetry = snapshot->frame_actuator;
           result.runtime_actuator_age_s = feedback_estimator_.RuntimeActuatorAgeS();
           result.feedback_projection_dt_s = feedback_estimator_.ProjectionDtS();
@@ -307,38 +308,38 @@ class ControlRuntime final {
               feedback_estimator_.RuntimeStateTimestampNs();
           if (snapshot->frame_actuator && snapshot->frame_actuator->valid &&
               snapshot->frame_actuator->state_timestamp_ns != 0 &&
-              snapshot->frame_actuator->state_timestamp_ns <= system_now_ns) {
+              snapshot->frame_actuator->state_timestamp_ns <= SYSTEM_NOW_NS) {
             result.frame_actuator_age_s =
-                static_cast<double>(system_now_ns - snapshot->frame_actuator->state_timestamp_ns) *
+                static_cast<double>(SYSTEM_NOW_NS - snapshot->frame_actuator->state_timestamp_ns) *
                 1.0e-9;
           } else {
             result.frame_actuator_age_s = std::numeric_limits<double>::infinity();
           }
           result.feedback_runtime_comparison_valid =
-              feedback.valid && actuator.valid &&
-              actuator.mode == hal::GimbalActuatorMode::PHYSICAL;
+              FEEDBACK.valid && ACTUATOR.valid &&
+              ACTUATOR.mode == hal::GimbalActuatorMode::PHYSICAL;
           if (result.feedback_runtime_comparison_valid) {
             result.yaw_feedback_minus_runtime_actuator =
-                std::remainder(feedback.yaw - actuator.actual_yaw, 2.0 * std::numbers::pi);
-            result.pitch_feedback_minus_runtime_actuator = feedback.pitch - actuator.actual_pitch;
+                std::remainder(FEEDBACK.yaw - ACTUATOR.actual_yaw, 2.0 * std::numbers::pi);
+            result.pitch_feedback_minus_runtime_actuator = FEEDBACK.pitch - ACTUATOR.actual_pitch;
           }
           result.frame_runtime_comparison_valid =
-              snapshot->frame_actuator && snapshot->frame_actuator->valid && actuator.valid &&
+              snapshot->frame_actuator && snapshot->frame_actuator->valid && ACTUATOR.valid &&
               snapshot->frame_actuator->mode == hal::GimbalActuatorMode::PHYSICAL &&
-              actuator.mode == hal::GimbalActuatorMode::PHYSICAL;
+              ACTUATOR.mode == hal::GimbalActuatorMode::PHYSICAL;
           if (result.frame_runtime_comparison_valid) {
             const auto& frame = *snapshot->frame_actuator;
             result.yaw_frame_minus_runtime_actuator =
-                std::remainder(frame.actual_yaw - actuator.actual_yaw, 2.0 * std::numbers::pi);
-            result.pitch_frame_minus_runtime_actuator = frame.actual_pitch - actuator.actual_pitch;
+                std::remainder(frame.actual_yaw - ACTUATOR.actual_yaw, 2.0 * std::numbers::pi);
+            result.pitch_frame_minus_runtime_actuator = frame.actual_pitch - ACTUATOR.actual_pitch;
             result.yaw_frame_acceleration_minus_runtime =
-                frame.yaw_acceleration - actuator.yaw_acceleration;
+                frame.yaw_acceleration - ACTUATOR.yaw_acceleration;
             result.pitch_frame_acceleration_minus_runtime =
-                frame.pitch_acceleration - actuator.pitch_acceleration;
+                frame.pitch_acceleration - ACTUATOR.pitch_acceleration;
           }
-          result.control_period_s = control_period_s;
-          result.deadline_lateness_us = deadline_lateness_us;
-          result.command_sink_healthy = sink_healthy;
+          result.control_period_s = CONTROL_PERIOD_S;
+          result.deadline_lateness_us = DEADLINE_LATENESS_US;
+          result.command_sink_healthy = SINK_HEALTHY;
           result.talos_heartbeat_ns = sink_->HeartbeatTimestampNs();
 
           if (result.reject_reason == modules::FireRejectReason::MPC_FAILED) {
@@ -352,17 +353,17 @@ class ControlRuntime final {
               !last_successful_trajectory_.empty() && result.external_control_enabled &&
               result.command_sink_healthy && !result.tracking_object_reset &&
               result.selected_slot == last_successful_plan_slot_) {
-            const double fallback_age_s = std::max(
-                0.0, std::chrono::duration<double>(now - last_successful_plan_time_).count());
-            result.fallback_age_s = fallback_age_s;
+            const double FALLBACK_AGE_S = std::max(
+                0.0, std::chrono::duration<double>(NOW - last_successful_plan_time_).count());
+            result.fallback_age_s = FALLBACK_AGE_S;
             result.fallback_source_slot = last_successful_plan_slot_;
             constexpr double MAX_FALLBACK_AGE_S = 0.100;
-            const auto elapsed_steps = static_cast<std::size_t>(
-                std::max(1LL, std::llround(fallback_age_s / planner_dt_s_)));
-            const auto fallback_index = last_successful_command_index_ + elapsed_steps;
-            if (fallback_age_s <= MAX_FALLBACK_AGE_S &&
-                fallback_index < last_successful_trajectory_.size()) {
-              const auto& point = last_successful_trajectory_[fallback_index];
+            const auto ELAPSED_STEPS = static_cast<std::size_t>(
+                std::max(1LL, std::llround(FALLBACK_AGE_S / PLANNER_DT_S)));
+            const auto FALLBACK_INDEX = last_successful_command_index_ + ELAPSED_STEPS;
+            if (FALLBACK_AGE_S <= MAX_FALLBACK_AGE_S &&
+                FALLBACK_INDEX < last_successful_trajectory_.size()) {
+              const auto& point = last_successful_trajectory_[FALLBACK_INDEX];
               result.command = {.valid = true,
                                 .fire = false,
                                 .timestamp_ns = result.command_timestamp_ns,
@@ -377,9 +378,9 @@ class ControlRuntime final {
               result.command.fire = false;
               result.command_source = modules::GimbalCommandSource::TRAJECTORY_FALLBACK;
               result.fallback_active = true;
-              result.fallback_trajectory_index = static_cast<int>(fallback_index);
+              result.fallback_trajectory_index = static_cast<int>(FALLBACK_INDEX);
               result.fallback_remaining_points =
-                  static_cast<int>(last_successful_trajectory_.size() - fallback_index - 1);
+                  static_cast<int>(last_successful_trajectory_.size() - FALLBACK_INDEX - 1);
             }
           }
 
@@ -404,14 +405,14 @@ class ControlRuntime final {
               }
             }
           }
-          const auto send_start = std::chrono::steady_clock::now();
-          const bool send_succeeded = sink_->Send(result.command);
+          const auto SEND_START = std::chrono::steady_clock::now();
+          const bool SEND_SUCCEEDED = sink_->Send(result.command);
           result.sink_send_time_us = std::chrono::duration<double, std::micro>(
-                                         std::chrono::steady_clock::now() - send_start)
+                                         std::chrono::steady_clock::now() - SEND_START)
                                          .count();
-          result.command_publish_succeeded = send_succeeded && result.command.valid;
+          result.command_publish_succeeded = SEND_SUCCEEDED && result.command.valid;
           result.published_valid = result.command_publish_succeeded;
-          if (!send_succeeded) {
+          if (!SEND_SUCCEEDED) {
             result.command_sink_healthy = false;
             result.command.valid = false;
             result.command.fire = false;
@@ -420,16 +421,16 @@ class ControlRuntime final {
             result.published_valid = false;
             ClearPublishedProjection("command_send_failed");
           }
-          if (send_succeeded)
+          if (SEND_SUCCEEDED)
             RememberCommand(result.command);
           if (result.command_publish_succeeded) {
-            feedback_estimator_.ObservePublishedCommand(result.command, now, false);
+            feedback_estimator_.ObservePublishedCommand(result.command, NOW, false);
             control_projection_active_ = true;
             if (result.command_source == modules::GimbalCommandSource::MPC) {
               last_successful_trajectory_ = result.plan.trajectory;
               last_successful_command_index_ = static_cast<std::size_t>(result.plan.command_index);
               last_successful_target_distance_m_ = result.command.target_distance_m;
-              last_successful_plan_time_ = now;
+              last_successful_plan_time_ = NOW;
               last_successful_plan_slot_ = result.selected_slot;
             }
           }
@@ -451,10 +452,10 @@ class ControlRuntime final {
           SendStop();
         }
 
-        next += period_;
-        const auto finished = std::chrono::steady_clock::now();
-        if (finished >= next + period_)
-          next = finished + period_;
+        next += PERIOD;
+        const auto FINISHED = std::chrono::steady_clock::now();
+        if (FINISHED >= next + PERIOD)
+          next = FINISHED + PERIOD;
         std::this_thread::sleep_until(next);
       }
     } catch (const std::exception& error) {
@@ -484,8 +485,8 @@ class ControlRuntime final {
     control_projection_active_ = false;
   }
 
-  const std::chrono::steady_clock::duration period_;
-  const double planner_dt_s_;
+  const std::chrono::steady_clock::duration PERIOD;
+  const double PLANNER_DT_S;
   modules::FireControl fire_control_;
   modules::GimbalFeedbackEstimator feedback_estimator_;
   std::unique_ptr<hal::IGimbalCommandSink> sink_;
@@ -590,10 +591,12 @@ int Run() {
     std::signal(SIGTERM, HandleStopSignal);
 
     modules::YoloArmorDetector detector;
+    modules::ArmorDetectorConfig detector_config;
     try {
       const auto DETECTOR_YAML =
           ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_detector.yaml");
-      detector.Init(modules::ParseArmorDetectorConfig(DETECTOR_YAML, PROJECT_ROOT));
+      detector_config = modules::ParseArmorDetectorConfig(DETECTOR_YAML, PROJECT_ROOT);
+      detector.Init(detector_config);
     } catch (const std::exception& error) {
       MV_LOG_ERROR("App", "armor detector initialization failed: {}", error.what());
       return 2;
@@ -602,12 +605,18 @@ int Run() {
     const auto PNP_YAML = ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_pnp.yaml", 2);
     modules::ArmorPnp pnp(modules::ParseArmorPnpConfig(PNP_YAML));
     const auto PREDICTOR_YAML =
-        ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_predictor.yaml", 2);
+        ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_predictor.yaml",
+                               modules::ARMOR_PREDICTOR_CONFIG_SCHEMA_VERSION);
     modules::ArmorPredictor predictor(modules::ParseArmorPredictorConfig(PREDICTOR_YAML));
     const auto REFINER_YAML =
         ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_corner_refiner.yaml");
     modules::ArmorCornerRefiner corner_refiner(
         modules::ParseArmorCornerRefinerConfig(REFINER_YAML));
+    const auto LIGHT_DETECTOR_YAML =
+        ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_light_detector.yaml",
+                               modules::ARMOR_LIGHT_DETECTOR_CONFIG_SCHEMA_VERSION);
+    modules::ArmorLightDetector light_detector(
+        modules::ParseArmorLightDetectorConfig(LIGHT_DETECTOR_YAML), detector_config.enemy_color);
 
     const auto CAMERA_SELECTION = LoadCameraSelection(CONFIG_ROOT);
     const auto CAMERA_CONFIG = ConfigLoader::LoadFile(CAMERA_SELECTION.config_path);
@@ -679,15 +688,19 @@ int Run() {
           for (const auto& detection : DETECTIONS) {
             refinements.push_back(corner_refiner.Refine(gray_image, detection.corners));
           }
+          const auto LIGHTBAR_RESULT =
+              light_detector.Detect(frame.image, gray_image, DETECTIONS, refinements);
           const auto PNP_RESULT = pnp.ProcessFrame(frame, DETECTIONS, refinements);
-          const auto PREDICTION_RESULT = predictor.ProcessFrame(frame, PNP_RESULT);
+          const auto PREDICTION_RESULT =
+              predictor.ProcessFrame(frame, DETECTIONS, refinements, PNP_RESULT, LIGHTBAR_RESULT);
           if (control_runtime && frame.geometry) {
             control_runtime->Update(PREDICTION_RESULT, *frame.geometry);
           }
           LogPnpHealth(PNP_RESULT, frame.sequence,
                        frame.geometry ? frame.geometry->armors.size() : 0);
           if (foxglove_publisher) {
-            foxglove_publisher->Publish(frame, DETECTIONS, STATS, PNP_RESULT, PREDICTION_RESULT);
+            foxglove_publisher->Publish(frame, DETECTIONS, STATS, LIGHTBAR_RESULT, PNP_RESULT,
+                                        PREDICTION_RESULT);
           }
           if (window) {
             cv::Mat debug_image = frame.image.clone();

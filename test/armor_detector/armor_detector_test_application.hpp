@@ -46,7 +46,7 @@ class ArmorDetectorTestApplication final {
    */
   ArmorDetectorTestApplication(std::unique_ptr<hal::ICamera> camera,
                                std::unique_ptr<modules::YoloArmorDetector> detector,
-                               YAML::Node camera_config, ArmorDetectorTestSettings settings,
+                               const YAML::Node& camera_config, ArmorDetectorTestSettings settings,
                                std::optional<tool::foxglove::Config> foxglove_config);
   ~ArmorDetectorTestApplication();
 

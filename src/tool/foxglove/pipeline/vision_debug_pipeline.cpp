@@ -19,11 +19,14 @@ VisionDebugPipeline::VisionDebugPipeline(const Config& config, runtime::Foxglove
       session_.RegisterLiveChannel(live_channel_ids_.image);
       session_.RegisterLiveChannel(live_channel_ids_.armor_annotations);
       session_.RegisterLiveChannel(live_channel_ids_.armor_stats);
+      session_.RegisterLiveChannel(live_channel_ids_.lightbar_annotations);
+      session_.RegisterLiveChannel(live_channel_ids_.lightbar_stats);
       session_.RegisterLiveChannel(live_channel_ids_.debug_stats);
       session_.RegisterLiveChannel(live_channel_ids_.transforms);
       session_.RegisterLiveChannel(live_channel_ids_.calibration);
       session_.RegisterLiveChannel(live_channel_ids_.frustum);
       session_.RegisterLiveChannel(live_channel_ids_.ground_truth);
+      session_.RegisterLiveChannel(live_channel_ids_.projectile_stats);
       session_.RegisterLiveChannel(live_channel_ids_.projection_annotations);
       session_.RegisterLiveChannel(live_channel_ids_.pnp_estimates);
       session_.RegisterLiveChannel(live_channel_ids_.pnp_corners);
@@ -81,11 +84,15 @@ TopicDemand VisionDebugPipeline::LiveDemand() const noexcept {
       .armor_annotations =
           session_.Subscription(live_channel_ids_.armor_annotations).subscribers > 0,
       .armor_stats = session_.Subscription(live_channel_ids_.armor_stats).subscribers > 0,
+      .lightbar_annotations =
+          session_.Subscription(live_channel_ids_.lightbar_annotations).subscribers > 0,
+      .lightbar_stats = session_.Subscription(live_channel_ids_.lightbar_stats).subscribers > 0,
       .debug_stats = session_.Subscription(live_channel_ids_.debug_stats).subscribers > 0,
       .transforms = session_.Subscription(live_channel_ids_.transforms).subscribers > 0,
       .calibration = session_.Subscription(live_channel_ids_.calibration).subscribers > 0,
       .frustum = session_.Subscription(live_channel_ids_.frustum).subscribers > 0,
       .ground_truth = session_.Subscription(live_channel_ids_.ground_truth).subscribers > 0,
+      .projectile_stats = session_.Subscription(live_channel_ids_.projectile_stats).subscribers > 0,
       .projection_annotations =
           session_.Subscription(live_channel_ids_.projection_annotations).subscribers > 0,
       .pnp_estimates = session_.Subscription(live_channel_ids_.pnp_estimates).subscribers > 0,
@@ -113,7 +120,9 @@ TopicDemand VisionDebugPipeline::LiveDemand() const noexcept {
 
 void VisionDebugPipeline::Publish(
     const hal::CameraFrame& frame, std::span<const modules::ArmorDetection> detections,
-    const modules::DetectorStats& detector_stats, const modules::ArmorPnpFrameResult& pnp_result,
+    const modules::DetectorStats& detector_stats,
+    const modules::LightbarDetectionResult& lightbar_result,
+    const modules::ArmorPnpFrameResult& pnp_result,
     const modules::ArmorPredictionResult& prediction_result,
     std::optional<modules::ArmorSelectionSnapshot> selection) noexcept {
   metrics_.OnSubmitted();
@@ -124,8 +133,8 @@ void VisionDebugPipeline::Publish(
     return;
   }
   try {
-    const auto RESULT = queue_.Push(frame, detections, detector_stats, pnp_result,
-                                    prediction_result, std::move(selection));
+    const auto RESULT = queue_.Push(frame, detections, detector_stats, lightbar_result, pnp_result,
+                                    prediction_result, selection);
     if (RESULT.rate_limited) {
       metrics_.OnRateLimited();
     } else if (RESULT.enqueued) {
@@ -163,11 +172,14 @@ void VisionDebugPipeline::ProcessFrame(const VisionDebugFrame& frame) {
   const TopicDemand RECORDING_DEMAND = RECORD ? TopicDemand{.image = true,
                                                             .armor_annotations = true,
                                                             .armor_stats = true,
+                                                            .lightbar_annotations = true,
+                                                            .lightbar_stats = true,
                                                             .debug_stats = true,
                                                             .transforms = true,
                                                             .calibration = true,
                                                             .frustum = true,
                                                             .ground_truth = true,
+                                                            .projectile_stats = true,
                                                             .projection_annotations = true,
                                                             .pnp_estimates = true,
                                                             .pnp_corners = true,

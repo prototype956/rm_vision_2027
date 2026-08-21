@@ -19,11 +19,14 @@ enum class VisionTopic {
   IMAGE,                           ///< JPEG 压缩原图。
   ARMOR_ANNOTATIONS,               ///< 装甲四角框与标签。
   ARMOR_STATS,                     ///< 装甲检测器性能 JSON。
+  LIGHTBAR_ANNOTATIONS,            ///< 独立灯条原始、预测及关联标注。
+  LIGHTBAR_STATS,                  ///< 灯条检测与融合性能 JSON。
   DEBUG_STATS,                     ///< 调试发布流水线性能 JSON。
   TRANSFORMS,                      ///< world -> gimbal -> camera_optical TF。
   CALIBRATION,                     ///< 相机内参与畸变参数。
   FRUSTUM,                         ///< camera_optical 下的三维视锥。
   GROUND_TRUTH,                    ///< world 下的仿真三维真值。
+  PROJECTILE_STATS,                ///< 仿真弹丸发射与命中累计统计。
   PROJECTION_ANNOTATIONS,          ///< 真值探针在相机图像上的重投影点。
   PNP_ESTIMATES,                   ///< 相机系与世界系下的 PnP 三维估计。
   PNP_CORNERS,                     ///< PnP 原始及精修输入角点。
@@ -45,11 +48,14 @@ struct ChannelIds {
   std::uint64_t image{0};                           ///< 压缩图像频道 ID。
   std::uint64_t armor_annotations{0};               ///< 装甲标注频道 ID。
   std::uint64_t armor_stats{0};                     ///< 检测器指标频道 ID。
+  std::uint64_t lightbar_annotations{0};            ///< 灯条标注频道 ID。
+  std::uint64_t lightbar_stats{0};                  ///< 灯条检测与融合指标频道 ID。
   std::uint64_t debug_stats{0};                     ///< 调试流水线指标频道 ID。
   std::uint64_t transforms{0};                      ///< TF 频道 ID。
   std::uint64_t calibration{0};                     ///< 相机标定频道 ID。
   std::uint64_t frustum{0};                         ///< 三维视锥频道 ID。
   std::uint64_t ground_truth{0};                    ///< 三维真值频道 ID。
+  std::uint64_t projectile_stats{0};                ///< 弹丸统计频道 ID。
   std::uint64_t projection_annotations{0};          ///< 真值重投影标注频道 ID。
   std::uint64_t pnp_estimates{0};                   ///< PnP 三维估计频道 ID。
   std::uint64_t pnp_corners{0};                     ///< PnP 输入角点频道 ID。
@@ -76,7 +82,7 @@ struct ChannelPublishError {
 struct ChannelPublishResult {
   bool attempted{false};                         ///< 是否至少调用了一个频道的 log()。
   bool success{true};                            ///< 所有已尝试频道是否均成功。
-  std::array<ChannelPublishError, 22> errors{};  ///< 每个固定话题最多记录一个错误。
+  std::array<ChannelPublishError, 25> errors{};  ///< 每个固定话题最多记录一个错误。
   std::size_t error_count{0};                    ///< errors 中的有效元素数量。
 };
 
@@ -109,11 +115,15 @@ class VisionChannelSet final {
   std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel>
       armor_annotations_;                                ///< 二维装甲标注频道。
   std::unique_ptr<::foxglove::RawChannel> armor_stats_;  ///< 装甲检测器指标频道。
-  std::unique_ptr<::foxglove::RawChannel> debug_stats_;  ///< 调试流水线指标频道。
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel>
+      lightbar_annotations_;                                ///< 独立灯条标注频道。
+  std::unique_ptr<::foxglove::RawChannel> lightbar_stats_;  ///< 灯条检测与融合指标频道。
+  std::unique_ptr<::foxglove::RawChannel> debug_stats_;     ///< 调试流水线指标频道。
   std::unique_ptr<::foxglove::schemas::FrameTransformsChannel> transforms_;     ///< TF 频道。
   std::unique_ptr<::foxglove::schemas::CameraCalibrationChannel> calibration_;  ///< 标定频道。
   std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> frustum_;  ///< 三维视锥频道。
   std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> ground_truth_;  ///< 仿真真值频道。
+  std::unique_ptr<::foxglove::RawChannel> projectile_stats_;  ///< 仿真弹丸累计统计频道。
   std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel>
       projection_annotations_;  ///< 真值重投影频道。
   std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> pnp_estimates_;  ///< PnP 估计频道。

@@ -15,6 +15,7 @@ LatestFrameQueue::LatestFrameQueue(double max_fps)
 QueuePushResult LatestFrameQueue::Push(const hal::CameraFrame& frame,
                                        std::span<const modules::ArmorDetection> detections,
                                        const modules::DetectorStats& detector_stats,
+                                       const modules::LightbarDetectionResult& lightbar_result,
                                        const modules::ArmorPnpFrameResult& pnp_result,
                                        const modules::ArmorPredictionResult& prediction_result,
                                        std::optional<modules::ArmorSelectionSnapshot> selection) {
@@ -42,9 +43,10 @@ QueuePushResult LatestFrameQueue::Push(const hal::CameraFrame& frame,
   item.source_invalid_frames = frame.source_invalid_frames;
   item.detections.assign(detections.begin(), detections.end());
   item.detector_stats = detector_stats;
+  item.lightbar_result = lightbar_result;
   item.pnp_result = pnp_result;
   item.prediction_result = prediction_result;
-  item.armor_selection = std::move(selection);
+  item.armor_selection = selection;
 
   const bool OVERWRITTEN = queued_frame_.has_value();
   queued_frame_ = std::move(item);

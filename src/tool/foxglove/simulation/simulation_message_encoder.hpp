@@ -2,6 +2,9 @@
 
 #include "hal/camera/i_camera.hpp"
 
+#include <cstdint>
+#include <string>
+
 #include <foxglove/schemas.hpp>
 
 namespace mv::tool::foxglove::simulation {
@@ -13,6 +16,11 @@ namespace mv::tool::foxglove::simulation {
  */
 [[nodiscard]] ::foxglove::schemas::SceneUpdate EncodeGroundTruth(
     const hal::CameraFrame::FrameGeometry& geometry,
+    const ::foxglove::schemas::Timestamp& timestamp);
+
+/** @brief 将同帧累计弹丸统计编码为固定 JSON Schema。 */
+[[nodiscard]] std::string EncodeProjectileStats(
+    const hal::CameraFrame::ProjectileStatistics& statistics, std::uint64_t sequence,
     const ::foxglove::schemas::Timestamp& timestamp);
 
 /**

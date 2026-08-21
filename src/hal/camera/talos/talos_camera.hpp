@@ -9,7 +9,7 @@ namespace mv::hal {
 /**
  * @brief 从 Daedalus/Talos 共享内存读取同步仿真图像。
  *
- * 后端消费 Talos v5 原子发布的图像、标定、坐标变换、云台遥测和仿真真值，
+ * 后端消费 Talos v6 原子发布的图像、标定、坐标变换、云台遥测、弹丸统计和仿真真值，
  * 接受 RGB8/BGR8 像素并向上层统一返回独立持有的 BGR8 图像。
  */
 class TalosCamera final : public ICamera {

@@ -1,6 +1,5 @@
 #include "modules/gimbal_trajectory_planner/gimbal_trajectory_planner.hpp"
 
-#include "modules/armor_predictor/detail/four_armor_model.hpp"
 #include "modules/gimbal_trajectory_planner/detail/tinympc_workspace.hpp"
 #include "tinympc/tiny_api.hpp"
 
@@ -14,6 +13,10 @@
 
 namespace mv::modules {
 namespace {
+
+double WrapAngle(double angle) noexcept {
+  return std::remainder(angle, 2.0 * std::numbers::pi);
+}
 
 // TinyMPC C 接口分别分配顶层对象及其四个子对象，需要按所有权逐项释放。
 void DestroySolver(TinySolver* solver) noexcept {
@@ -172,7 +175,7 @@ std::string_view GimbalWarmStartActionName(GimbalWarmStartAction action) noexcep
 
 struct GimbalTrajectoryPlanner::Impl {
   explicit Impl(GimbalTrajectoryPlannerConfig value)
-      : config(std::move(value)),
+      : config(value),
         yaw_normalization(MakeNormalization(config, config.max_yaw_velocity_rad_s,
                                             config.max_yaw_acceleration_rad_s2)),
         pitch_normalization(MakeNormalization(config, config.max_pitch_velocity_rad_s,
@@ -194,7 +197,7 @@ struct GimbalTrajectoryPlanner::Impl {
 };
 
 GimbalTrajectoryPlanner::GimbalTrajectoryPlanner(GimbalTrajectoryPlannerConfig config)
-    : impl_(std::make_unique<Impl>(std::move(config))) {}
+    : impl_(std::make_unique<Impl>(config)) {}
 
 GimbalTrajectoryPlanner::~GimbalTrajectoryPlanner() = default;
 GimbalTrajectoryPlanner::GimbalTrajectoryPlanner(GimbalTrajectoryPlanner&&) noexcept = default;
@@ -401,7 +404,7 @@ GimbalTrajectoryPlan GimbalTrajectoryPlanner::Plan(const hal::GimbalFeedback& fe
   // 配置前视时间量化到最近离散点，且至少选择 index=1，避免重复发送当前状态。
   result.command_lookahead_s = static_cast<double>(result.command_index) * impl_->config.dt_s;
   result.command = result.trajectory[static_cast<std::size_t>(result.command_index)];
-  result.command.yaw = detail::WrapAngle(result.command.yaw);
+  result.command.yaw = WrapAngle(result.command.yaw);
   result.valid = true;
   impl_->previous_plan_failed = false;
   return result;

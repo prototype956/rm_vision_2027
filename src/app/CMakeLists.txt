@@ -9,6 +9,7 @@ target_link_libraries(mv-vision-main
         mv-hal-gimbal-talos
         mv-modules-armor-detector
         mv-modules-armor-corner-refiner
+        mv-modules-armor-light-detector
         mv-modules-armor-pnp
         mv-modules-armor-predictor
         mv-modules-fire-control

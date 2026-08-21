@@ -1,6 +1,7 @@
 add_subdirectory(runtime)
 add_subdirectory(image)
 add_subdirectory(armor_detector)
+add_subdirectory(armor_light_detector)
 add_subdirectory(spatial)
 add_subdirectory(simulation)
 add_subdirectory(pnp)
@@ -24,6 +25,7 @@ target_link_libraries(mv-tool-foxglove
         mv-core
         mv-hal-camera
         mv-modules-armor-detector
+        mv-modules-armor-light-detector
         mv-modules-armor-pnp
         mv-modules-armor-predictor
         mv-modules-fire-control

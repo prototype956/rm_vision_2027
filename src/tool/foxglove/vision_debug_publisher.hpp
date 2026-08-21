@@ -2,6 +2,7 @@
 
 #include "hal/camera/i_camera.hpp"
 #include "modules/armor_detector/armor_detector.hpp"
+#include "modules/armor_light_detector/armor_light_detector.hpp"
 #include "modules/armor_pnp/armor_pnp_types.hpp"
 #include "modules/armor_predictor/armor_prediction_types.hpp"
 #include "modules/fire_control/fire_control.hpp"
@@ -66,7 +67,7 @@ class VisionDebugPublisher final {
    *
    * 单个 sink 初始化失败只会停用该 sink 并记录诊断，不向视觉主程序传播异常。
    */
-  explicit VisionDebugPublisher(Config config);
+  explicit VisionDebugPublisher(const Config& config);
   /** @brief 幂等停止后台流水线并关闭实时与录制资源。 */
   ~VisionDebugPublisher();
 
@@ -80,10 +81,12 @@ class VisionDebugPublisher final {
    * @param frame 原始相机帧；入队后调用方不得并发改写其像素。
    * @param detections 与该图像对应的检测结果，调用期间复制。
    * @param detector_stats 与该图像对应的检测性能统计。
+   * @param lightbar_result 与该图像对应的独立灯条和检测统计。
    * @param pnp_result 与该图像对应的 PnP 解算、基准及角点精修结果。
    */
   void Publish(const hal::CameraFrame& frame, std::span<const modules::ArmorDetection> detections,
                const modules::DetectorStats& detector_stats,
+               const modules::LightbarDetectionResult& lightbar_result,
                const modules::ArmorPnpFrameResult& pnp_result,
                const modules::ArmorPredictionResult& prediction_result) noexcept;
   /** @brief 非阻塞提交一个 100 Hz 控制诊断样本。 */

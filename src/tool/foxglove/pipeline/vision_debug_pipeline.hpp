@@ -40,6 +40,7 @@ class VisionDebugPipeline final {
   /** @brief 非阻塞提交同帧图像、检测结果和指标。 */
   void Publish(const hal::CameraFrame& frame, std::span<const modules::ArmorDetection> detections,
                const modules::DetectorStats& detector_stats,
+               const modules::LightbarDetectionResult& lightbar_result,
                const modules::ArmorPnpFrameResult& pnp_result,
                const modules::ArmorPredictionResult& prediction_result,
                std::optional<modules::ArmorSelectionSnapshot> selection) noexcept;

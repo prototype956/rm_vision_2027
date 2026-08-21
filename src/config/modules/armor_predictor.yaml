@@ -1,25 +1,59 @@
-schema_version: 2
+schema_version: 6
 tracking:
   min_detect_count: 5
   max_temp_lost_count: 15
   max_dt_s: 0.1
-association:
-  max_position_m: 0.8
-  max_yaw_rad: 1.2
 model:
+  esekf_iterations: 5
   vehicle_initial_radius_m: 0.21154
   hero_initial_radius_m: 0.23930
-  vehicle_armor_roll_rad: -0.265216
-  hero_armor_roll_rad: -0.256525
+  vehicle_armor_tilt_rad: -0.265216
+  hero_armor_tilt_rad: -0.256525
   min_radius_m: 0.05
   max_radius_m: 0.5
-  linear_acceleration_variance: 100.0
-  angular_acceleration_variance: 400.0
-  initial_covariance_diagonal: [1, 64, 1, 64, 1, 64, 0.4, 100, 1, 1, 1]
+  max_height_offset_m: 0.5
+  max_yaw_velocity_rad_s: 20.0
+  initial_covariance_diagonal: [1, 10, 1, 10, 1, 10, 1, 1, 1, 100, 1, 1, 1]
+process_noise:
+  body_acceleration_variance: [30.0, 30.0, 1.0]
+  yaw_acceleration_variance: 30.0
+  roll_pitch_random_walk_variance_per_s: 0.1
+  radius_random_walk_variance_m2_per_s: 1.0e-7
+  height_random_walk_variance_m2_per_s: 1.0e-7
+association:
+  visible_slot_count: 3
+  center_weight: 5.0
+  edge_angle_weight: 10.0
+  perimeter_ratio_weight: 1.0
+  initial_gate: 1000.0
+  gate: 200.0
+light_association:
+  dedup_center_length_ratio: 0.5
+  dedup_angle_gate_rad: 0.20
+  dedup_log_length_gate: 0.35
+  match_log_length_gate: 0.25
+  match_angle_gate_rad: 0.25
+  match_endpoint_distance_length_ratio: 2.0
+  position_weight: 1.0
+  angle_weight: 2.0
+  length_weight: 1.0
+maneuver:
+  association_cost_trigger: 50.0
+  confirmation_frames: 2
+  confirmation_window_s: 0.15
+  hold_s: 0.30
+  trigger_yaw_acceleration_variance: 10000.0
+  active_yaw_acceleration_variance: 2500.0
+  recovery_gate: 500.0
+  nis_per_dof_gate: 3.0
 measurement:
-  variance_base: [0.004, 0.004, 1.0, 0.09]
-  distance_variance_angle_scale: 1.0
-  armor_yaw_variance_distance_scale: 0.005
+  uvl_center_sigma_length_ratio: 0.2
+  uvl_length_sigma_length_ratio: 0.5
+  uvl_angle_sigma_rad: 0.1
+  standalone_uvl_center_sigma_length_ratio: 0.35
+  standalone_uvl_length_sigma_length_ratio: 0.70
+  standalone_uvl_angle_sigma_rad: 0.15
+  depth_difference_sigma_m: 0.1
 priority:
   sentry: 3
   one: 1

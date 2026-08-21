@@ -10,11 +10,14 @@ namespace {
 constexpr char K_IMAGE_TOPIC[] = "/vision/camera/image";
 constexpr char K_ARMOR_ANNOTATIONS_TOPIC[] = "/vision/armor/annotations";
 constexpr char K_ARMOR_STATS_TOPIC[] = "/vision/armor/stats";
+constexpr char K_LIGHTBAR_ANNOTATIONS_TOPIC[] = "/vision/lightbars/annotations";
+constexpr char K_LIGHTBAR_STATS_TOPIC[] = "/vision/lightbars/stats";
 constexpr char K_DEBUG_STATS_TOPIC[] = "/vision/debug/stats";
 constexpr char K_TRANSFORMS_TOPIC[] = "/vision/transforms";
 constexpr char K_CALIBRATION_TOPIC[] = "/vision/camera/calibration";
 constexpr char K_FRUSTUM_TOPIC[] = "/vision/camera/frustum";
 constexpr char K_GROUND_TRUTH_TOPIC[] = "/simulation/ground_truth";
+constexpr char K_PROJECTILE_STATS_TOPIC[] = "/simulation/projectiles/stats";
 constexpr char K_PROJECTION_ANNOTATIONS_TOPIC[] = "/simulation/ground_truth/annotations";
 constexpr char K_PNP_ESTIMATES_TOPIC[] = "/vision/pnp/estimate";
 constexpr char K_PNP_CORNERS_TOPIC[] = "/vision/pnp/corners";
@@ -46,6 +49,37 @@ constexpr char K_ARMOR_STATS_SCHEMA[] = R"json({
   "required":["timestamp","sequence","preprocess_ms","inference_ms","postprocess_ms","total_ms","threshold_candidates","kept_detections"]
 })json";
 
+constexpr char K_LIGHTBAR_STATS_SCHEMA[] = R"json({
+  "type":"object",
+  "properties":{
+    "timestamp":{"type":"object","properties":{"sec":{"type":"integer"},"nsec":{"type":"integer"}},"required":["sec","nsec"]},
+    "sequence":{"type":"integer"},
+    "enabled":{"type":"boolean"},
+    "valid_input":{"type":"boolean"},
+    "binary_threshold":{"type":"integer"},
+    "threshold_source":{"type":"string"},
+    "reference_lightbars":{"type":"integer"},
+    "contours":{"type":"integer"},
+    "geometry_candidates":{"type":"integer"},
+    "color_candidates":{"type":"integer"},
+    "kept_candidates":{"type":"integer"},
+    "elapsed_ms":{"type":"number"},
+    "detected_count":{"type":"integer"},
+    "deduplicated_count":{"type":"integer"},
+    "matched_count":{"type":"integer"},
+    "accepted_count":{"type":"integer"},
+    "rejected_count":{"type":"integer"},
+    "light_only_pair_count":{"type":"integer"},
+    "light_only_update":{"type":"boolean"},
+    "light_only_update_blocked":{"type":"boolean"},
+    "light_only_rejection_reason":{"type":"string"},
+    "light_fusion_used":{"type":"boolean"},
+    "armor_fallback_used":{"type":"boolean"},
+    "rejection_reason":{"type":"string"}
+  },
+  "required":["timestamp","sequence","enabled","valid_input","binary_threshold","threshold_source","reference_lightbars","contours","geometry_candidates","color_candidates","kept_candidates","elapsed_ms","detected_count","deduplicated_count","matched_count","accepted_count","rejected_count","light_only_pair_count","light_only_update","light_only_update_blocked","light_only_rejection_reason","light_fusion_used","armor_fallback_used","rejection_reason"]
+})json";
+
 constexpr char K_DEBUG_STATS_SCHEMA[] = R"json({
   "type":"object",
   "properties":{
@@ -60,6 +94,21 @@ constexpr char K_DEBUG_STATS_SCHEMA[] = R"json({
     "queue_overwritten_frames":{"type":"integer"}
   },
   "required":["timestamp","sequence","capture_timestamp_ns","geometry_valid","source_invalid_frames","jpeg_encode_ms","publish_latency_ms","rate_limited_frames","queue_overwritten_frames"]
+})json";
+
+constexpr char K_PROJECTILE_STATS_SCHEMA[] = R"json({
+  "type":"object",
+  "properties":{
+    "timestamp":{"type":"object","properties":{"sec":{"type":"integer"},"nsec":{"type":"integer"}},"required":["sec","nsec"]},
+    "sequence":{"type":"integer"},
+    "bullet_launch_count":{"type":"integer"},
+    "armor_hit_count":{"type":"integer"},
+    "rune_hit_count":{"type":"integer"},
+    "dart_launch_count":{"type":"integer"},
+    "armor_hit_rate":{"type":"number"},
+    "not_yet_hit_count":{"type":"integer"}
+  },
+  "required":["timestamp","sequence","bullet_launch_count","armor_hit_count","rune_hit_count","dart_launch_count","armor_hit_rate","not_yet_hit_count"]
 })json";
 
 constexpr char K_PNP_STATS_SCHEMA[] = R"json({
@@ -87,14 +136,50 @@ constexpr char K_PREDICTION_STATE_SCHEMA[] = R"json({
     "tracker_state":{"type":"string"},
     "label":{"type":"integer"},
     "dt_s":{"type":"number"},
+    "state_order":{"type":"array","items":{"type":"string"}},
     "state":{"type":"array","items":{"type":"number"}},
     "covariance_diagonal":{"type":"array","items":{"type":"number"}},
     "innovation":{"type":"array","items":{"type":"number"}},
     "nis":{"type":["number","null"]},
+    "nis_per_dof":{"type":["number","null"]},
+    "iterations":{"type":"integer"},
+    "estimation_elapsed_ms":{"type":"number"},
+    "radii_m":{"type":"array","items":{"type":"number"}},
+    "height_offset_m":{"type":"number"},
+    "yaw_variance_rad2":{"type":"number"},
+    "truth_center_error_m":{"type":["number","null"]},
+    "truth_yaw_error_rad":{"type":["number","null"]},
+    "truth_yaw_equivalent_error_rad":{"type":["number","null"]},
+    "truth_yaw_velocity_error_rad_s":{"type":["number","null"]},
+    "maneuver_active":{"type":"boolean"},
+    "maneuver_phase":{"type":"string","enum":["idle","pending","active"]},
+    "maneuver_trigger":{"type":"string"},
+    "maneuver_evidence_frames":{"type":"integer"},
+    "maneuver_evidence_cost":{"type":"number"},
+    "maneuver_confirmation_remaining_s":{"type":"number"},
+    "maneuver_remaining_s":{"type":"number"},
+    "yaw_process_variance_used":{"type":"number"},
+    "trial_yaw_velocity_update_rad_s":{"type":["number","null"]},
+    "association_gate_used":{"type":"number"},
+    "accepted_association_count":{"type":"integer"},
+    "rejected_association_count":{"type":"integer"},
     "associations":{"type":"array","items":{"type":"object"}},
+    "lightbar_associations":{"type":"array","items":{"type":"object"}},
+    "detected_lightbar_count":{"type":"integer"},
+    "deduplicated_lightbar_count":{"type":"integer"},
+    "matched_lightbar_count":{"type":"integer"},
+    "accepted_lightbar_count":{"type":"integer"},
+    "rejected_lightbar_count":{"type":"integer"},
+    "light_only_pair_count":{"type":"integer"},
+    "light_only_update":{"type":"boolean"},
+    "light_only_update_blocked":{"type":"boolean"},
+    "light_only_rejection_reason":{"type":"string"},
+    "light_fusion_used":{"type":"boolean"},
+    "armor_fallback_used":{"type":"boolean"},
+    "reset_count":{"type":"integer"},
     "reset_reason":{"type":"string"}
   },
-  "required":["timestamp","sequence","tracker_state","label","dt_s","state","covariance_diagonal","innovation","nis","associations","reset_reason"]
+  "required":["timestamp","sequence","tracker_state","label","dt_s","state_order","state","covariance_diagonal","innovation","nis","nis_per_dof","iterations","estimation_elapsed_ms","radii_m","height_offset_m","yaw_variance_rad2","truth_center_error_m","truth_yaw_error_rad","truth_yaw_equivalent_error_rad","truth_yaw_velocity_error_rad_s","maneuver_active","maneuver_phase","maneuver_trigger","maneuver_evidence_frames","maneuver_evidence_cost","maneuver_confirmation_remaining_s","maneuver_remaining_s","yaw_process_variance_used","trial_yaw_velocity_update_rad_s","association_gate_used","accepted_association_count","rejected_association_count","associations","lightbar_associations","detected_lightbar_count","deduplicated_lightbar_count","matched_lightbar_count","accepted_lightbar_count","rejected_lightbar_count","light_only_pair_count","light_only_update","light_only_update_blocked","light_only_rejection_reason","light_fusion_used","armor_fallback_used","reset_count","reset_reason"]
 })json";
 
 ::foxglove::Schema JsonSchema(const char* name, const char* data, std::size_t size) {
@@ -148,6 +233,11 @@ VisionChannelSet::VisionChannelSet(const ::foxglove::Context& context) {
       K_ARMOR_ANNOTATIONS_TOPIC, context, "create armor annotations channel");
   armor_stats_ = CreateRawChannel(K_ARMOR_STATS_TOPIC, "mv.vision.ArmorDetectorStats",
                                   K_ARMOR_STATS_SCHEMA, sizeof(K_ARMOR_STATS_SCHEMA) - 1, context);
+  lightbar_annotations_ = CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
+      K_LIGHTBAR_ANNOTATIONS_TOPIC, context, "create lightbar annotations channel");
+  lightbar_stats_ =
+      CreateRawChannel(K_LIGHTBAR_STATS_TOPIC, "mv.vision.LightbarDetectorStats",
+                       K_LIGHTBAR_STATS_SCHEMA, sizeof(K_LIGHTBAR_STATS_SCHEMA) - 1, context);
   debug_stats_ = CreateRawChannel(K_DEBUG_STATS_TOPIC, "mv.vision.DebugPipelineStats",
                                   K_DEBUG_STATS_SCHEMA, sizeof(K_DEBUG_STATS_SCHEMA) - 1, context);
   transforms_ = CreateSchemaChannel<::foxglove::schemas::FrameTransformsChannel>(
@@ -158,6 +248,9 @@ VisionChannelSet::VisionChannelSet(const ::foxglove::Context& context) {
                                                                           "create frustum channel");
   ground_truth_ = CreateSchemaChannel<::foxglove::schemas::SceneUpdateChannel>(
       K_GROUND_TRUTH_TOPIC, context, "create ground truth channel");
+  projectile_stats_ =
+      CreateRawChannel(K_PROJECTILE_STATS_TOPIC, "mv.simulation.ProjectileStatistics",
+                       K_PROJECTILE_STATS_SCHEMA, sizeof(K_PROJECTILE_STATS_SCHEMA) - 1, context);
   projection_annotations_ = CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
       K_PROJECTION_ANNOTATIONS_TOPIC, context, "create projection annotations channel");
   pnp_estimates_ = CreateSchemaChannel<::foxglove::schemas::SceneUpdateChannel>(
@@ -201,11 +294,14 @@ ChannelIds VisionChannelSet::Ids() const noexcept {
   return {.image = image_->id(),
           .armor_annotations = armor_annotations_->id(),
           .armor_stats = armor_stats_->id(),
+          .lightbar_annotations = lightbar_annotations_->id(),
+          .lightbar_stats = lightbar_stats_->id(),
           .debug_stats = debug_stats_->id(),
           .transforms = transforms_->id(),
           .calibration = calibration_->id(),
           .frustum = frustum_->id(),
           .ground_truth = ground_truth_->id(),
+          .projectile_stats = projectile_stats_->id(),
           .projection_annotations = projection_annotations_->id(),
           .pnp_estimates = pnp_estimates_->id(),
           .pnp_corners = pnp_corners_->id(),
@@ -240,6 +336,17 @@ ChannelPublishResult VisionChannelSet::Publish(const PreparedFrame& frame,
     AddError(result, VisionTopic::ARMOR_STATS,
              armor_stats_->log(data, frame.armor_stats_json->size(), frame.epoch_nanos));
   }
+  if (demand.lightbar_annotations && frame.lightbar_annotations.has_value()) {
+    result.attempted = true;
+    AddError(result, VisionTopic::LIGHTBAR_ANNOTATIONS,
+             lightbar_annotations_->log(*frame.lightbar_annotations, frame.epoch_nanos));
+  }
+  if (demand.lightbar_stats && frame.lightbar_stats_json.has_value()) {
+    result.attempted = true;
+    const auto* data = reinterpret_cast<const std::byte*>(frame.lightbar_stats_json->data());
+    AddError(result, VisionTopic::LIGHTBAR_STATS,
+             lightbar_stats_->log(data, frame.lightbar_stats_json->size(), frame.epoch_nanos));
+  }
   if (demand.debug_stats && frame.debug_stats_json.has_value()) {
     result.attempted = true;
     const auto* data = reinterpret_cast<const std::byte*>(frame.debug_stats_json->data());
@@ -264,6 +371,12 @@ ChannelPublishResult VisionChannelSet::Publish(const PreparedFrame& frame,
     result.attempted = true;
     AddError(result, VisionTopic::GROUND_TRUTH,
              ground_truth_->log(*frame.ground_truth, frame.epoch_nanos));
+  }
+  if (demand.projectile_stats && frame.projectile_stats_json.has_value()) {
+    result.attempted = true;
+    const auto* data = reinterpret_cast<const std::byte*>(frame.projectile_stats_json->data());
+    AddError(result, VisionTopic::PROJECTILE_STATS,
+             projectile_stats_->log(data, frame.projectile_stats_json->size(), frame.epoch_nanos));
   }
   if (demand.projection_annotations && frame.projection_annotations.has_value()) {
     result.attempted = true;
@@ -354,6 +467,10 @@ void VisionChannelSet::Close() noexcept {
     armor_annotations_->close();
   if (armor_stats_)
     armor_stats_->close();
+  if (lightbar_annotations_)
+    lightbar_annotations_->close();
+  if (lightbar_stats_)
+    lightbar_stats_->close();
   if (debug_stats_)
     debug_stats_->close();
   if (transforms_)
@@ -364,6 +481,8 @@ void VisionChannelSet::Close() noexcept {
     frustum_->close();
   if (ground_truth_)
     ground_truth_->close();
+  if (projectile_stats_)
+    projectile_stats_->close();
   if (projection_annotations_)
     projection_annotations_->close();
   if (pnp_estimates_)
@@ -402,6 +521,10 @@ const char* TopicName(VisionTopic topic) noexcept {
       return "armor_annotations";
     case VisionTopic::ARMOR_STATS:
       return "armor_stats";
+    case VisionTopic::LIGHTBAR_ANNOTATIONS:
+      return "lightbar_annotations";
+    case VisionTopic::LIGHTBAR_STATS:
+      return "lightbar_stats";
     case VisionTopic::DEBUG_STATS:
       return "debug_stats";
     case VisionTopic::TRANSFORMS:
@@ -412,6 +535,8 @@ const char* TopicName(VisionTopic topic) noexcept {
       return "frustum";
     case VisionTopic::GROUND_TRUTH:
       return "ground_truth";
+    case VisionTopic::PROJECTILE_STATS:
+      return "projectile_stats";
     case VisionTopic::PROJECTION_ANNOTATIONS:
       return "projection_annotations";
     case VisionTopic::PNP_ESTIMATES:

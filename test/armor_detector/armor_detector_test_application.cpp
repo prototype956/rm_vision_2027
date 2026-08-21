@@ -159,11 +159,11 @@ void CountGrabFailure(Metrics& metrics, hal::GrabStatus status) {
 
 ArmorDetectorTestApplication::ArmorDetectorTestApplication(
     std::unique_ptr<hal::ICamera> camera, std::unique_ptr<modules::YoloArmorDetector> detector,
-    YAML::Node camera_config, ArmorDetectorTestSettings settings,
+    const YAML::Node& camera_config, ArmorDetectorTestSettings settings,
     std::optional<tool::foxglove::Config> foxglove_config)
     : camera_(std::move(camera)),
       detector_(std::move(detector)),
-      camera_config_(std::move(camera_config)),
+      camera_config_(camera_config),
       settings_(std::move(settings)),
       foxglove_config_(std::move(foxglove_config)) {}
 
@@ -287,8 +287,9 @@ int ArmorDetectorTestApplication::Run() {
           const auto DETECTIONS = detector_->Detect(frame.image);
           const auto STATS = detector_->LastStats();
           if (foxglove_publisher) {
-            foxglove_publisher->Publish(frame, DETECTIONS, STATS, modules::ArmorPnpFrameResult{},
-                                        modules::ArmorPredictionResult{});
+            foxglove_publisher->Publish(
+                frame, DETECTIONS, STATS, modules::LightbarDetectionResult{},
+                modules::ArmorPnpFrameResult{}, modules::ArmorPredictionResult{});
           }
           ++metrics.detection_success;
           ++report_detection_success;
@@ -427,11 +428,13 @@ int ArmorDetectorTestApplication::Run() {
   const bool COMPLETED_DURATION =
       !user_aborted && ELAPSED >= static_cast<double>(settings_.duration_sec);
   const double VALID_FRAME_RATIO =
-      metrics.grab_total > 0 ? static_cast<double>(metrics.valid_frames) / metrics.grab_total : 0.0;
-  const double DETECTION_SUCCESS_RATIO =
-      metrics.valid_frames > 0
-          ? static_cast<double>(metrics.detection_success) / metrics.valid_frames
+      metrics.grab_total > 0
+          ? static_cast<double>(metrics.valid_frames) / static_cast<double>(metrics.grab_total)
           : 0.0;
+  const double DETECTION_SUCCESS_RATIO = metrics.valid_frames > 0
+                                             ? static_cast<double>(metrics.detection_success) /
+                                                   static_cast<double>(metrics.valid_frames)
+                                             : 0.0;
   const double TOTAL_P50 = Percentile(metrics.total_ms, 0.50);
   const double TOTAL_P95 = Percentile(metrics.total_ms, 0.95);
   const double TOTAL_P99 = Percentile(metrics.total_ms, 0.99);

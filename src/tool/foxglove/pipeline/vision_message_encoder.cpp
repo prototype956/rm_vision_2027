@@ -1,6 +1,7 @@
 #include "tool/foxglove/pipeline/vision_message_encoder.hpp"
 
 #include "tool/foxglove/armor_detector/armor_message_encoder.hpp"
+#include "tool/foxglove/armor_light_detector/lightbar_message_encoder.hpp"
 #include "tool/foxglove/image/image_message_encoder.hpp"
 #include "tool/foxglove/pnp/pnp_message_encoder.hpp"
 #include "tool/foxglove/prediction/prediction_message_encoder.hpp"
@@ -39,12 +40,13 @@ std::string EncodeDebugStats(const VisionDebugFrame& frame,
 }  // namespace
 
 bool TopicDemand::Any() const noexcept {
-  return image || armor_annotations || armor_stats || debug_stats || transforms || calibration ||
-         frustum || ground_truth || projection_annotations || pnp_estimates || pnp_corners ||
-         pnp_reprojection || pnp_error_vectors || corner_refiner_axes ||
-         corner_refiner_candidates || pnp_stats || prediction_scene || prediction_state ||
-         prediction_truth_overlay || prediction_current_annotations ||
-         prediction_future_annotations || selected_armor_annotations;
+  return image || armor_annotations || armor_stats || lightbar_annotations || lightbar_stats ||
+         debug_stats || transforms || calibration || frustum || ground_truth || projectile_stats ||
+         projection_annotations || pnp_estimates || pnp_corners || pnp_reprojection ||
+         pnp_error_vectors || corner_refiner_axes || corner_refiner_candidates || pnp_stats ||
+         prediction_scene || prediction_state || prediction_truth_overlay ||
+         prediction_current_annotations || prediction_future_annotations ||
+         selected_armor_annotations;
 }
 
 TopicDemand Merge(TopicDemand left, TopicDemand right) noexcept {
@@ -52,11 +54,14 @@ TopicDemand Merge(TopicDemand left, TopicDemand right) noexcept {
       .image = left.image || right.image,
       .armor_annotations = left.armor_annotations || right.armor_annotations,
       .armor_stats = left.armor_stats || right.armor_stats,
+      .lightbar_annotations = left.lightbar_annotations || right.lightbar_annotations,
+      .lightbar_stats = left.lightbar_stats || right.lightbar_stats,
       .debug_stats = left.debug_stats || right.debug_stats,
       .transforms = left.transforms || right.transforms,
       .calibration = left.calibration || right.calibration,
       .frustum = left.frustum || right.frustum,
       .ground_truth = left.ground_truth || right.ground_truth,
+      .projectile_stats = left.projectile_stats || right.projectile_stats,
       .projection_annotations = left.projection_annotations || right.projection_annotations,
       .pnp_estimates = left.pnp_estimates || right.pnp_estimates,
       .pnp_corners = left.pnp_corners || right.pnp_corners,
@@ -110,6 +115,14 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
     result.armor_stats_json =
         armor_detector::EncodeDetectorStats(frame.detector_stats, frame.sequence, TIMESTAMP);
   }
+  if (demand.lightbar_annotations) {
+    result.lightbar_annotations = armor_light_detector::EncodeAnnotations(
+        frame.lightbar_result, frame.prediction_result, TIMESTAMP);
+  }
+  if (demand.lightbar_stats) {
+    result.lightbar_stats_json = armor_light_detector::EncodeStats(
+        frame.lightbar_result, frame.prediction_result, frame.sequence, TIMESTAMP);
+  }
   // 空间与仿真领域共用同一份 geometry；后端未提供时不构造任何默认坐标关系。
   if (frame.geometry.has_value()) {
     const auto& geometry = *frame.geometry;
@@ -124,6 +137,10 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
     }
     if (demand.ground_truth) {
       result.ground_truth = simulation::EncodeGroundTruth(geometry, TIMESTAMP);
+    }
+    if (demand.projectile_stats && geometry.projectile_statistics.has_value()) {
+      result.projectile_stats_json = simulation::EncodeProjectileStats(
+          *geometry.projectile_statistics, frame.sequence, TIMESTAMP);
     }
     if (demand.projection_annotations) {
       result.projection_annotations = simulation::EncodeProjectionAnnotations(geometry, TIMESTAMP);

@@ -95,6 +95,14 @@ struct CameraFrame {
     std::array<geometry::Vector3, 4> corners_world{};  ///< TL/TR/BR/BL。
   };
 
+  /** @brief 与仿真图像同帧采样的弹丸累计统计。 */
+  struct ProjectileStatistics {
+    std::uint64_t bullet_launch_count{0};  ///< 已生成的 17 mm 弹丸累计数。
+    std::uint64_t armor_hit_count{0};      ///< 装甲有效碰撞累计数。
+    std::uint32_t rune_hit_count{0};       ///< 能量机关有效命中累计数。
+    std::uint32_t dart_launch_count{0};    ///< 飞镖发射累计数。
+  };
+
   /**
    * @brief 与图像在同一仿真采集快照中的标定、外参和真值。
    *
@@ -106,6 +114,7 @@ struct CameraFrame {
     geometry::RigidTransform gimbal_t_camera_optical;  ///< camera_optical 到 gimbal 的变换。
     geometry::RigidTransform gimbal_t_muzzle;          ///< muzzle 到 gimbal 的变换。
     std::optional<GimbalActuatorTelemetry> gimbal_actuator;  ///< 与图像同帧的执行器状态。
+    std::optional<ProjectileStatistics> projectile_statistics;  ///< 仿真弹丸累计统计。
     std::vector<GroundTruthTarget> targets;  ///< 当前快照中的机器人真值。
     std::vector<GroundTruthArmor> armors;    ///< 当前快照中的单块装甲真值。
   };
