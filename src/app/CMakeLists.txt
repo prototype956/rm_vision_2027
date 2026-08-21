@@ -7,16 +7,15 @@ target_link_libraries(mv-vision-main
         mv-core
         mv-hal-camera
         mv-hal-gimbal-talos
+        mv-runtime
         mv-modules-armor-detector
         mv-modules-armor-corner-refiner
         mv-modules-armor-light-detector
         mv-modules-armor-pnp
         mv-modules-armor-predictor
         mv-modules-fire-control
-        mv-tool-armor-overlay
         mv-tool-debug
         mv-tool-foxglove
-        opencv_imgproc
 )
 
 target_compile_definitions(mv-vision-main PRIVATE

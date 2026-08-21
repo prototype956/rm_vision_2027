@@ -12,8 +12,9 @@ if(USE_OPENVINO)
     add_subdirectory(modules)
 endif()
 
+add_subdirectory(hal)
+
 if(BUILD_MAIN)
+    add_subdirectory(runtime)
     add_subdirectory(app)
 endif()
-
-add_subdirectory(hal)
