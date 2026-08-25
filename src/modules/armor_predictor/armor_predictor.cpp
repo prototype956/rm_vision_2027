@@ -596,14 +596,13 @@ struct ArmorPredictor::Impl {
   void Initialize(const DetectionObservation& observation, const frame::SpatialFrameView& geometry);
   [[nodiscard]] std::vector<DetectionObservation> ExtractObservations(
       std::span<const ArmorDetection> detections,
-      std::span<const CornerRefinementResult> refinements,
-      const ArmorPnpFrameResult& pnp_result) const;
+      std::span<const CornerRefinementOutput> refinements, const ArmorPnpOutput& pnp_output) const;
   [[nodiscard]] ArmorPredictionResult Snapshot(const frame::FrameStamp& stamp, double dt) const;
   [[nodiscard]] ArmorPredictionResult ProcessFrame(
       const frame::FrameStamp& stamp, std::optional<frame::SpatialFrameView> spatial,
       std::span<const ArmorDetection> detections,
-      std::span<const CornerRefinementResult> refinements, const ArmorPnpFrameResult& pnp_result,
-      const LightbarDetectionResult& lightbar_result);
+      std::span<const CornerRefinementOutput> refinements, const ArmorPnpOutput& pnp_output,
+      const LightbarDetectorOutput& lightbar_output);
 
   ArmorPredictorConfig config;
   detail::ArmorEsekf filter;
@@ -702,21 +701,20 @@ void ArmorPredictor::Impl::Initialize(const DetectionObservation& observation,
 }
 
 std::vector<DetectionObservation> ArmorPredictor::Impl::ExtractObservations(
-    std::span<const ArmorDetection> detections, std::span<const CornerRefinementResult> refinements,
-    const ArmorPnpFrameResult& pnp_result) const {
+    std::span<const ArmorDetection> detections, std::span<const CornerRefinementOutput> refinements,
+    const ArmorPnpOutput& pnp_output) const {
   std::vector<DetectionObservation> result;
   result.reserve(detections.size());
   for (std::size_t index = 0; index < detections.size(); ++index) {
     if (!SupportedLabel(detections[index].label))
       continue;
-    const auto& corners =
-        refinements[index].success ? refinements[index].refined_corners : detections[index].corners;
+    const auto& corners = refinements[index].corners;
     if (!FiniteCorners(corners))
       continue;
     const ArmorPoseEstimate* estimate = nullptr;
-    for (const auto& attempt : pnp_result.attempts) {
-      if (attempt.input_index == index && attempt.estimate) {
-        estimate = &*attempt.estimate;
+    for (const auto& value : pnp_output.estimates) {
+      if (value.input_index == index) {
+        estimate = &value;
         break;
       }
     }
@@ -733,49 +731,51 @@ std::vector<DetectionObservation> ArmorPredictor::Impl::ExtractObservations(
 ArmorPredictionResult ArmorPredictor::Impl::Snapshot(const frame::FrameStamp& stamp,
                                                      double dt) const {
   ArmorPredictionResult result;
-  result.sequence = stamp.sequence;
-  result.source_capture_timestamp_ns = stamp.capture_timestamp_ns;
-  result.source_receive_steady_time = stamp.receive_steady_time;
-  result.state = tracker_state;
-  result.label = label;
-  result.type = type;
-  result.dt_s = dt;
-  result.reset_reason = last_reset_reason;
-  result.reset_count = reset_count;
-  result.maneuver_active = maneuver_phase == ManeuverPhase::ACTIVE;
-  result.maneuver_phase = ManeuverPhaseName(maneuver_phase);
-  result.maneuver_trigger = maneuver_trigger;
-  result.maneuver_evidence_frames = maneuver_evidence_frames;
-  result.maneuver_evidence_cost = maneuver_evidence_cost;
-  result.maneuver_confirmation_remaining_s = maneuver_confirmation_remaining_s;
-  result.maneuver_remaining_s = maneuver_remaining_s;
-  result.yaw_process_variance_used = frame_yaw_process_variance_used;
-  result.trial_yaw_velocity_update_rad_s = frame_trial_yaw_velocity_update_rad_s;
+  auto& output = result.output;
+  auto& diagnostics = result.diagnostics;
+  output.sequence = stamp.sequence;
+  output.source_capture_timestamp_ns = stamp.capture_timestamp_ns;
+  output.source_receive_steady_time = stamp.receive_steady_time;
+  output.state = tracker_state;
+  output.label = label;
+  output.type = type;
+  diagnostics.dt_s = dt;
+  diagnostics.reset_reason = last_reset_reason;
+  diagnostics.reset_count = reset_count;
+  diagnostics.maneuver_active = maneuver_phase == ManeuverPhase::ACTIVE;
+  diagnostics.maneuver_phase = ManeuverPhaseName(maneuver_phase);
+  diagnostics.maneuver_trigger = maneuver_trigger;
+  diagnostics.maneuver_evidence_frames = maneuver_evidence_frames;
+  diagnostics.maneuver_evidence_cost = maneuver_evidence_cost;
+  diagnostics.maneuver_confirmation_remaining_s = maneuver_confirmation_remaining_s;
+  diagnostics.maneuver_remaining_s = maneuver_remaining_s;
+  diagnostics.yaw_process_variance_used = frame_yaw_process_variance_used;
+  diagnostics.trial_yaw_velocity_update_rad_s = frame_trial_yaw_velocity_update_rad_s;
   if (tracker_state == TrackerState::LOST)
     return result;
 
   const auto& state = filter.State();
   const auto& covariance = filter.Covariance();
-  result.state_vector = detail::DiagnosticState(state);
+  output.state_vector = detail::DiagnosticState(state);
   for (int index = 0; index < detail::K_STATE_SIZE; ++index)
-    result.covariance_diagonal[index] = covariance(index, index);
-  result.center_world = state.position_world;
-  result.velocity_world = state.velocity_world;
-  result.orientation_world = state.world_q_car;
-  result.yaw_velocity_rad_s = state.yaw_velocity_rad_s;
-  result.radii_m = {std::exp(state.log_radius_1), std::exp(state.log_radius_2)};
-  result.height_offset_m = state.height_offset_m;
-  result.armor_tilt_rad = label ? ArmorTiltForLabel(*label, config) : 0.0;
+    output.covariance_diagonal[index] = covariance(index, index);
+  output.center_world = state.position_world;
+  output.velocity_world = state.velocity_world;
+  output.orientation_world = state.world_q_car;
+  output.yaw_velocity_rad_s = state.yaw_velocity_rad_s;
+  output.radii_m = {std::exp(state.log_radius_1), std::exp(state.log_radius_2)};
+  output.height_offset_m = state.height_offset_m;
+  output.armor_tilt_rad = label ? ArmorTiltForLabel(*label, config) : 0.0;
   const std::array<int, 3> CENTER_INDICES{detail::state_index::CX, detail::state_index::CY,
                                           detail::state_index::CZ};
   for (int row = 0; row < 3; ++row) {
     for (int column = 0; column < 3; ++column)
-      result.center_covariance_world(row, column) =
+      output.center_covariance_world(row, column) =
           covariance(CENTER_INDICES[row], CENTER_INDICES[column]);
   }
-  result.yaw_variance_rad2 = YawVariance(state, covariance);
+  output.yaw_variance_rad2 = YawVariance(state, covariance);
 
-  result.horizons.reserve(config.prediction_horizons_s.size());
+  output.horizons.reserve(config.prediction_horizons_s.size());
   for (double seconds : config.prediction_horizons_s) {
     const auto FUTURE = detail::PredictState(state, seconds);
     PredictionHorizon horizon;
@@ -786,9 +786,9 @@ ArmorPredictionResult ArmorPredictor::Impl::Snapshot(const frame::FrameStamp& st
     for (int slot = 0; slot < 4; ++slot) {
       horizon.armors[slot] = {.slot = slot,
                               .world_t_armor = detail::WorldArmorPose(
-                                  FUTURE, {.slot = slot, .tilt_rad = result.armor_tilt_rad})};
+                                  FUTURE, {.slot = slot, .tilt_rad = output.armor_tilt_rad})};
     }
-    result.horizons.push_back(std::move(horizon));
+    output.horizons.push_back(std::move(horizon));
   }
 
   return result;
@@ -796,8 +796,8 @@ ArmorPredictionResult ArmorPredictor::Impl::Snapshot(const frame::FrameStamp& st
 
 ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
     const frame::FrameStamp& stamp, std::optional<frame::SpatialFrameView> spatial,
-    std::span<const ArmorDetection> detections, std::span<const CornerRefinementResult> refinements,
-    const ArmorPnpFrameResult& pnp_result, const LightbarDetectionResult& lightbar_result) {
+    std::span<const ArmorDetection> detections, std::span<const CornerRefinementOutput> refinements,
+    const ArmorPnpOutput& pnp_output, const LightbarDetectorOutput& lightbar_output) {
   const auto START = std::chrono::steady_clock::now();
   frame_yaw_process_variance_used = 0.0;
   frame_trial_yaw_velocity_update_rad_s.reset();
@@ -836,7 +836,7 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
   }
 
   const auto FINISH = [&](ArmorPredictionResult result) {
-    result.estimation_elapsed_ms =
+    result.diagnostics.estimation_elapsed_ms =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - START).count();
     return result;
   };
@@ -864,7 +864,7 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
     }
   }
 
-  const auto OBSERVATIONS = ExtractObservations(detections, refinements, pnp_result);
+  const auto OBSERVATIONS = ExtractObservations(detections, refinements, pnp_output);
   if (tracker_state == TrackerState::LOST) {
     std::vector<const DetectionObservation*> candidates;
     for (const auto& observation : OBSERVATIONS) {
@@ -873,14 +873,16 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
     }
     if (candidates.empty()) {
       auto result = Snapshot(stamp, dt);
-      result.detected_lightbar_count = static_cast<int>(lightbar_result.detections.size());
-      for (const auto& lightbar : lightbar_result.detections) {
-        result.lightbar_associations.push_back({.input_index = lightbar.input_index,
-                                                .observed_top = lightbar.top,
-                                                .observed_bottom = lightbar.bottom,
-                                                .rejection_reason = "tracker_unavailable"});
+      result.diagnostics.detected_lightbar_count =
+          static_cast<int>(lightbar_output.detections.size());
+      for (const auto& lightbar : lightbar_output.detections) {
+        result.diagnostics.lightbar_associations.push_back(
+            {.input_index = lightbar.input_index,
+             .observed_top = lightbar.top,
+             .observed_bottom = lightbar.bottom,
+             .rejection_reason = "tracker_unavailable"});
       }
-      result.rejected_lightbar_count = result.detected_lightbar_count;
+      result.diagnostics.rejected_lightbar_count = result.diagnostics.detected_lightbar_count;
       return FINISH(std::move(result));
     }
     const auto& calibration = spatial->calibration;
@@ -895,23 +897,25 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
         });
     Initialize(*BEST, *spatial);
     auto result = Snapshot(stamp, dt);
-    result.detected_lightbar_count = static_cast<int>(lightbar_result.detections.size());
-    for (const auto& lightbar : lightbar_result.detections) {
-      result.lightbar_associations.push_back({.input_index = lightbar.input_index,
-                                              .observed_top = lightbar.top,
-                                              .observed_bottom = lightbar.bottom,
-                                              .rejection_reason = "tracker_unavailable"});
+    result.diagnostics.detected_lightbar_count =
+        static_cast<int>(lightbar_output.detections.size());
+    for (const auto& lightbar : lightbar_output.detections) {
+      result.diagnostics.lightbar_associations.push_back(
+          {.input_index = lightbar.input_index,
+           .observed_top = lightbar.top,
+           .observed_bottom = lightbar.bottom,
+           .rejection_reason = "tracker_unavailable"});
     }
-    result.rejected_lightbar_count = result.detected_lightbar_count;
+    result.diagnostics.rejected_lightbar_count = result.diagnostics.detected_lightbar_count;
     if (tracker_state != TrackerState::LOST) {
-      result.associations.push_back({.input_index = BEST->input_index,
-                                     .slot = 0,
-                                     .candidate_slot = 0,
-                                     .accepted = true,
-                                     .observed_corners = BEST->corners,
-                                     .predicted_corners = BEST->corners,
-                                     .rejection_reason = {}});
-      result.accepted_association_count = 1;
+      result.diagnostics.associations.push_back({.input_index = BEST->input_index,
+                                                 .slot = 0,
+                                                 .candidate_slot = 0,
+                                                 .accepted = true,
+                                                 .observed_corners = BEST->corners,
+                                                 .predicted_corners = BEST->corners,
+                                                 .rejection_reason = {}});
+      result.diagnostics.accepted_association_count = 1;
     }
     return FINISH(std::move(result));
   }
@@ -921,7 +925,7 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
     if (observation.label == *label && observation.type == *type)
       candidates.push_back(observation);
   }
-  ArmorPredictionResult diagnostic = Snapshot(stamp, dt);
+  ArmorPredictionDiagnostics diagnostic = std::move(Snapshot(stamp, dt).diagnostics);
   std::vector<int> slots;
   double association_gate_used = 0.0;
   bool used_recovery_gate = false;
@@ -948,7 +952,7 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
       std::count_if(slots.begin(), slots.end(), [](int slot) { return slot >= 0; }));
   const double TILT = ArmorTiltForLabel(*label, config);
   const auto LIGHT_MATCHES =
-      AssociateLightbars(lightbar_result.detections, candidates, slots, filter.State(), TILT, *type,
+      AssociateLightbars(lightbar_output.detections, candidates, slots, filter.State(), TILT, *type,
                          *spatial, config, diagnostic.lightbar_associations);
   const int LIGHT_MATCH_COUNT = static_cast<int>(std::count_if(
       LIGHT_MATCHES.begin(), LIGHT_MATCHES.end(), [](int column) { return column >= 0; }));
@@ -970,7 +974,7 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
     if (LIGHT_IS_USABLE(index))
       ++usable_light_count;
   }
-  diagnostic.detected_lightbar_count = static_cast<int>(lightbar_result.detections.size());
+  diagnostic.detected_lightbar_count = static_cast<int>(lightbar_output.detections.size());
   diagnostic.deduplicated_lightbar_count = static_cast<int>(std::count_if(
       diagnostic.lightbar_associations.begin(), diagnostic.lightbar_associations.end(),
       [](const LightbarAssociation& association) { return association.duplicate_full_armor; }));
@@ -1005,7 +1009,7 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
         continue;
       const auto& association = diagnostic.lightbar_associations[index];
       combined_observations.emplace_back(detail::MakeStandaloneUvlObservation(
-          lightbar_result.detections[index].top, lightbar_result.detections[index].bottom, *spatial,
+          lightbar_output.detections[index].top, lightbar_output.detections[index].bottom, *spatial,
           TILT, *type, association.slot, association.left));
     }
 
@@ -1159,33 +1163,38 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
     Reset("state_diverged");
 
   auto result = Snapshot(stamp, dt);
-  result.associations = std::move(diagnostic.associations);
-  result.lightbar_associations = std::move(diagnostic.lightbar_associations);
-  result.innovation = std::move(diagnostic.innovation);
-  result.nis = diagnostic.nis;
-  result.nis_per_dof = diagnostic.nis_per_dof;
-  result.esekf_iterations = diagnostic.esekf_iterations;
-  result.association_gate_used = association_gate_used;
-  result.accepted_association_count = static_cast<int>(
-      std::count_if(result.associations.begin(), result.associations.end(),
+  auto& result_diagnostics = result.diagnostics;
+  result_diagnostics.associations = std::move(diagnostic.associations);
+  result_diagnostics.lightbar_associations = std::move(diagnostic.lightbar_associations);
+  result_diagnostics.innovation = std::move(diagnostic.innovation);
+  result_diagnostics.nis = diagnostic.nis;
+  result_diagnostics.nis_per_dof = diagnostic.nis_per_dof;
+  result_diagnostics.esekf_iterations = diagnostic.esekf_iterations;
+  result_diagnostics.association_gate_used = association_gate_used;
+  result_diagnostics.accepted_association_count = static_cast<int>(
+      std::count_if(result_diagnostics.associations.begin(), result_diagnostics.associations.end(),
                     [](const ArmorAssociation& association) { return association.accepted; }));
-  result.rejected_association_count =
-      static_cast<int>(result.associations.size()) - result.accepted_association_count;
-  result.detected_lightbar_count = diagnostic.detected_lightbar_count;
-  result.deduplicated_lightbar_count = diagnostic.deduplicated_lightbar_count;
-  result.matched_lightbar_count = diagnostic.matched_lightbar_count;
-  result.light_only_pair_count = diagnostic.light_only_pair_count;
-  result.accepted_lightbar_count = static_cast<int>(
-      std::count_if(result.lightbar_associations.begin(), result.lightbar_associations.end(),
+  result_diagnostics.rejected_association_count =
+      static_cast<int>(result_diagnostics.associations.size()) -
+      result_diagnostics.accepted_association_count;
+  result_diagnostics.detected_lightbar_count = diagnostic.detected_lightbar_count;
+  result_diagnostics.deduplicated_lightbar_count = diagnostic.deduplicated_lightbar_count;
+  result_diagnostics.matched_lightbar_count = diagnostic.matched_lightbar_count;
+  result_diagnostics.light_only_pair_count = diagnostic.light_only_pair_count;
+  result_diagnostics.accepted_lightbar_count = static_cast<int>(
+      std::count_if(result_diagnostics.lightbar_associations.begin(),
+                    result_diagnostics.lightbar_associations.end(),
                     [](const LightbarAssociation& association) { return association.accepted; }));
-  result.rejected_lightbar_count =
-      std::max(0, result.detected_lightbar_count - result.deduplicated_lightbar_count -
-                      result.accepted_lightbar_count);
-  result.light_only_update = diagnostic.light_only_update;
-  result.light_only_update_blocked = diagnostic.light_only_update_blocked;
-  result.light_only_rejection_reason = std::move(diagnostic.light_only_rejection_reason);
-  result.light_fusion_used = diagnostic.light_fusion_used;
-  result.armor_fallback_used = diagnostic.armor_fallback_used;
+  result_diagnostics.rejected_lightbar_count =
+      std::max(0, result_diagnostics.detected_lightbar_count -
+                      result_diagnostics.deduplicated_lightbar_count -
+                      result_diagnostics.accepted_lightbar_count);
+  result_diagnostics.light_only_update = diagnostic.light_only_update;
+  result_diagnostics.light_only_update_blocked = diagnostic.light_only_update_blocked;
+  result_diagnostics.light_only_rejection_reason =
+      std::move(diagnostic.light_only_rejection_reason);
+  result_diagnostics.light_fusion_used = diagnostic.light_fusion_used;
+  result_diagnostics.armor_fallback_used = diagnostic.armor_fallback_used;
   return FINISH(std::move(result));
 }
 
@@ -1208,12 +1217,12 @@ ArmorPredictor& ArmorPredictor::operator=(ArmorPredictor&& other) noexcept = def
 
 ArmorPredictionResult ArmorPredictor::ProcessFrame(
     const frame::FrameStamp& stamp, std::optional<frame::SpatialFrameView> spatial,
-    std::span<const ArmorDetection> detections, std::span<const CornerRefinementResult> refinements,
-    const ArmorPnpFrameResult& pnp_result, const LightbarDetectionResult& lightbar_result) {
-  return impl_->ProcessFrame(stamp, spatial, detections, refinements, pnp_result, lightbar_result);
+    std::span<const ArmorDetection> detections, std::span<const CornerRefinementOutput> refinements,
+    const ArmorPnpOutput& pnp_output, const LightbarDetectorOutput& lightbar_output) {
+  return impl_->ProcessFrame(stamp, spatial, detections, refinements, pnp_output, lightbar_output);
 }
 
-PredictionHorizon ExtrapolatePrediction(const ArmorPredictionResult& prediction, double seconds) {
+PredictionHorizon ExtrapolatePrediction(const ArmorPredictionOutput& prediction, double seconds) {
   if (!std::isfinite(seconds) || seconds < 0.0)
     throw std::invalid_argument("prediction horizon must be finite and nonnegative");
   detail::NominalState state;

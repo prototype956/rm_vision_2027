@@ -13,11 +13,8 @@ LatestFrameQueue::LatestFrameQueue(double max_fps)
                    PERIOD / 10)) {}
 
 QueuePushResult LatestFrameQueue::Push(
-    const frame::FramePacket& packet, std::span<const modules::ArmorDetection> detections,
-    const modules::DetectorStats& detector_stats,
-    const modules::LightbarDetectionResult& lightbar_result,
-    const modules::ArmorPnpFrameResult& pnp_result,
-    const modules::ArmorPredictionResult& prediction_result,
+    const frame::FramePacket& packet, const ::mv::runtime::VisionFrameOutput& output,
+    const ::mv::runtime::VisionFrameDiagnostics& diagnostics,
     const std::optional<simulation_evaluation::SimulationEvaluationResult>& simulation_evaluation,
     std::optional<modules::ArmorSelectionSnapshot> selection) {
   std::lock_guard lock(mutex_);
@@ -37,11 +34,8 @@ QueuePushResult LatestFrameQueue::Push(
 
   VisionDebugFrame item;
   item.packet = packet;
-  item.detections.assign(detections.begin(), detections.end());
-  item.detector_stats = detector_stats;
-  item.lightbar_result = lightbar_result;
-  item.pnp_result = pnp_result;
-  item.prediction_result = prediction_result;
+  item.output = output;
+  item.diagnostics = diagnostics;
   item.simulation_evaluation = simulation_evaluation;
   item.armor_selection = selection;
 

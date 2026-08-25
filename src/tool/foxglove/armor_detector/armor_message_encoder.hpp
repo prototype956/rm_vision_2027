@@ -26,7 +26,7 @@ namespace mv::tool::foxglove::armor_detector {
  * 输出字段必须与 VisionChannelSet 注册的 mv.vision.ArmorDetectorStats JSON Schema
  * 保持同步，耗时字段单位统一为毫秒。
  */
-[[nodiscard]] std::string EncodeDetectorStats(const modules::DetectorStats& stats,
+[[nodiscard]] std::string EncodeDetectorStats(const modules::ArmorDetectorDiagnostics& stats,
                                               std::uint64_t sequence,
                                               const ::foxglove::schemas::Timestamp& timestamp);
 

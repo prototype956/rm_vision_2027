@@ -83,26 +83,26 @@ ArmorLightDetector::ArmorLightDetector(ArmorLightDetectorConfig config, ArmorCol
 
 LightbarDetectionResult ArmorLightDetector::Detect(
     const cv::Mat& bgr_image, const cv::Mat& gray_image, std::span<const ArmorDetection> detections,
-    std::span<const CornerRefinementResult> refinements) const noexcept {
+    std::span<const CornerRefinementOutput> refinements) const noexcept {
   const auto START = Clock::now();
   LightbarDetectionResult result;
-  result.stats.enabled = config_.enabled;
+  result.diagnostics.enabled = config_.enabled;
   const auto FINISH = [&]() {
-    result.stats.kept_candidates = result.detections.size();
-    result.stats.elapsed_ms =
+    result.diagnostics.kept_candidates = result.output.detections.size();
+    result.diagnostics.elapsed_ms =
         std::chrono::duration<double, std::milli>(Clock::now() - START).count();
     return result;
   };
   try {
     if (!config_.enabled) {
-      result.stats.binary_threshold = config_.fixed_binary_threshold;
-      result.stats.rejection_reason = "disabled";
+      result.diagnostics.binary_threshold = config_.fixed_binary_threshold;
+      result.diagnostics.rejection_reason = "disabled";
       return FINISH();
     }
     if (bgr_image.empty() || gray_image.empty() || bgr_image.type() != CV_8UC3 ||
         gray_image.type() != CV_8UC1 || bgr_image.size() != gray_image.size()) {
-      result.stats.valid_input = false;
-      result.stats.rejection_reason = "invalid_image";
+      result.diagnostics.valid_input = false;
+      result.diagnostics.rejection_reason = "invalid_image";
       return FINISH();
     }
 
@@ -110,8 +110,7 @@ LightbarDetectionResult ArmorLightDetector::Detect(
     if (detections.size() == refinements.size()) {
       reference_brightness.reserve(detections.size() * 2);
       for (std::size_t index = 0; index < detections.size(); ++index) {
-        const auto& corners = refinements[index].success ? refinements[index].refined_corners
-                                                         : detections[index].corners;
+        const auto& corners = refinements[index].corners;
         for (const auto& endpoints :
              {std::pair{corners[0], corners[3]}, std::pair{corners[1], corners[2]}}) {
           if (const auto MEAN = SampleLineMean(gray_image, endpoints.first, endpoints.second))
@@ -119,7 +118,7 @@ LightbarDetectionResult ArmorLightDetector::Detect(
         }
       }
     }
-    result.stats.reference_lightbars = reference_brightness.size();
+    result.diagnostics.reference_lightbars = reference_brightness.size();
     int threshold = config_.fixed_binary_threshold;
     if (!reference_brightness.empty()) {
       const double MEAN =
@@ -127,16 +126,16 @@ LightbarDetectionResult ArmorLightDetector::Detect(
           static_cast<double>(reference_brightness.size());
       threshold = std::clamp(static_cast<int>(std::lround(MEAN)) - config_.network_reference_offset,
                              config_.minimum_binary_threshold, config_.maximum_binary_threshold);
-      result.stats.threshold_source = LightbarThresholdSource::NETWORK_REFERENCE;
+      result.diagnostics.threshold_source = LightbarThresholdSource::NETWORK_REFERENCE;
     }
-    result.stats.binary_threshold = threshold;
+    result.diagnostics.binary_threshold = threshold;
 
     cv::Mat binary;
     cv::threshold(gray_image, binary, threshold, 255, cv::THRESH_BINARY);
     std::vector<std::vector<cv::Point>> contours;
     // 点数门限针对原始轮廓采样；CHAIN_APPROX_SIMPLE 会把理想矩形压成四点而误拒绝。
     cv::findContours(binary, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
-    result.stats.contours = contours.size();
+    result.diagnostics.contours = contours.size();
 
     std::size_t input_index = 0;
     for (const auto& contour : contours) {
@@ -158,13 +157,13 @@ LightbarDetectionResult ArmorLightDetector::Detect(
           RATIO > config_.maximum_width_length_ratio || TILT > config_.maximum_tilt_rad) {
         continue;
       }
-      ++result.stats.geometry_candidates;
+      ++result.diagnostics.geometry_candidates;
       const double COLOR_DIFFERENCE = ContourColorDifference(bgr_image, contour, enemy_color_);
       if (COLOR_DIFFERENCE < config_.minimum_color_difference)
         continue;
-      ++result.stats.color_candidates;
+      ++result.diagnostics.color_candidates;
       const double AREA = std::abs(cv::contourArea(contour));
-      result.detections.push_back(
+      result.output.detections.push_back(
           {.input_index = input_index++,
            .color = enemy_color_,
            .top = ENDPOINTS[0],
@@ -176,17 +175,17 @@ LightbarDetectionResult ArmorLightDetector::Detect(
            .color_difference = COLOR_DIFFERENCE,
            .score = COLOR_DIFFERENCE * AREA});
     }
-    std::sort(result.detections.begin(), result.detections.end(),
+    std::sort(result.output.detections.begin(), result.output.detections.end(),
               [](const auto& left, const auto& right) { return left.score > right.score; });
-    if (result.detections.size() > static_cast<std::size_t>(config_.maximum_candidates))
-      result.detections.resize(static_cast<std::size_t>(config_.maximum_candidates));
-    for (std::size_t index = 0; index < result.detections.size(); ++index)
-      result.detections[index].input_index = index;
+    if (result.output.detections.size() > static_cast<std::size_t>(config_.maximum_candidates))
+      result.output.detections.resize(static_cast<std::size_t>(config_.maximum_candidates));
+    for (std::size_t index = 0; index < result.output.detections.size(); ++index)
+      result.output.detections[index].input_index = index;
     return FINISH();
   } catch (...) {
-    result.detections.clear();
-    result.stats.valid_input = false;
-    result.stats.rejection_reason = "processing_error";
+    result.output.detections.clear();
+    result.diagnostics.valid_input = false;
+    result.diagnostics.rejection_reason = "processing_error";
     return FINISH();
   }
 }

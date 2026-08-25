@@ -55,7 +55,8 @@ namespace {
   return annotations;
 }
 
-std::string EncodeDetectorStats(const modules::DetectorStats& stats, std::uint64_t sequence,
+std::string EncodeDetectorStats(const modules::ArmorDetectorDiagnostics& stats,
+                                std::uint64_t sequence,
                                 const ::foxglove::schemas::Timestamp& timestamp) {
   return fmt::format(
       "{{\"timestamp\":{{\"sec\":{},\"nsec\":{}}},\"sequence\":{},"

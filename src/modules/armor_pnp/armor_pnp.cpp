@@ -54,28 +54,32 @@ ArmorPnp::ArmorPnp(ArmorPnp&& other) noexcept = default;
 
 ArmorPnp& ArmorPnp::operator=(ArmorPnp&& other) noexcept = default;
 
-ArmorPnpFrameResult ArmorPnp::ProcessFrame(std::uint64_t sequence,
-                                           const frame::CameraModel& camera_model,
-                                           std::span<const ArmorDetection> detections,
-                                           std::span<const CornerRefinementResult> refinements) {
-  ArmorPnpFrameResult result;
+void ArmorPnp::ObserveRefinementDiagnostics(
+    std::span<const CornerRefinementDiagnostics> diagnostics) {
+  for (const auto& refinement : diagnostics)
+    impl_->metrics.RecordRefinement(refinement);
+}
+
+ArmorPnpResult ArmorPnp::ProcessFrame(std::uint64_t sequence,
+                                      const frame::CameraModel& camera_model,
+                                      std::span<const ArmorDetection> detections,
+                                      std::span<const CornerRefinementOutput> refinements) {
+  ArmorPnpResult result;
   if (refinements.size() != detections.size())
     return result;
-  result.attempts.reserve(detections.size());
+  result.output.estimates.reserve(detections.size());
+  result.diagnostics.attempts.reserve(detections.size());
   for (std::size_t index = 0; index < detections.size(); ++index) {
     const auto& detection = detections[index];
-    CornerRefinementResult refinement = refinements[index];
-    impl_->metrics.RecordRefinement(refinement);
-    const auto& final_corners =
-        refinement.success ? refinement.refined_corners : refinement.original_corners;
-    auto attempt =
-        impl_->solver.Solve(final_corners, ArmorTypeForLabel(detection.label), camera_model, index,
-                            static_cast<std::uint8_t>(detection.label));
-    impl_->metrics.RecordDetectionSolve(attempt);
-    attempt.refinement = std::move(refinement);
-    result.attempts.push_back(std::move(attempt));
+    auto solve =
+        impl_->solver.Solve(refinements[index].corners, ArmorTypeForLabel(detection.label),
+                            camera_model, index, static_cast<std::uint8_t>(detection.label));
+    impl_->metrics.RecordDetectionSolve(solve);
+    if (solve.output)
+      result.output.estimates.push_back(std::move(*solve.output));
+    result.diagnostics.attempts.push_back(solve.diagnostics);
   }
-  impl_->metrics.PopulateSnapshot(sequence, result);
+  impl_->metrics.PopulateSnapshot(sequence, result.diagnostics);
   return result;
 }
 

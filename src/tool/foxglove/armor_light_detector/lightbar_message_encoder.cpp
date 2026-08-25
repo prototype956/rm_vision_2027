@@ -43,8 +43,8 @@ std::string EscapeJson(std::string_view input) {
 }  // namespace
 
 ::foxglove::schemas::ImageAnnotations EncodeAnnotations(
-    const modules::LightbarDetectionResult& detection,
-    const modules::ArmorPredictionResult& prediction,
+    const modules::LightbarDetectorOutput& detection,
+    const modules::ArmorPredictionDiagnostics& prediction,
     const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::ImageAnnotations annotations;
   ::foxglove::schemas::PointsAnnotation timestamp_carrier;
@@ -99,10 +99,10 @@ std::string EscapeJson(std::string_view input) {
   return annotations;
 }
 
-std::string EncodeStats(const modules::LightbarDetectionResult& detection,
-                        const modules::ArmorPredictionResult& prediction, std::uint64_t sequence,
-                        const ::foxglove::schemas::Timestamp& timestamp) {
-  const auto& stats = detection.stats;
+std::string EncodeStats(const modules::LightbarDetectorDiagnostics& detection,
+                        const modules::ArmorPredictionDiagnostics& prediction,
+                        std::uint64_t sequence, const ::foxglove::schemas::Timestamp& timestamp) {
+  const auto& stats = detection;
   return fmt::format(
       "{{\"timestamp\":{{\"sec\":{},\"nsec\":{}}},\"sequence\":{},"
       "\"enabled\":{},\"valid_input\":{},\"binary_threshold\":{},"

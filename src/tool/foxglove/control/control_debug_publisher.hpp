@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modules/fire_control/fire_control.hpp"
+#include "runtime/runtime_diagnostics_sink.hpp"
 #include "tool/foxglove/foxglove_config.hpp"
 #include "tool/foxglove/runtime/foxglove_session.hpp"
 
@@ -41,7 +42,8 @@ class ControlDebugPublisher final {
   /** @brief 启动后台编码与发布线程；仅调用一次，没有活动输出时保持停止状态。 */
   void Start() noexcept;
   /** @brief 将一份不可变火控结果复制到有界队列；无订阅且未录制时直接忽略。 */
-  void Publish(const modules::FireControlResult& result) noexcept;
+  void Publish(const ::mv::runtime::ControlCycleOutput& output,
+               const ::mv::runtime::ControlCycleDiagnostics& diagnostics) noexcept;
   /** @brief 停止接收新样本，排空队列，等待工作线程退出并关闭全部频道。 */
   void Stop() noexcept;
   /** @brief 返回因队列溢出或入队异常而累计丢弃的控制样本数。 */
@@ -49,6 +51,10 @@ class ControlDebugPublisher final {
 
  private:
   struct ChannelSet;  ///< 同一 Foxglove Context 下四个控制诊断频道的 RAII 集合。
+  struct QueueSample {
+    ::mv::runtime::ControlCycleOutput output;
+    ::mv::runtime::ControlCycleDiagnostics diagnostics;
+  };
   /** @brief 持续取出队首样本，直至 Stop() 后队列完全排空。 */
   void WorkerLoop() noexcept;
   /** @brief 编码一份结果，并按实时订阅和录制状态发布各频道。 */
@@ -66,11 +72,11 @@ class ControlDebugPublisher final {
   std::uint64_t live_scene_id_{0};         ///< 实时 scene 频道订阅查询 ID。
   std::mutex mutex_;                       ///< 保护生产者—消费者队列。
   std::condition_variable condition_;      ///< 新样本或停止信号通知。
-  std::deque<modules::FireControlResult> queue_;  ///< 按到达顺序保存的有界样本队列。
-  std::thread worker_;                            ///< 唯一编码与发布线程。
-  std::atomic<bool> accepting_{false};            ///< 是否仍接受 Publish() 输入。
-  std::atomic<bool> stop_called_{false};          ///< 保证 Stop() 资源回收只执行一次。
-  std::atomic<std::uint64_t> dropped_{0};         ///< 累计丢弃样本计数。
+  std::deque<QueueSample> queue_;  ///< 按到达顺序分别保存正式输出与诊断输出。
+  std::thread worker_;             ///< 唯一编码与发布线程。
+  std::atomic<bool> accepting_{false};     ///< 是否仍接受 Publish() 输入。
+  std::atomic<bool> stop_called_{false};   ///< 保证 Stop() 资源回收只执行一次。
+  std::atomic<std::uint64_t> dropped_{0};  ///< 累计丢弃样本计数。
   std::deque<FeedbackHistorySample> estimated_history_;      ///< 最近一秒融合反馈。
   std::deque<FeedbackHistorySample> measured_history_;       ///< 最近一秒相机实测反馈。
   std::uint64_t last_measured_sequence_{~std::uint64_t{0}};  ///< 最近纳入历史的实测帧。

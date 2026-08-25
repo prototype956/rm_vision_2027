@@ -132,7 +132,7 @@ std::string LightbarJson(const modules::LightbarRefinementDiagnostic& lightbar) 
       lightbar.axis_valid ? "true" : "false", lightbar.success ? "true" : "false");
 }
 
-std::string RefinementJson(const modules::CornerRefinementResult& refinement) {
+std::string RefinementJson(const modules::CornerRefinementDiagnostics& refinement) {
   return fmt::format(
       "{{\"mode\":\"jlu_pca_gradient\",\"success\":{},\"fallback\":{},\"status\":\"{}\","
       "\"failure_light_index\":{},\"elapsed_ms\":{:.9g},\"lightbars\":[{},{}],"

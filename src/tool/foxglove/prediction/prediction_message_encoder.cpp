@@ -76,32 +76,32 @@ std::optional<::foxglove::schemas::Point2> ProjectPoint(const geometry::Vector3&
   return ::foxglove::schemas::Point2{.x = U, .y = V};
 }
 
-const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionResult& result,
+const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionOutput& output,
                                               ImagePredictionHorizon requested) {
   const double TARGET = requested == ImagePredictionHorizon::CURRENT ? 0.0 : 0.1;
-  const auto FOUND = std::find_if(result.horizons.begin(), result.horizons.end(),
+  const auto FOUND = std::find_if(output.horizons.begin(), output.horizons.end(),
                                   [TARGET](const modules::PredictionHorizon& value) {
                                     return std::abs(value.seconds - TARGET) < 1.0e-9;
                                   });
-  return FOUND == result.horizons.end() ? nullptr : &*FOUND;
+  return FOUND == output.horizons.end() ? nullptr : &*FOUND;
 }
 
 }  // namespace
 
-::foxglove::schemas::SceneUpdate EncodeScene(const modules::ArmorPredictionResult& result,
+::foxglove::schemas::SceneUpdate EncodeScene(const modules::ArmorPredictionOutput& output,
                                              const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::SceneUpdate update;
-  if (result.state == modules::TrackerState::LOST || result.horizons.empty())
+  if (output.state == modules::TrackerState::LOST || output.horizons.empty())
     return update;
   const ::foxglove::schemas::Duration LIFETIME{.sec = 0, .nsec = 200'000'000};
-  const auto& current = result.horizons.front();
+  const auto& current = output.horizons.front();
   // prediction_target 聚合当前中心、速度、双半径和本帧观测关联，便于联合诊断。
   ::foxglove::schemas::SceneEntity target;
   target.timestamp = timestamp;
   target.frame_id = "world";
   target.id = "prediction_target";
   target.lifetime = LIFETIME;
-  target.metadata = {{.key = "state", .value = modules::TrackerStateName(result.state)}};
+  target.metadata = {{.key = "state", .value = modules::TrackerStateName(output.state)}};
   ::foxglove::schemas::SpherePrimitive center;
   center.pose = ::foxglove::schemas::Pose{.position = Vector(current.center_world),
                                           .orientation = ::foxglove::schemas::Quaternion{.w = 1.0}};
@@ -113,7 +113,7 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionResu
   velocity.thickness = 0.02;
   velocity.color = {.r = 0.2, .g = 1.0, .b = 0.2, .a = 1.0};
   velocity.points = {Point(current.center_world),
-                     Point(current.center_world + result.velocity_world)};
+                     Point(current.center_world + output.velocity_world)};
   target.lines.push_back(std::move(velocity));
 
   const std::array<geometry::Vector3, 3> BODY_AXES{
@@ -140,10 +140,10 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionResu
     ring.thickness = 0.006;
     ring.color = pair == 0 ? ::foxglove::schemas::Color{.r = 0.2, .g = 1.0, .b = 0.3, .a = 0.55}
                            : ::foxglove::schemas::Color{.r = 0.1, .g = 0.7, .b = 1.0, .a = 0.55};
-    const double RADIUS = result.radii_m[pair];
+    const double RADIUS = output.radii_m[pair];
     geometry::Vector3 ring_center = current.center_world;
     if (pair == 1)
-      ring_center += result.height_offset_m * BODY_AXES[2];
+      ring_center += output.height_offset_m * BODY_AXES[2];
     constexpr int SEGMENTS = 48;
     for (int index = 0; index < SEGMENTS; ++index) {
       const double ANGLE = 2.0 * std::numbers::pi * static_cast<double>(index) / SEGMENTS;
@@ -155,11 +155,11 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionResu
 
   update.entities.push_back(std::move(target));
 
-  const double WIDTH = result.type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
+  const double WIDTH = output.type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
   constexpr double HEIGHT = 0.055;
-  for (std::size_t horizon_index = 0; horizon_index < result.horizons.size(); ++horizon_index) {
+  for (std::size_t horizon_index = 0; horizon_index < output.horizons.size(); ++horizon_index) {
     // 每个时域使用稳定 entity id，Foxglove 可原位更新而不会留下历史拖影。
-    const auto& horizon = result.horizons[horizon_index];
+    const auto& horizon = output.horizons[horizon_index];
     ::foxglove::schemas::SceneEntity entity;
     entity.timestamp = timestamp;
     entity.frame_id = "world";
@@ -185,14 +185,15 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionResu
   return update;
 }
 
-std::string EncodeState(const modules::ArmorPredictionResult& result,
+std::string EncodeState(const modules::ArmorPredictionOutput& output,
+                        const modules::ArmorPredictionDiagnostics& diagnostics,
                         const simulation_evaluation::PredictionEvaluationResult* evaluation,
                         const ::foxglove::schemas::Timestamp& timestamp) {
   std::string associations = "[";
-  for (std::size_t index = 0; index < result.associations.size(); ++index) {
+  for (std::size_t index = 0; index < diagnostics.associations.size(); ++index) {
     if (index != 0)
       associations += ',';
-    const auto& value = result.associations[index];
+    const auto& value = diagnostics.associations[index];
     associations += fmt::format(
         "{{\"input_index\":{},\"slot\":{},\"candidate_slot\":{},\"accepted\":{},"
         "\"gate\":{:.9g},\"center_error_px\":{:.9g},"
@@ -204,10 +205,10 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
   }
   associations += ']';
   std::string lightbar_associations = "[";
-  for (std::size_t index = 0; index < result.lightbar_associations.size(); ++index) {
+  for (std::size_t index = 0; index < diagnostics.lightbar_associations.size(); ++index) {
     if (index != 0)
       lightbar_associations += ',';
-    const auto& value = result.lightbar_associations[index];
+    const auto& value = diagnostics.lightbar_associations[index];
     lightbar_associations += fmt::format(
         "{{\"input_index\":{},\"slot\":{},\"candidate_slot\":{},\"left\":{},"
         "\"candidate_left\":{},\"accepted\":{},\"duplicate_full_armor\":{},"
@@ -224,11 +225,13 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
         value.predicted_bottom.x, value.predicted_bottom.y, value.rejection_reason);
   }
   lightbar_associations += ']';
-  const auto NIS = result.nis ? fmt::format("{:.9g}", *result.nis) : "null";
-  const auto NIS_PER_DOF = result.nis_per_dof ? fmt::format("{:.9g}", *result.nis_per_dof) : "null";
-  const auto TRIAL_YAW_UPDATE = result.trial_yaw_velocity_update_rad_s
-                                    ? fmt::format("{:.9g}", *result.trial_yaw_velocity_update_rad_s)
-                                    : "null";
+  const auto NIS = diagnostics.nis ? fmt::format("{:.9g}", *diagnostics.nis) : "null";
+  const auto NIS_PER_DOF =
+      diagnostics.nis_per_dof ? fmt::format("{:.9g}", *diagnostics.nis_per_dof) : "null";
+  const auto TRIAL_YAW_UPDATE =
+      diagnostics.trial_yaw_velocity_update_rad_s
+          ? fmt::format("{:.9g}", *diagnostics.trial_yaw_velocity_update_rad_s)
+          : "null";
   const auto CENTER_ERROR = evaluation && evaluation->center_error_m
                                 ? fmt::format("{:.9g}", *evaluation->center_error_m)
                                 : "null";
@@ -242,7 +245,7 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
   const auto YAW_RATE_ERROR = evaluation && evaluation->yaw_velocity_error_rad_s
                                   ? fmt::format("{:.9g}", *evaluation->yaw_velocity_error_rad_s)
                                   : "null";
-  const int LABEL = result.label ? static_cast<int>(*result.label) : -1;
+  const int LABEL = output.label ? static_cast<int>(*output.label) : -1;
   return fmt::format(
       "{{\"timestamp\":{{\"sec\":{},\"nsec\":{}}},\"sequence\":{},"
       "\"tracker_state\":\"{}\",\"label\":{},\"dt_s\":{:.9g},"
@@ -269,31 +272,34 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
       "\"light_only_rejection_reason\":\"{}\","
       "\"light_fusion_used\":{},\"armor_fallback_used\":{},"
       "\"reset_count\":{},\"reset_reason\":\"{}\"}}",
-      timestamp.sec, timestamp.nsec, result.sequence, modules::TrackerStateName(result.state),
-      LABEL, result.dt_s, NumberArray(result.state_vector), NumberArray(result.covariance_diagonal),
-      NumberArray(result.innovation), NIS, NIS_PER_DOF, result.esekf_iterations,
-      result.estimation_elapsed_ms, NumberArray(result.radii_m), result.height_offset_m,
-      result.yaw_variance_rad2, CENTER_ERROR, YAW_ERROR, EQUIVALENT_YAW_ERROR, YAW_RATE_ERROR,
-      result.maneuver_active, result.maneuver_phase, result.maneuver_trigger,
-      result.maneuver_evidence_frames, result.maneuver_evidence_cost,
-      result.maneuver_confirmation_remaining_s, result.maneuver_remaining_s,
-      result.yaw_process_variance_used, TRIAL_YAW_UPDATE, result.association_gate_used,
-      result.accepted_association_count, result.rejected_association_count, associations,
-      lightbar_associations, result.detected_lightbar_count, result.deduplicated_lightbar_count,
-      result.matched_lightbar_count, result.accepted_lightbar_count, result.rejected_lightbar_count,
-      result.light_only_pair_count, result.light_only_update, result.light_only_update_blocked,
-      result.light_only_rejection_reason, result.light_fusion_used, result.armor_fallback_used,
-      result.reset_count, result.reset_reason);
+      timestamp.sec, timestamp.nsec, output.sequence, modules::TrackerStateName(output.state),
+      LABEL, diagnostics.dt_s, NumberArray(output.state_vector),
+      NumberArray(output.covariance_diagonal), NumberArray(diagnostics.innovation), NIS,
+      NIS_PER_DOF, diagnostics.esekf_iterations, diagnostics.estimation_elapsed_ms,
+      NumberArray(output.radii_m), output.height_offset_m, output.yaw_variance_rad2, CENTER_ERROR,
+      YAW_ERROR, EQUIVALENT_YAW_ERROR, YAW_RATE_ERROR, diagnostics.maneuver_active,
+      diagnostics.maneuver_phase, diagnostics.maneuver_trigger,
+      diagnostics.maneuver_evidence_frames, diagnostics.maneuver_evidence_cost,
+      diagnostics.maneuver_confirmation_remaining_s, diagnostics.maneuver_remaining_s,
+      diagnostics.yaw_process_variance_used, TRIAL_YAW_UPDATE, diagnostics.association_gate_used,
+      diagnostics.accepted_association_count, diagnostics.rejected_association_count, associations,
+      lightbar_associations, diagnostics.detected_lightbar_count,
+      diagnostics.deduplicated_lightbar_count, diagnostics.matched_lightbar_count,
+      diagnostics.accepted_lightbar_count, diagnostics.rejected_lightbar_count,
+      diagnostics.light_only_pair_count, diagnostics.light_only_update,
+      diagnostics.light_only_update_blocked, diagnostics.light_only_rejection_reason,
+      diagnostics.light_fusion_used, diagnostics.armor_fallback_used, diagnostics.reset_count,
+      diagnostics.reset_reason);
 }
 
 ::foxglove::schemas::SceneUpdate EncodeTruthOverlay(
-    const modules::ArmorPredictionResult& result,
+    const modules::ArmorPredictionOutput& output,
     const simulation_evaluation::PredictionEvaluationResult& evaluation,
     const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::SceneUpdate update;
-  if (!result.label || result.horizons.empty() || !evaluation.truth_position_world)
+  if (!output.label || output.horizons.empty() || !evaluation.truth_position_world)
     return update;
-  const auto& center = result.horizons.front().center_world;
+  const auto& center = output.horizons.front().center_world;
   const double CENTER_ERROR = evaluation.center_error_m.value_or(0.0);
   ::foxglove::schemas::SceneEntity entity;
   entity.timestamp = timestamp;
@@ -315,14 +321,15 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
 }
 
 ::foxglove::schemas::ImageAnnotations EncodeAnnotations(
-    const modules::ArmorPredictionResult& result, const frame::SpatialFrameView& spatial,
+    const modules::ArmorPredictionOutput& output,
+    const modules::ArmorPredictionDiagnostics& diagnostics, const frame::SpatialFrameView& spatial,
     ImagePredictionHorizon requested, const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::ImageAnnotations annotations;
   // ImageAnnotations 没有顶层时间戳；即使 LOST 也发布载体，让 Foxglove 清除上一帧框。
   AddTimestampCarrier(annotations, timestamp);
-  if (result.state == modules::TrackerState::LOST || !result.type)
+  if (output.state == modules::TrackerState::LOST || !output.type)
     return annotations;
-  const auto* horizon = FindHorizon(result, requested);
+  const auto* horizon = FindHorizon(output, requested);
   if (!horizon)
     return annotations;
 
@@ -330,7 +337,7 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
       geometry::Compose(spatial.world_t_gimbal, spatial.gimbal_t_camera_optical);
   const auto CAMERA_T_WORLD = geometry::Inverse(WORLD_T_CAMERA);
   const auto& calibration = spatial.calibration;
-  const double WIDTH = *result.type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
+  const double WIDTH = *output.type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
   constexpr double HEIGHT = 0.055;
   const std::array<geometry::Vector3, 4> LOCAL_CORNERS{
       geometry::Vector3(-WIDTH * 0.5, HEIGHT * 0.5, 0.0),
@@ -340,7 +347,7 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
   const bool FUTURE = requested == ImagePredictionHorizon::FUTURE_100_MS;
 
   if (!FUTURE) {
-    for (const auto& association : result.associations) {
+    for (const auto& association : diagnostics.associations) {
       const auto ADD_OUTLINE = [&](const std::array<cv::Point2f, 4>& corners,
                                    const ::foxglove::schemas::Color& color, double thickness) {
         ::foxglove::schemas::PointsAnnotation polygon;
@@ -427,21 +434,21 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
 }
 
 ::foxglove::schemas::ImageAnnotations EncodeSelectedArmorAnnotations(
-    const modules::ArmorPredictionResult& result, const frame::SpatialFrameView& spatial,
+    const modules::ArmorPredictionOutput& output, const frame::SpatialFrameView& spatial,
     const modules::ArmorSelectionSnapshot& selection,
     const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::ImageAnnotations annotations;
   AddTimestampCarrier(annotations, timestamp);
-  if (result.state == modules::TrackerState::LOST || !result.type)
+  if (output.state == modules::TrackerState::LOST || !output.type)
     return annotations;
-  const auto* horizon = FindHorizon(result, ImagePredictionHorizon::CURRENT);
+  const auto* horizon = FindHorizon(output, ImagePredictionHorizon::CURRENT);
   if (!horizon)
     return annotations;
 
   const auto WORLD_T_CAMERA =
       geometry::Compose(spatial.world_t_gimbal, spatial.gimbal_t_camera_optical);
   const auto CAMERA_T_WORLD = geometry::Inverse(WORLD_T_CAMERA);
-  const double WIDTH = *result.type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
+  const double WIDTH = *output.type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
   constexpr double HEIGHT = 0.055;
   const std::array<geometry::Vector3, 4> LOCAL_CORNERS{
       geometry::Vector3(-WIDTH * 0.5, HEIGHT * 0.5, 0.0),

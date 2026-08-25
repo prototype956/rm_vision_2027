@@ -13,10 +13,10 @@ class ArmorPnpSolver final {
  public:
   explicit ArmorPnpSolver(ArmorPnpConfig config);
 
-  [[nodiscard]] ArmorPnpAttempt Solve(std::span<const cv::Point2f, 4> image_corners,
-                                      geometry::ArmorType type,
-                                      const frame::CameraModel& camera_model,
-                                      std::size_t input_index, std::uint8_t label = 0) const;
+  [[nodiscard]] ArmorPnpSolveResult Solve(std::span<const cv::Point2f, 4> image_corners,
+                                          geometry::ArmorType type,
+                                          const frame::CameraModel& camera_model,
+                                          std::size_t input_index, std::uint8_t label = 0) const;
 
  private:
   ArmorPnpConfig config_;

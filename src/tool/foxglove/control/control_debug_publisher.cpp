@@ -18,6 +18,24 @@
 namespace mv::tool::foxglove::control {
 namespace {
 
+/** @brief Foxglove 边界重新组合正式轨迹和诊断轨迹，保持既有编码字段。 */
+struct GimbalTrajectoryDebugView final : modules::GimbalTrajectoryOutput,
+                                         modules::GimbalTrajectoryDiagnostics {
+  explicit GimbalTrajectoryDebugView(const modules::FireControlResult& result)
+      : modules::GimbalTrajectoryOutput(result.output.plan),
+        modules::GimbalTrajectoryDiagnostics(result.diagnostics.plan) {}
+};
+
+/** @brief 仅在编码边界提供旧 Schema 所需的扁平只读视图。 */
+struct ControlDebugView final : modules::FireControlOutput, modules::FireControlDiagnostics {
+  explicit ControlDebugView(const modules::FireControlResult& result)
+      : modules::FireControlOutput(result.output),
+        modules::FireControlDiagnostics(result.diagnostics),
+        plan(result) {}
+
+  GimbalTrajectoryDebugView plan;
+};
+
 // 高频 state/tracking 使用 JSON 便于 Foxglove Plot 直接选择字段；低频 trajectory
 // 携带完整数组，scene 则提供 world 坐标系中的空间关系和颜色状态提示。
 constexpr char K_STATE_TOPIC[] = "/vision/control/state";
@@ -316,7 +334,7 @@ std::string EncodeArmorSelection(const modules::ArmorSelectionDiagnostics& selec
 }
 
 /** @brief 编码分组后的完整控制状态；字段保持当前控制周期的原始物理单位。 */
-std::string EncodeState(const modules::FireControlResult& value, std::uint64_t dropped_samples) {
+std::string EncodeState(const ControlDebugView& value, std::uint64_t dropped_samples) {
   const auto& command = value.command;
   const auto& feedback = value.feedback;
   const auto& measured = value.measured_feedback;
@@ -477,7 +495,7 @@ std::string EncodeState(const modules::FireControlResult& value, std::uint64_t d
  *
  * 偏航差值计算前会围绕比较基准连续展开，避免 ±pi 边界产生约 2pi 的伪跳变。
  */
-std::string EncodeTracking(const modules::FireControlResult& value) {
+std::string EncodeTracking(const ControlDebugView& value) {
   const bool REFERENCE_VALID = value.plan.reference.size() > 1;
   const bool MPC_CANDIDATE_VALID = value.plan.trajectory.size() > 1;
   const bool PUBLISHED_VALID = value.command_publish_succeeded && value.command.valid;
@@ -737,7 +755,7 @@ std::string EncodeTracking(const modules::FireControlResult& value) {
 }
 
 /** @brief 编码完整 MPC 时域以及相对当前命令时刻的一秒反馈历史。 */
-std::string EncodeTrajectory(const modules::FireControlResult& value,
+std::string EncodeTrajectory(const ControlDebugView& value,
                              const std::deque<FeedbackHistorySample>& estimated_history,
                              const std::deque<FeedbackHistorySample>& measured_history) {
   std::string output = fmt::format(
@@ -826,8 +844,7 @@ geometry::Vector3 AimPoint(const geometry::Vector3& muzzle, double yaw, double p
  * 已发布命令射线；颜色含义也写入场景状态文本。
  */
 ::foxglove::schemas::SceneUpdate EncodeScene(
-    const modules::FireControlResult& value,
-    const std::deque<FeedbackHistorySample>& estimated_history,
+    const ControlDebugView& value, const std::deque<FeedbackHistorySample>& estimated_history,
     const std::deque<FeedbackHistorySample>& measured_history) {
   ::foxglove::schemas::SceneUpdate update;
   if (!value.muzzle_pose_valid)
@@ -1134,7 +1151,9 @@ void ControlDebugPublisher::Start() noexcept {
   }
 }
 
-void ControlDebugPublisher::Publish(const modules::FireControlResult& result) noexcept {
+void ControlDebugPublisher::Publish(
+    const ::mv::runtime::ControlCycleOutput& output,
+    const ::mv::runtime::ControlCycleDiagnostics& diagnostics) noexcept {
   const bool live_demand = live_ && session_.LiveActive() &&
                            (session_.Subscription(live_state_id_).subscribers > 0 ||
                             session_.Subscription(live_tracking_id_).subscribers > 0 ||
@@ -1149,7 +1168,7 @@ void ControlDebugPublisher::Publish(const modules::FireControlResult& result) no
       queue_.pop_front();
       dropped_.fetch_add(1, std::memory_order_relaxed);
     }
-    queue_.push_back(result);
+    queue_.push_back({.output = output, .diagnostics = diagnostics});
     condition_.notify_one();
   } catch (const std::exception& error) {
     dropped_.fetch_add(1, std::memory_order_relaxed);
@@ -1159,41 +1178,47 @@ void ControlDebugPublisher::Publish(const modules::FireControlResult& result) no
 
 void ControlDebugPublisher::WorkerLoop() noexcept {
   while (true) {
-    modules::FireControlResult result;
+    QueueSample sample;
     {
       std::unique_lock lock(mutex_);
       condition_.wait(lock, [this] { return !queue_.empty() || !accepting_.load(); });
       if (queue_.empty())
         return;
-      result = std::move(queue_.front());
+      sample = std::move(queue_.front());
       queue_.pop_front();
     }
+    modules::FireControlResult result;
+    result.output = std::move(sample.output.fire_control);
+    result.diagnostics = std::move(sample.diagnostics.fire_control);
     Process(result);
   }
 }
 
 void ControlDebugPublisher::UpdateHistory(const modules::FireControlResult& result) noexcept {
   constexpr std::uint64_t history_ns = 1'000'000'000ULL;
-  if (result.feedback.valid) {
+  const auto& output = result.output;
+  const auto& diagnostics = result.diagnostics;
+  if (diagnostics.feedback.valid) {
     estimated_history_.push_back(
-        {.timestamp_ns = result.command_timestamp_ns, .feedback = result.feedback});
+        {.timestamp_ns = output.command_timestamp_ns, .feedback = diagnostics.feedback});
   }
-  if (result.measurement_fresh && result.measured_feedback.valid &&
-      result.measured_feedback.source_sequence != last_measured_sequence_) {
+  if (diagnostics.measurement_fresh && diagnostics.measured_feedback.valid &&
+      diagnostics.measured_feedback.source_sequence != last_measured_sequence_) {
     // 优先使用相机采集 Unix 时间；缺失时由控制命令时间减量测年龄近似恢复。
-    std::uint64_t timestamp_ns = result.command_timestamp_ns;
-    if (result.source_capture_timestamp_ns) {
-      timestamp_ns = *result.source_capture_timestamp_ns;
-    } else if (std::isfinite(result.measurement_age_s) && result.measurement_age_s >= 0.0) {
-      const auto age_ns = static_cast<std::uint64_t>(result.measurement_age_s * 1.0e9);
+    std::uint64_t timestamp_ns = output.command_timestamp_ns;
+    if (output.source_capture_timestamp_ns) {
+      timestamp_ns = *output.source_capture_timestamp_ns;
+    } else if (std::isfinite(diagnostics.measurement_age_s) &&
+               diagnostics.measurement_age_s >= 0.0) {
+      const auto age_ns = static_cast<std::uint64_t>(diagnostics.measurement_age_s * 1.0e9);
       timestamp_ns = age_ns < timestamp_ns ? timestamp_ns - age_ns : 0;
     }
     measured_history_.push_back(
-        {.timestamp_ns = timestamp_ns, .feedback = result.measured_feedback});
-    last_measured_sequence_ = result.measured_feedback.source_sequence;
+        {.timestamp_ns = timestamp_ns, .feedback = diagnostics.measured_feedback});
+    last_measured_sequence_ = diagnostics.measured_feedback.source_sequence;
   }
   const auto oldest =
-      result.command_timestamp_ns > history_ns ? result.command_timestamp_ns - history_ns : 0;
+      output.command_timestamp_ns > history_ns ? output.command_timestamp_ns - history_ns : 0;
   while (!estimated_history_.empty() && estimated_history_.front().timestamp_ns < oldest)
     estimated_history_.pop_front();
   while (!measured_history_.empty() && measured_history_.front().timestamp_ns < oldest)
@@ -1203,65 +1228,66 @@ void ControlDebugPublisher::UpdateHistory(const modules::FireControlResult& resu
 void ControlDebugPublisher::Process(const modules::FireControlResult& result) noexcept {
   try {
     UpdateHistory(result);
-    const auto state_json = EncodeState(result, dropped_.load(std::memory_order_relaxed));
-    const auto tracking_json = EncodeTracking(result);
+    const ControlDebugView value(result);
+    const auto state_json = EncodeState(value, dropped_.load(std::memory_order_relaxed));
+    const auto tracking_json = EncodeTracking(value);
     const bool trajectory_sample =
-        result.source_sequence != last_trajectory_sequence_ &&
+        value.source_sequence != last_trajectory_sequence_ &&
         (last_trajectory_timestamp_ns_ == 0 ||
-         result.command_timestamp_ns >= last_trajectory_timestamp_ns_ + trajectory_period_ns_);
+         value.command_timestamp_ns >= last_trajectory_timestamp_ns_ + trajectory_period_ns_);
     // 数组轨迹和三维场景编码较重，按图像帧率采样；标量频道仍保留每个控制周期。
     std::string trajectory_json;
     ::foxglove::schemas::SceneUpdate scene;
     if (trajectory_sample) {
-      last_trajectory_sequence_ = result.source_sequence;
-      last_trajectory_timestamp_ns_ = result.command_timestamp_ns;
-      trajectory_json = EncodeTrajectory(result, estimated_history_, measured_history_);
-      scene = EncodeScene(result, estimated_history_, measured_history_);
+      last_trajectory_sequence_ = value.source_sequence;
+      last_trajectory_timestamp_ns_ = value.command_timestamp_ns;
+      trajectory_json = EncodeTrajectory(value, estimated_history_, measured_history_);
+      scene = EncodeScene(value, estimated_history_, measured_history_);
     }
     // Foxglove Context 的写入由会话级互斥量串行化，避免其他发布器并发写 live/MCAP。
     std::lock_guard publish_lock(session_.PublishMutex());
     if (live_ && session_.LiveActive()) {
       if (session_.Subscription(live_state_id_).subscribers > 0) {
-        const auto error = Log(*live_->state, state_json, result.command_timestamp_ns);
+        const auto error = Log(*live_->state, state_json, value.command_timestamp_ns);
         if (error != ::foxglove::FoxgloveError::Ok) {
           session_.ReportLiveError("publish control state", error);
         }
       }
       if (session_.Subscription(live_tracking_id_).subscribers > 0) {
-        const auto error = Log(*live_->tracking, tracking_json, result.command_timestamp_ns);
+        const auto error = Log(*live_->tracking, tracking_json, value.command_timestamp_ns);
         if (error != ::foxglove::FoxgloveError::Ok) {
           session_.ReportLiveError("publish gimbal tracking", error);
         }
       }
       if (trajectory_sample && session_.Subscription(live_trajectory_id_).subscribers > 0) {
-        const auto error = Log(*live_->trajectory, trajectory_json, result.command_timestamp_ns);
+        const auto error = Log(*live_->trajectory, trajectory_json, value.command_timestamp_ns);
         if (error != ::foxglove::FoxgloveError::Ok) {
           session_.ReportLiveError("publish control trajectory", error);
         }
       }
       if (trajectory_sample && session_.Subscription(live_scene_id_).subscribers > 0) {
-        const auto error = live_->scene->log(scene, result.command_timestamp_ns);
+        const auto error = live_->scene->log(scene, value.command_timestamp_ns);
         if (error != ::foxglove::FoxgloveError::Ok) {
           session_.ReportLiveError("publish control scene", error);
         }
       }
     }
     if (recording_ && session_.RecordingActive()) {
-      if (const auto error = Log(*recording_->state, state_json, result.command_timestamp_ns);
+      if (const auto error = Log(*recording_->state, state_json, value.command_timestamp_ns);
           error != ::foxglove::FoxgloveError::Ok) {
         session_.ReportRecordingError("record control state", error);
       }
-      if (const auto error = Log(*recording_->tracking, tracking_json, result.command_timestamp_ns);
+      if (const auto error = Log(*recording_->tracking, tracking_json, value.command_timestamp_ns);
           error != ::foxglove::FoxgloveError::Ok) {
         session_.ReportRecordingError("record gimbal tracking", error);
       }
       if (trajectory_sample) {
         const auto error =
-            Log(*recording_->trajectory, trajectory_json, result.command_timestamp_ns);
+            Log(*recording_->trajectory, trajectory_json, value.command_timestamp_ns);
         if (error != ::foxglove::FoxgloveError::Ok) {
           session_.ReportRecordingError("record control trajectory", error);
         }
-        const auto scene_error = recording_->scene->log(scene, result.command_timestamp_ns);
+        const auto scene_error = recording_->scene->log(scene, value.command_timestamp_ns);
         if (scene_error != ::foxglove::FoxgloveError::Ok) {
           session_.ReportRecordingError("record control scene", scene_error);
         }

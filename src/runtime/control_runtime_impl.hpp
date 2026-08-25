@@ -25,11 +25,11 @@ class ControlRuntimeImpl final {
   ControlRuntimeImpl(modules::FireControlConfig fire_config,
                      modules::GimbalTrajectoryPlannerConfig planner_config,
                      std::unique_ptr<hal::IGimbalCommandSink> sink,
-                     tool::foxglove::VisionDebugPublisher* diagnostics);
+                     IRuntimeDiagnosticsSink* diagnostics);
   ~ControlRuntimeImpl();
 
   void Start();
-  void Update(const modules::ArmorPredictionResult& prediction,
+  void Update(const modules::ArmorPredictionOutput& prediction,
               const frame::FrameKinematics& kinematics,
               const std::optional<hal::GimbalActuatorTelemetry>& gimbal_actuator);
   void Stop() noexcept;
@@ -67,7 +67,7 @@ class ControlRuntimeImpl final {
   modules::FireControl fire_control_;
   modules::GimbalFeedbackEstimator feedback_estimator_;
   std::unique_ptr<hal::IGimbalCommandSink> sink_;
-  tool::foxglove::VisionDebugPublisher* diagnostics_{nullptr};
+  IRuntimeDiagnosticsSink* diagnostics_{nullptr};
   std::shared_ptr<const modules::ControlInputSnapshot> latest_snapshot_;
   std::deque<hal::GimbalCommand> sent_commands_;
   std::vector<modules::PlannedGimbalPoint> last_successful_trajectory_;

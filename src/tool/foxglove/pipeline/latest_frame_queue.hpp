@@ -6,7 +6,6 @@
 #include <mutex>
 
 #include <optional>
-#include <span>
 
 namespace mv::tool::foxglove::pipeline {
 
@@ -33,11 +32,8 @@ class LatestFrameQueue final {
    * @throws std::bad_alloc 复制检测结果或空间元数据失败。
    */
   [[nodiscard]] QueuePushResult Push(
-      const frame::FramePacket& packet, std::span<const modules::ArmorDetection> detections,
-      const modules::DetectorStats& detector_stats,
-      const modules::LightbarDetectionResult& lightbar_result,
-      const modules::ArmorPnpFrameResult& pnp_result,
-      const modules::ArmorPredictionResult& prediction_result,
+      const frame::FramePacket& packet, const ::mv::runtime::VisionFrameOutput& output,
+      const ::mv::runtime::VisionFrameDiagnostics& diagnostics,
       const std::optional<simulation_evaluation::SimulationEvaluationResult>& simulation_evaluation,
       std::optional<modules::ArmorSelectionSnapshot> selection);
   /** @brief 阻塞等待下一帧；停止且队列排空后返回空值。 */

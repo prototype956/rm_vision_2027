@@ -6,8 +6,8 @@
 #include "modules/armor_light_detector/armor_light_detector.hpp"
 #include "modules/armor_pnp/armor_pnp.hpp"
 #include "modules/armor_predictor/armor_predictor.hpp"
-
-#include <vector>
+#include "runtime/vision_frame_diagnostics.hpp"
+#include "runtime/vision_frame_output.hpp"
 
 namespace mv::runtime {
 
@@ -22,12 +22,8 @@ struct VisionPipelineConfig {
 
 /** @brief 同一相机帧经过完整感知链后产生的正式结果和诊断。 */
 struct VisionFrameResult {
-  std::vector<modules::ArmorDetection> detections;
-  modules::DetectorStats detector_stats;
-  std::vector<modules::CornerRefinementResult> refinements;
-  modules::LightbarDetectionResult lightbars;
-  modules::ArmorPnpFrameResult pnp;
-  modules::ArmorPredictionResult prediction;
+  VisionFrameOutput output;
+  VisionFrameDiagnostics diagnostics;
 };
 
 /** @brief 正式视觉算法可见的图像与可选同帧空间视图。 */

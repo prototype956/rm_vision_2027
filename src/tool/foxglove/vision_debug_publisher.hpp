@@ -1,11 +1,10 @@
 #pragma once
 
 #include "frame/frame_packet.hpp"
-#include "modules/armor_detector/armor_detector.hpp"
-#include "modules/armor_light_detector/armor_light_detector.hpp"
-#include "modules/armor_pnp/armor_pnp_types.hpp"
-#include "modules/armor_predictor/armor_prediction_types.hpp"
 #include "modules/fire_control/fire_control.hpp"
+#include "runtime/runtime_diagnostics_sink.hpp"
+#include "runtime/vision_frame_diagnostics.hpp"
+#include "runtime/vision_frame_output.hpp"
 #include "tool/foxglove/foxglove_config.hpp"
 #include "tool/simulation_evaluation/simulation_evaluation_types.hpp"
 
@@ -13,7 +12,6 @@
 #include <memory>
 
 #include <filesystem>
-#include <span>
 
 namespace mv::tool::foxglove {
 
@@ -87,16 +85,13 @@ class VisionDebugPublisher final {
    * @param prediction_result 与该图像对应的正式跟踪预测及诊断结果。
    * @param simulation_evaluation 可选的同帧仿真评估结果。
    */
-  void Publish(const frame::FramePacket& packet,
-               std::span<const modules::ArmorDetection> detections,
-               const modules::DetectorStats& detector_stats,
-               const modules::LightbarDetectionResult& lightbar_result,
-               const modules::ArmorPnpFrameResult& pnp_result,
-               const modules::ArmorPredictionResult& prediction_result,
+  void Publish(const frame::FramePacket& packet, const ::mv::runtime::VisionFrameOutput& output,
+               const ::mv::runtime::VisionFrameDiagnostics& diagnostics,
                const std::optional<simulation_evaluation::SimulationEvaluationResult>&
                    simulation_evaluation = std::nullopt) noexcept;
   /** @brief 非阻塞提交一个 100 Hz 控制诊断样本。 */
-  void PublishControl(const modules::FireControlResult& result) noexcept;
+  void PublishControl(const ::mv::runtime::ControlCycleOutput& output,
+                      const ::mv::runtime::ControlCycleDiagnostics& diagnostics) noexcept;
   /** @brief 获取自启动以来的线程安全累计统计。 */
   [[nodiscard]] VisionPublisherStats SnapshotStats() const noexcept;
   /** @brief 查询至少一个 sink 可用且流水线仍接受帧。 */

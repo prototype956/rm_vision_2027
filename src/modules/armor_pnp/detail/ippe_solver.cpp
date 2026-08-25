@@ -55,14 +55,12 @@ bool Finite(const cv::Point2f& point) {
 
 }  // namespace
 
-ArmorPnpAttempt SolveIppe(const ArmorPnpConfig& config,
-                          std::span<const cv::Point2f, 4> image_corners, geometry::ArmorType type,
-                          const frame::CameraModel& calibration, std::size_t input_index,
-                          std::uint8_t label) {
-  ArmorPnpAttempt result{.input_index = input_index,
-                         .status = PnpStatus::INVALID_INPUT,
-                         .estimate = std::nullopt,
-                         .refinement = std::nullopt};
+ArmorPnpSolveResult SolveIppe(const ArmorPnpConfig& config,
+                              std::span<const cv::Point2f, 4> image_corners,
+                              geometry::ArmorType type, const frame::CameraModel& calibration,
+                              std::size_t input_index, std::uint8_t label) {
+  ArmorPnpSolveResult result;
+  result.diagnostics.input_index = input_index;
   if (calibration.fx <= 0.0 || calibration.fy <= 0.0 ||
       !std::all_of(image_corners.begin(), image_corners.end(), Finite)) {
     return result;
@@ -77,11 +75,11 @@ ArmorPnpAttempt SolveIppe(const ArmorPnpConfig& config,
         std::vector<cv::Point2f>(image_corners.begin(), image_corners.end()),
         CameraMatrix(calibration), Distortion(calibration), rvecs, tvecs, false, cv::SOLVEPNP_IPPE);
     if (COUNT <= 0) {
-      result.status = PnpStatus::NO_SOLUTION;
+      result.diagnostics.status = PnpStatus::NO_SOLUTION;
       return result;
     }
   } catch (const cv::Exception&) {
-    result.status = PnpStatus::NO_SOLUTION;
+    result.diagnostics.status = PnpStatus::NO_SOLUTION;
     return result;
   }
 
@@ -89,6 +87,7 @@ ArmorPnpAttempt SolveIppe(const ArmorPnpConfig& config,
   double second_rmse = std::numeric_limits<double>::infinity();
   PnpStatus last_rejection = PnpStatus::NO_SOLUTION;
   std::optional<ArmorPoseEstimate> best;
+  std::optional<ArmorPoseDiagnostics> best_diagnostics;
   for (std::size_t candidate = 0; candidate < rvecs.size(); ++candidate) {
     const auto POSE = ToTransform(rvecs[candidate], tvecs[candidate]);
     bool positive = true;
@@ -133,7 +132,9 @@ ArmorPnpAttempt SolveIppe(const ArmorPnpConfig& config,
         .type = type,
         .width_m = type == geometry::ArmorType::LARGE ? config.large_width_m : config.small_width_m,
         .height_m = config.height_m,
-        .camera_t_armor = POSE,
+        .camera_t_armor = POSE};
+    ArmorPoseDiagnostics diagnostics{
+        .input_index = input_index,
         .candidate_index = candidate,
         .candidate_rmse_gap_px = std::nullopt,
         .reprojection_rmse_px = RMSE,
@@ -147,20 +148,22 @@ ArmorPnpAttempt SolveIppe(const ArmorPnpConfig& config,
                                       .dot(POSE.translation.normalized()),
                                  -1.0, 1.0)) *
             K_RAD_TO_DEG};
-    std::copy(image_corners.begin(), image_corners.end(), estimate.image_corners.begin());
+    std::copy(image_corners.begin(), image_corners.end(), diagnostics.image_corners.begin());
     for (std::size_t corner = 0; corner < projected.size(); ++corner)
-      estimate.reprojected_corners[corner] = cv::Point2f(projected[corner]);
+      diagnostics.reprojected_corners[corner] = cv::Point2f(projected[corner]);
     best_rmse = RMSE;
     best = std::move(estimate);
+    best_diagnostics = diagnostics;
   }
   if (!best) {
-    result.status = last_rejection;
+    result.diagnostics.status = last_rejection;
     return result;
   }
-  result.status = PnpStatus::SUCCESS;
+  result.diagnostics.status = PnpStatus::SUCCESS;
   if (std::isfinite(second_rmse))
-    best->candidate_rmse_gap_px = second_rmse - best_rmse;
-  result.estimate = std::move(best);
+    best_diagnostics->candidate_rmse_gap_px = second_rmse - best_rmse;
+  result.output = std::move(best);
+  result.diagnostics.pose = best_diagnostics;
   return result;
 }
 

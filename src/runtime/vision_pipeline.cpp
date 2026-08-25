@@ -15,23 +15,35 @@ VisionPipeline::VisionPipeline(const VisionPipelineConfig& config)
 VisionFrameResult VisionPipeline::Process(const VisionFrameInput& input) {
   VisionFrameResult result;
   const auto& image = input.capture.image;
-  result.detections = detector_.Detect(image);
-  result.detector_stats = detector_.LastStats();
+  auto detector_result = detector_.Detect(image);
+  result.output.detections = std::move(detector_result.output.detections);
+  result.diagnostics.detector = detector_result.diagnostics;
 
   cv::Mat gray_image;
   cv::cvtColor(image, gray_image, cv::COLOR_BGR2GRAY);
-  result.refinements.reserve(result.detections.size());
-  for (const auto& detection : result.detections) {
-    result.refinements.push_back(corner_refiner_.Refine(gray_image, detection.corners));
+  result.output.refinements.reserve(result.output.detections.size());
+  result.diagnostics.refinements.reserve(result.output.detections.size());
+  for (const auto& detection : result.output.detections) {
+    auto refinement = corner_refiner_.Refine(gray_image, detection.corners);
+    result.output.refinements.push_back(refinement.output);
+    result.diagnostics.refinements.push_back(std::move(refinement.diagnostics));
   }
-  result.lightbars =
-      light_detector_.Detect(image, gray_image, result.detections, result.refinements);
+  auto lightbars = light_detector_.Detect(image, gray_image, result.output.detections,
+                                          result.output.refinements);
+  result.output.lightbars = std::move(lightbars.output);
+  result.diagnostics.lightbars = std::move(lightbars.diagnostics);
+  pnp_.ObserveRefinementDiagnostics(result.diagnostics.refinements);
   if (input.spatial) {
-    result.pnp = pnp_.ProcessFrame(input.capture.stamp.sequence, input.spatial->calibration,
-                                   result.detections, result.refinements);
+    auto pnp = pnp_.ProcessFrame(input.capture.stamp.sequence, input.spatial->calibration,
+                                 result.output.detections, result.output.refinements);
+    result.output.pnp = std::move(pnp.output);
+    result.diagnostics.pnp = std::move(pnp.diagnostics);
   }
-  result.prediction = predictor_.ProcessFrame(input.capture.stamp, input.spatial, result.detections,
-                                              result.refinements, result.pnp, result.lightbars);
+  auto prediction = predictor_.ProcessFrame(input.capture.stamp, input.spatial,
+                                            result.output.detections, result.output.refinements,
+                                            result.output.pnp, result.output.lightbars);
+  result.output.prediction = std::move(prediction.output);
+  result.diagnostics.prediction = std::move(prediction.diagnostics);
   return result;
 }
 

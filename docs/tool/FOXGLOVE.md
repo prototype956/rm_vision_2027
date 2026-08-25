@@ -92,6 +92,12 @@ frustum、ground truth 和 `/vision/pnp/estimate`。
 编码，由 `pipeline` 统一管理限流、后台线程和频道。各领域仍属于同一调试帧，
 不会因为拆分模块而产生话题间时间差。
 
+运行时不再依赖 Foxglove 类型，而是向传输无关的 `IRuntimeDiagnosticsSink` 分别提交
+`VisionFrameOutput + VisionFrameDiagnostics` 和
+`ControlCycleOutput + ControlCycleDiagnostics`。应用层适配器再将两套数据交给 Foxglove，
+编码边界按既有 Schema 重新组合。当前仍完整创建并保持原有 29 个频道；诊断发布失败不改变
+正式视觉结果、控制命令或退出状态。
+
 ## 构建与运行
 
 ```bash

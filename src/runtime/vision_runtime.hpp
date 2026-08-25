@@ -10,10 +10,6 @@ namespace mv::tool {
 class DebugWindow;
 }
 
-namespace mv::tool::foxglove {
-class VisionDebugPublisher;
-}
-
 namespace mv::tool::simulation_evaluation {
 class SimulationEvaluator;
 }
@@ -21,6 +17,7 @@ class SimulationEvaluator;
 namespace mv::runtime {
 
 class ControlRuntime;
+class IRuntimeDiagnosticsSink;
 class VisionPipeline;
 
 /** @brief 视觉抓帧循环的终止原因，由应用层映射为稳定进程退出码。 */
@@ -35,7 +32,7 @@ enum class VisionRunStatus {
 class VisionRuntime final {
  public:
   VisionRuntime(hal::ICamera& camera, VisionPipeline& pipeline, ControlRuntime* control,
-                tool::DebugWindow* window, tool::foxglove::VisionDebugPublisher* diagnostics,
+                tool::DebugWindow* window, IRuntimeDiagnosticsSink* diagnostics,
                 tool::simulation_evaluation::SimulationEvaluator* evaluator) noexcept;
 
   /**
@@ -50,7 +47,7 @@ class VisionRuntime final {
   VisionPipeline& pipeline_;
   ControlRuntime* control_{nullptr};
   tool::DebugWindow* window_{nullptr};
-  tool::foxglove::VisionDebugPublisher* diagnostics_{nullptr};
+  IRuntimeDiagnosticsSink* diagnostics_{nullptr};
   tool::simulation_evaluation::SimulationEvaluator* evaluator_{nullptr};
 };
 

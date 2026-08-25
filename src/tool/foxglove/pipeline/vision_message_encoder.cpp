@@ -98,7 +98,8 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
   const auto PNP_DIAGNOSTIC =
       frame.simulation_evaluation
           ? frame.simulation_evaluation->pnp
-          : simulation_evaluation::MakePnpDiagnosticResult(frame.pnp_result);
+          : simulation_evaluation::MakePnpDiagnosticResult(frame.output.pnp, frame.diagnostics.pnp,
+                                                           frame.diagnostics.refinements);
   const auto* prediction_evaluation =
       frame.simulation_evaluation ? &frame.simulation_evaluation->prediction : nullptr;
   // 实机帧没有 epoch 时间时，用固定双时钟锚点换算，避免运行中系统校时造成时间跳变。
@@ -121,19 +122,20 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
     result.image = std::move(encoded.message);
   }
   if (demand.armor_annotations) {
-    result.armor_annotations = armor_detector::EncodeAnnotations(frame.detections, TIMESTAMP);
+    result.armor_annotations =
+        armor_detector::EncodeAnnotations(frame.output.detections, TIMESTAMP);
   }
   if (demand.armor_stats) {
     result.armor_stats_json =
-        armor_detector::EncodeDetectorStats(frame.detector_stats, stamp.sequence, TIMESTAMP);
+        armor_detector::EncodeDetectorStats(frame.diagnostics.detector, stamp.sequence, TIMESTAMP);
   }
   if (demand.lightbar_annotations) {
     result.lightbar_annotations = armor_light_detector::EncodeAnnotations(
-        frame.lightbar_result, frame.prediction_result, TIMESTAMP);
+        frame.output.lightbars, frame.diagnostics.prediction, TIMESTAMP);
   }
   if (demand.lightbar_stats) {
     result.lightbar_stats_json = armor_light_detector::EncodeStats(
-        frame.lightbar_result, frame.prediction_result, stamp.sequence, TIMESTAMP);
+        frame.diagnostics.lightbars, frame.diagnostics.prediction, stamp.sequence, TIMESTAMP);
   }
   if (packet.kinematics && demand.transforms)
     result.transforms = spatial::EncodeTransforms(*packet.kinematics, TIMESTAMP);
@@ -150,7 +152,7 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
     }
     if (demand.prediction_truth_overlay && prediction_evaluation)
       result.prediction_truth_overlay = prediction::EncodeTruthOverlay(
-          frame.prediction_result, *prediction_evaluation, TIMESTAMP);
+          frame.output.prediction, *prediction_evaluation, TIMESTAMP);
   }
   if (packet.simulation && packet.camera_model && packet.kinematics &&
       demand.projection_annotations) {
@@ -161,22 +163,22 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
     result.pnp_estimates = pnp::EncodeEstimates(PNP_DIAGNOSTIC, *packet.kinematics, TIMESTAMP);
   if (demand.prediction_current_annotations) {
     result.prediction_current_annotations =
-        SPATIAL_VIEW
-            ? prediction::EncodeAnnotations(frame.prediction_result, *SPATIAL_VIEW,
-                                            prediction::ImagePredictionHorizon::CURRENT, TIMESTAMP)
-            : prediction::EncodeEmptyAnnotations(TIMESTAMP);
+        SPATIAL_VIEW ? prediction::EncodeAnnotations(
+                           frame.output.prediction, frame.diagnostics.prediction, *SPATIAL_VIEW,
+                           prediction::ImagePredictionHorizon::CURRENT, TIMESTAMP)
+                     : prediction::EncodeEmptyAnnotations(TIMESTAMP);
   }
   if (demand.prediction_future_annotations) {
     result.prediction_future_annotations =
         SPATIAL_VIEW ? prediction::EncodeAnnotations(
-                           frame.prediction_result, *SPATIAL_VIEW,
+                           frame.output.prediction, frame.diagnostics.prediction, *SPATIAL_VIEW,
                            prediction::ImagePredictionHorizon::FUTURE_100_MS, TIMESTAMP)
                      : prediction::EncodeEmptyAnnotations(TIMESTAMP);
   }
   if (demand.selected_armor_annotations) {
     result.selected_armor_annotations =
         SPATIAL_VIEW && frame.armor_selection
-            ? prediction::EncodeSelectedArmorAnnotations(frame.prediction_result, *SPATIAL_VIEW,
+            ? prediction::EncodeSelectedArmorAnnotations(frame.output.prediction, *SPATIAL_VIEW,
                                                          *frame.armor_selection, TIMESTAMP)
             : prediction::EncodeEmptyAnnotations(TIMESTAMP);
   }
@@ -200,11 +202,11 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
     result.pnp_stats_json = pnp::EncodeStats(PNP_DIAGNOSTIC, stamp.sequence, TIMESTAMP);
   }
   if (demand.prediction_scene) {
-    result.prediction_scene = prediction::EncodeScene(frame.prediction_result, TIMESTAMP);
+    result.prediction_scene = prediction::EncodeScene(frame.output.prediction, TIMESTAMP);
   }
   if (demand.prediction_state) {
-    result.prediction_state_json =
-        prediction::EncodeState(frame.prediction_result, prediction_evaluation, TIMESTAMP);
+    result.prediction_state_json = prediction::EncodeState(
+        frame.output.prediction, frame.diagnostics.prediction, prediction_evaluation, TIMESTAMP);
   }
 
   result.publish_latency_ms = Milliseconds(SteadyClock::now() - stamp.receive_steady_time);

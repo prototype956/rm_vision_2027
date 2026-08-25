@@ -1,6 +1,6 @@
 #include "core/logger.hpp"
 #include "runtime/control_runtime_impl.hpp"
-#include "tool/foxglove/vision_debug_publisher.hpp"
+#include "runtime/runtime_diagnostics_sink.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -80,74 +80,76 @@ void ControlRuntimeImpl::ProcessSnapshot(
   const auto FEEDBACK = feedback_estimator_.Estimate(now);
   const auto FEEDBACK_SOURCE = feedback_estimator_.Source();
   auto result = fire_control_.Step(input, FEEDBACK, now);
-  if (result.tracking_object_reset && control_projection_active_) {
+  auto& output = result.output;
+  auto& diagnostics = result.diagnostics;
+  if (output.tracking_object_reset && control_projection_active_) {
     feedback_estimator_.ClearRuntimeActuator();
     ClearPublishedProjection("tracking_object_changed");
   }
-  result.feedback_source = FEEDBACK_SOURCE;
-  result.measured_feedback = feedback_estimator_.LastMeasurement();
-  result.measurement_fresh = measurement_fresh;
-  result.measurement_age_s =
-      result.measured_feedback.valid
-          ? std::max(
-                0.0,
-                std::chrono::duration<double>(now - result.measured_feedback.timestamp).count())
+  diagnostics.feedback_source = FEEDBACK_SOURCE;
+  diagnostics.measured_feedback = feedback_estimator_.LastMeasurement();
+  diagnostics.measurement_fresh = measurement_fresh;
+  diagnostics.measurement_age_s =
+      diagnostics.measured_feedback.valid
+          ? std::max(0.0,
+                     std::chrono::duration<double>(now - diagnostics.measured_feedback.timestamp)
+                         .count())
           : std::numeric_limits<double>::infinity();
-  result.matched_prior_command = state.matched_command;
-  result.actuator_telemetry = ACTUATOR;
-  result.frame_actuator_telemetry = snapshot->frame_actuator;
-  result.runtime_actuator_age_s = feedback_estimator_.RuntimeActuatorAgeS();
-  result.feedback_projection_dt_s = feedback_estimator_.ProjectionDtS();
-  result.feedback_runtime_state_timestamp_ns = feedback_estimator_.RuntimeStateTimestampNs();
+  diagnostics.matched_prior_command = state.matched_command;
+  diagnostics.actuator_telemetry = ACTUATOR;
+  diagnostics.frame_actuator_telemetry = snapshot->frame_actuator;
+  diagnostics.runtime_actuator_age_s = feedback_estimator_.RuntimeActuatorAgeS();
+  diagnostics.feedback_projection_dt_s = feedback_estimator_.ProjectionDtS();
+  diagnostics.feedback_runtime_state_timestamp_ns = feedback_estimator_.RuntimeStateTimestampNs();
   if (snapshot->frame_actuator && snapshot->frame_actuator->valid &&
       snapshot->frame_actuator->state_timestamp_ns != 0 &&
       snapshot->frame_actuator->state_timestamp_ns <= SYSTEM_NOW_NS) {
-    result.frame_actuator_age_s =
+    diagnostics.frame_actuator_age_s =
         static_cast<double>(SYSTEM_NOW_NS - snapshot->frame_actuator->state_timestamp_ns) * 1.0e-9;
   } else {
-    result.frame_actuator_age_s = std::numeric_limits<double>::infinity();
+    diagnostics.frame_actuator_age_s = std::numeric_limits<double>::infinity();
   }
-  result.feedback_runtime_comparison_valid =
+  diagnostics.feedback_runtime_comparison_valid =
       FEEDBACK.valid && ACTUATOR.valid && ACTUATOR.mode == hal::GimbalActuatorMode::PHYSICAL;
-  if (result.feedback_runtime_comparison_valid) {
-    result.yaw_feedback_minus_runtime_actuator =
+  if (diagnostics.feedback_runtime_comparison_valid) {
+    diagnostics.yaw_feedback_minus_runtime_actuator =
         std::remainder(FEEDBACK.yaw - ACTUATOR.actual_yaw, 2.0 * std::numbers::pi);
-    result.pitch_feedback_minus_runtime_actuator = FEEDBACK.pitch - ACTUATOR.actual_pitch;
+    diagnostics.pitch_feedback_minus_runtime_actuator = FEEDBACK.pitch - ACTUATOR.actual_pitch;
   }
-  result.frame_runtime_comparison_valid =
+  diagnostics.frame_runtime_comparison_valid =
       snapshot->frame_actuator && snapshot->frame_actuator->valid && ACTUATOR.valid &&
       snapshot->frame_actuator->mode == hal::GimbalActuatorMode::PHYSICAL &&
       ACTUATOR.mode == hal::GimbalActuatorMode::PHYSICAL;
-  if (result.frame_runtime_comparison_valid) {
+  if (diagnostics.frame_runtime_comparison_valid) {
     const auto& frame = *snapshot->frame_actuator;
-    result.yaw_frame_minus_runtime_actuator =
+    diagnostics.yaw_frame_minus_runtime_actuator =
         std::remainder(frame.actual_yaw - ACTUATOR.actual_yaw, 2.0 * std::numbers::pi);
-    result.pitch_frame_minus_runtime_actuator = frame.actual_pitch - ACTUATOR.actual_pitch;
-    result.yaw_frame_acceleration_minus_runtime =
+    diagnostics.pitch_frame_minus_runtime_actuator = frame.actual_pitch - ACTUATOR.actual_pitch;
+    diagnostics.yaw_frame_acceleration_minus_runtime =
         frame.yaw_acceleration - ACTUATOR.yaw_acceleration;
-    result.pitch_frame_acceleration_minus_runtime =
+    diagnostics.pitch_frame_acceleration_minus_runtime =
         frame.pitch_acceleration - ACTUATOR.pitch_acceleration;
   }
-  result.control_period_s = timing.period_s;
-  result.deadline_lateness_us = timing.deadline_lateness_us;
-  result.command_sink_healthy = SINK_HEALTHY;
-  result.talos_heartbeat_ns = sink_->HeartbeatTimestampNs();
+  diagnostics.control_period_s = timing.period_s;
+  diagnostics.deadline_lateness_us = timing.deadline_lateness_us;
+  output.command_sink_healthy = SINK_HEALTHY;
+  output.talos_heartbeat_ns = sink_->HeartbeatTimestampNs();
 
-  if (result.reject_reason == modules::FireRejectReason::MPC_FAILED) {
+  if (output.reject_reason == modules::FireRejectReason::MPC_FAILED) {
     ++consecutive_mpc_failure_cycles_;
   } else {
     consecutive_mpc_failure_cycles_ = 0;
   }
-  result.consecutive_mpc_failure_cycles = consecutive_mpc_failure_cycles_;
+  output.consecutive_mpc_failure_cycles = consecutive_mpc_failure_cycles_;
 
-  if (result.reject_reason == modules::FireRejectReason::MPC_FAILED &&
-      !last_successful_trajectory_.empty() && result.external_control_enabled &&
-      result.command_sink_healthy && !result.tracking_object_reset &&
-      result.selected_slot == last_successful_plan_slot_) {
+  if (output.reject_reason == modules::FireRejectReason::MPC_FAILED &&
+      !last_successful_trajectory_.empty() && output.external_control_enabled &&
+      output.command_sink_healthy && !output.tracking_object_reset &&
+      output.selected_slot == last_successful_plan_slot_) {
     const double FALLBACK_AGE_S =
         std::max(0.0, std::chrono::duration<double>(now - last_successful_plan_time_).count());
-    result.fallback_age_s = FALLBACK_AGE_S;
-    result.fallback_source_slot = last_successful_plan_slot_;
+    output.fallback_age_s = FALLBACK_AGE_S;
+    output.fallback_source_slot = last_successful_plan_slot_;
     constexpr double MAX_FALLBACK_AGE_S = 0.100;
     const auto ELAPSED_STEPS =
         static_cast<std::size_t>(std::max(1LL, std::llround(FALLBACK_AGE_S / PLANNER_DT_S)));
@@ -155,9 +157,9 @@ void ControlRuntimeImpl::ProcessSnapshot(
     if (FALLBACK_AGE_S <= MAX_FALLBACK_AGE_S &&
         FALLBACK_INDEX < last_successful_trajectory_.size()) {
       const auto& point = last_successful_trajectory_[FALLBACK_INDEX];
-      result.command = {.valid = true,
+      output.command = {.valid = true,
                         .fire = false,
-                        .timestamp_ns = result.command_timestamp_ns,
+                        .timestamp_ns = output.command_timestamp_ns,
                         .yaw = std::remainder(point.yaw, 2.0 * std::numbers::pi),
                         .yaw_velocity = point.yaw_velocity,
                         .yaw_acceleration = point.yaw_acceleration,
@@ -165,64 +167,64 @@ void ControlRuntimeImpl::ProcessSnapshot(
                         .pitch_velocity = point.pitch_velocity,
                         .pitch_acceleration = point.pitch_acceleration,
                         .target_distance_m = last_successful_target_distance_m_};
-      result.command.valid = true;
-      result.command.fire = false;
-      result.command_source = modules::GimbalCommandSource::TRAJECTORY_FALLBACK;
-      result.fallback_active = true;
-      result.fallback_trajectory_index = static_cast<int>(FALLBACK_INDEX);
-      result.fallback_remaining_points =
+      output.command.valid = true;
+      output.command.fire = false;
+      output.command_source = modules::GimbalCommandSource::TRAJECTORY_FALLBACK;
+      output.fallback_active = true;
+      output.fallback_trajectory_index = static_cast<int>(FALLBACK_INDEX);
+      output.fallback_remaining_points =
           static_cast<int>(last_successful_trajectory_.size() - FALLBACK_INDEX - 1);
     }
   }
 
-  if (!result.command_sink_healthy || !result.external_control_enabled) {
-    result.command.valid = false;
-    result.command.fire = false;
-    result.command_source = modules::GimbalCommandSource::STOP;
-    result.reject_reason = modules::FireRejectReason::TALOS_UNHEALTHY;
-    if (!result.external_control_enabled)
-      result.reject_reason = modules::FireRejectReason::EXTERNAL_CONTROL_DISABLED;
+  if (!output.command_sink_healthy || !output.external_control_enabled) {
+    output.command.valid = false;
+    output.command.fire = false;
+    output.command_source = modules::GimbalCommandSource::STOP;
+    output.reject_reason = modules::FireRejectReason::TALOS_UNHEALTHY;
+    if (!output.external_control_enabled)
+      output.reject_reason = modules::FireRejectReason::EXTERNAL_CONTROL_DISABLED;
   }
 
-  if (!result.command.valid) {
-    result.command_source = modules::GimbalCommandSource::STOP;
-    result.command.fire = false;
+  if (!output.command.valid) {
+    output.command_source = modules::GimbalCommandSource::STOP;
+    output.command.fire = false;
     if (control_projection_active_) {
-      if (result.reject_reason == modules::FireRejectReason::MPC_FAILED) {
-        result.fallback_expired_this_cycle = true;
+      if (output.reject_reason == modules::FireRejectReason::MPC_FAILED) {
+        diagnostics.fallback_expired_this_cycle = true;
         ClearPublishedProjection("mpc_fallback_expired");
       } else {
-        ClearPublishedProjection(modules::FireRejectReasonName(result.reject_reason));
+        ClearPublishedProjection(modules::FireRejectReasonName(output.reject_reason));
       }
     }
   }
   const auto SEND_START = std::chrono::steady_clock::now();
-  const bool SEND_SUCCEEDED = sink_->Send(result.command);
-  result.sink_send_time_us =
+  const bool SEND_SUCCEEDED = sink_->Send(output.command);
+  diagnostics.sink_send_time_us =
       std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - SEND_START)
           .count();
-  result.command_publish_succeeded = SEND_SUCCEEDED && result.command.valid;
-  result.published_valid = result.command_publish_succeeded;
+  output.command_publish_succeeded = SEND_SUCCEEDED && output.command.valid;
+  output.published_valid = output.command_publish_succeeded;
   if (!SEND_SUCCEEDED) {
-    result.command_sink_healthy = false;
-    result.command.valid = false;
-    result.command.fire = false;
-    result.reject_reason = modules::FireRejectReason::TALOS_UNHEALTHY;
-    result.command_source = modules::GimbalCommandSource::STOP;
-    result.published_valid = false;
+    output.command_sink_healthy = false;
+    output.command.valid = false;
+    output.command.fire = false;
+    output.reject_reason = modules::FireRejectReason::TALOS_UNHEALTHY;
+    output.command_source = modules::GimbalCommandSource::STOP;
+    output.published_valid = false;
     ClearPublishedProjection("command_send_failed");
   }
   if (SEND_SUCCEEDED)
-    RememberCommand(result.command);
-  if (result.command_publish_succeeded) {
-    feedback_estimator_.ObservePublishedCommand(result.command, now, false);
+    RememberCommand(output.command);
+  if (output.command_publish_succeeded) {
+    feedback_estimator_.ObservePublishedCommand(output.command, now, false);
     control_projection_active_ = true;
-    if (result.command_source == modules::GimbalCommandSource::MPC) {
-      last_successful_trajectory_ = result.plan.trajectory;
-      last_successful_command_index_ = static_cast<std::size_t>(result.plan.command_index);
-      last_successful_target_distance_m_ = result.command.target_distance_m;
+    if (output.command_source == modules::GimbalCommandSource::MPC) {
+      last_successful_trajectory_ = output.plan.trajectory;
+      last_successful_command_index_ = static_cast<std::size_t>(output.plan.command_index);
+      last_successful_target_distance_m_ = output.command.target_distance_m;
       last_successful_plan_time_ = now;
-      last_successful_plan_slot_ = result.selected_slot;
+      last_successful_plan_slot_ = output.selected_slot;
     }
   }
   AttachProjectionDiagnostics(result);
@@ -230,15 +232,15 @@ void ControlRuntimeImpl::ProcessSnapshot(
     MV_LOG_INFO("Control",
                 "seq={} tracker={} slot={} command={} fire={} reject={} "
                 "age(pred/fb)={:.1f}/{:.1f}ms mpc={} iter={}/{} solve={:.1f}us",
-                result.source_sequence, modules::TrackerStateName(result.tracker_state),
-                result.selected_slot, result.command.valid, result.command.fire,
-                modules::FireRejectReasonName(result.reject_reason),
-                result.prediction_age_s * 1.0e3, result.feedback_age_s * 1.0e3, result.plan.valid,
-                result.plan.yaw_iterations, result.plan.pitch_iterations,
-                result.plan.solve_time_us);
+                output.source_sequence, modules::TrackerStateName(output.tracker_state),
+                output.selected_slot, output.command.valid, output.command.fire,
+                modules::FireRejectReasonName(output.reject_reason),
+                output.prediction_age_s * 1.0e3, output.feedback_age_s * 1.0e3, output.plan.valid,
+                diagnostics.plan.yaw_iterations, diagnostics.plan.pitch_iterations,
+                diagnostics.plan.solve_time_us);
   }
   if (diagnostics_)
-    diagnostics_->PublishControl(result);
+    diagnostics_->PublishControl({.fire_control = output}, {.fire_control = diagnostics});
 }
 
 void ControlRuntimeImpl::Loop() noexcept {

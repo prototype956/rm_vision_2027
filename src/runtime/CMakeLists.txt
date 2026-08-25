@@ -26,7 +26,6 @@ target_link_libraries(mv-runtime
         mv-core
         mv-tool-armor-overlay
         mv-tool-debug
-        mv-tool-foxglove
         mv-tool-simulation-evaluation
         fmt::fmt
         opencv_imgproc

@@ -62,7 +62,7 @@ struct PnpEvaluationAttempt {
   std::size_t input_index{0};
   modules::PnpStatus status{modules::PnpStatus::INVALID_INPUT};
   std::optional<EvaluatedArmorPose> estimate;
-  std::optional<modules::CornerRefinementResult> refinement;
+  std::optional<modules::CornerRefinementDiagnostics> refinement;
 };
 
 struct EvaluationPercentiles {
@@ -126,9 +126,11 @@ struct SimulationEvaluationInput {
   const frame::FrameKinematics& kinematics;
   const simulation::SimulationFrameData& simulation;
   std::span<const modules::ArmorDetection> detections;
-  std::span<const modules::CornerRefinementResult> refinements;
-  const modules::ArmorPnpFrameResult& pnp;
-  const modules::ArmorPredictionResult& prediction;
+  std::span<const modules::CornerRefinementOutput> refinements;
+  std::span<const modules::CornerRefinementDiagnostics> refinement_diagnostics;
+  const modules::ArmorPnpOutput& pnp;
+  const modules::ArmorPnpDiagnostics& pnp_diagnostics;
+  const modules::ArmorPredictionOutput& prediction;
 };
 
 struct SimulationEvaluationResult {
@@ -140,6 +142,7 @@ struct SimulationEvaluationResult {
 
 /** @brief 在没有仿真评估时将正式 PnP 健康数据提升为兼容诊断结果。 */
 [[nodiscard]] PnpEvaluationResult MakePnpDiagnosticResult(
-    const modules::ArmorPnpFrameResult& formal);
+    const modules::ArmorPnpOutput& output, const modules::ArmorPnpDiagnostics& diagnostics,
+    std::span<const modules::CornerRefinementDiagnostics> refinements);
 
 }  // namespace mv::tool::simulation_evaluation

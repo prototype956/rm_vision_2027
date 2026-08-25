@@ -1,6 +1,7 @@
 #include "runtime/control_runtime.hpp"
 
 #include "runtime/control_runtime_impl.hpp"
+#include "runtime/runtime_diagnostics_sink.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -23,7 +24,7 @@ std::uint64_t SystemNowNs() noexcept {
 ControlRuntimeImpl::ControlRuntimeImpl(modules::FireControlConfig fire_config,
                                        modules::GimbalTrajectoryPlannerConfig planner_config,
                                        std::unique_ptr<hal::IGimbalCommandSink> sink,
-                                       tool::foxglove::VisionDebugPublisher* diagnostics)
+                                       IRuntimeDiagnosticsSink* diagnostics)
     : PERIOD(std::chrono::duration_cast<std::chrono::steady_clock::duration>(
           std::chrono::duration<double>(planner_config.dt_s))),
       PLANNER_DT_S(planner_config.dt_s),
@@ -53,7 +54,7 @@ void ControlRuntimeImpl::Start() {
 }
 
 void ControlRuntimeImpl::Update(
-    const modules::ArmorPredictionResult& prediction, const frame::FrameKinematics& kinematics,
+    const modules::ArmorPredictionOutput& prediction, const frame::FrameKinematics& kinematics,
     const std::optional<hal::GimbalActuatorTelemetry>& gimbal_actuator) {
   auto snapshot = std::make_shared<modules::ControlInputSnapshot>();
   snapshot->prediction = prediction;
@@ -130,8 +131,8 @@ void ControlRuntimeImpl::ClearPublishedProjection(std::string_view reason) noexc
 }
 
 void ControlRuntimeImpl::AttachProjectionDiagnostics(modules::FireControlResult& result) {
-  result.output_projection_cleared = output_projection_cleared_pending_;
-  result.output_projection_clear_reason = std::move(output_projection_clear_reason_);
+  result.diagnostics.output_projection_cleared = output_projection_cleared_pending_;
+  result.diagnostics.output_projection_clear_reason = std::move(output_projection_clear_reason_);
   output_projection_cleared_pending_ = false;
   output_projection_clear_reason_.clear();
 }
@@ -150,7 +151,7 @@ void ControlRuntimeImpl::SendStop() noexcept {
 ControlRuntime::ControlRuntime(modules::FireControlConfig fire_config,
                                modules::GimbalTrajectoryPlannerConfig planner_config,
                                std::unique_ptr<hal::IGimbalCommandSink> sink,
-                               tool::foxglove::VisionDebugPublisher* diagnostics)
+                               IRuntimeDiagnosticsSink* diagnostics)
     : impl_(std::make_unique<ControlRuntimeImpl>(fire_config, planner_config, std::move(sink),
                                                  diagnostics)) {}
 
@@ -160,7 +161,7 @@ void ControlRuntime::Start() {
   impl_->Start();
 }
 
-void ControlRuntime::Update(const modules::ArmorPredictionResult& prediction,
+void ControlRuntime::Update(const modules::ArmorPredictionOutput& prediction,
                             const frame::FrameKinematics& kinematics,
                             const std::optional<hal::GimbalActuatorTelemetry>& gimbal_actuator) {
   impl_->Update(prediction, kinematics, gimbal_actuator);

@@ -8,10 +8,10 @@ namespace mv::modules {
 
 ArmorPnpSolver::ArmorPnpSolver(ArmorPnpConfig config) : config_(config) {}
 
-ArmorPnpAttempt ArmorPnpSolver::Solve(std::span<const cv::Point2f, 4> image_corners,
-                                      geometry::ArmorType type,
-                                      const frame::CameraModel& camera_model,
-                                      std::size_t input_index, std::uint8_t label) const {
+ArmorPnpSolveResult ArmorPnpSolver::Solve(std::span<const cv::Point2f, 4> image_corners,
+                                          geometry::ArmorType type,
+                                          const frame::CameraModel& camera_model,
+                                          std::size_t input_index, std::uint8_t label) const {
   return detail::SolveIppe(config_, image_corners, type, camera_model, input_index, label);
 }
 

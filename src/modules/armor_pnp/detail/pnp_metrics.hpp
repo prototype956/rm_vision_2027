@@ -1,5 +1,6 @@
 #pragma once
 
+#include "modules/armor_corner_refiner/armor_corner_refiner.hpp"
 #include "modules/armor_pnp/armor_pnp_types.hpp"
 
 #include <vector>
@@ -9,9 +10,9 @@ namespace mv::modules::detail {
 /** @brief 累计正式 PnP 与角点精修的真值无关健康指标。 */
 class PnpMetrics final {
  public:
-  void RecordRefinement(const CornerRefinementResult& refinement);
-  void RecordDetectionSolve(const ArmorPnpAttempt& attempt);
-  void PopulateSnapshot(std::uint64_t sequence, ArmorPnpFrameResult& result);
+  void RecordRefinement(const CornerRefinementDiagnostics& refinement);
+  void RecordDetectionSolve(const ArmorPnpSolveResult& result);
+  void PopulateSnapshot(std::uint64_t sequence, ArmorPnpDiagnostics& diagnostics);
 
  private:
   PnpSolveSummary solve_summary_;

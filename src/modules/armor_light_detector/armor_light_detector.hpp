@@ -1,8 +1,9 @@
 #pragma once
 
-#include "modules/armor_corner_refiner/armor_corner_refiner.hpp"
-#include "modules/armor_detector/armor_detector.hpp"
+#include "modules/armor_corner_refiner/armor_corner_refiner_output.hpp"
+#include "modules/armor_detector/armor_detector_output.hpp"
 #include "modules/armor_light_detector/armor_light_detector_config.hpp"
+#include "modules/armor_light_detector/armor_light_detector_output.hpp"
 
 #include <cstddef>
 #include <string>
@@ -17,22 +18,8 @@ enum class LightbarThresholdSource { FIXED, NETWORK_REFERENCE };
 
 [[nodiscard]] const char* LightbarThresholdSourceName(LightbarThresholdSource source) noexcept;
 
-/** @brief 单根全图传统 CV 灯条检测。端点按图像 y 从小到大固定为 top/bottom。 */
-struct LightbarDetection {
-  std::size_t input_index{0};
-  ArmorColor color{ArmorColor::RED};
-  cv::Point2f top{};
-  cv::Point2f bottom{};
-  cv::Point2f center{};
-  double length_px{0.0};
-  double width_px{0.0};
-  double angle_rad{0.0};
-  double color_difference{0.0};
-  double score{0.0};
-};
-
 /** @brief 最近一帧独立灯条检测的筛选计数和耗时。 */
-struct LightbarDetectorStats {
+struct LightbarDetectorDiagnostics {
   bool enabled{true};
   bool valid_input{true};
   int binary_threshold{0};
@@ -47,8 +34,8 @@ struct LightbarDetectorStats {
 };
 
 struct LightbarDetectionResult {
-  std::vector<LightbarDetection> detections;
-  LightbarDetectorStats stats;
+  LightbarDetectorOutput output;
+  LightbarDetectorDiagnostics diagnostics;
 };
 
 /** @brief 在全图以亮度、轮廓几何和敌方颜色检测未成对的独立灯条。 */
@@ -63,7 +50,7 @@ class ArmorLightDetector final {
   [[nodiscard]] LightbarDetectionResult Detect(
       const cv::Mat& bgr_image, const cv::Mat& gray_image,
       std::span<const ArmorDetection> detections,
-      std::span<const CornerRefinementResult> refinements) const noexcept;
+      std::span<const CornerRefinementOutput> refinements) const noexcept;
 
  private:
   ArmorLightDetectorConfig config_;

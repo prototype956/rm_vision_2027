@@ -1,10 +1,10 @@
 #pragma once
 
 #include "frame/frame_types.hpp"
-#include "modules/armor_corner_refiner/armor_corner_refiner.hpp"
-#include "modules/armor_detector/armor_detector.hpp"
-#include "modules/armor_light_detector/armor_light_detector.hpp"
-#include "modules/armor_pnp/armor_pnp_types.hpp"
+#include "modules/armor_corner_refiner/armor_corner_refiner_output.hpp"
+#include "modules/armor_detector/armor_detector_output.hpp"
+#include "modules/armor_light_detector/armor_light_detector_output.hpp"
+#include "modules/armor_pnp/armor_pnp_output.hpp"
 #include "modules/armor_predictor/armor_prediction_types.hpp"
 #include "modules/armor_predictor/armor_predictor_config.hpp"
 
@@ -43,8 +43,8 @@ class ArmorPredictor final {
   [[nodiscard]] ArmorPredictionResult ProcessFrame(
       const frame::FrameStamp& stamp, std::optional<frame::SpatialFrameView> spatial,
       std::span<const ArmorDetection> detections,
-      std::span<const CornerRefinementResult> refinements, const ArmorPnpFrameResult& pnp_result,
-      const LightbarDetectionResult& lightbar_result);
+      std::span<const CornerRefinementOutput> refinements, const ArmorPnpOutput& pnp_output,
+      const LightbarDetectorOutput& lightbar_output);
 
  private:
   struct Impl;                  ///< 隔离 Eigen、关联器与状态机实现。

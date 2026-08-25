@@ -246,6 +246,7 @@ std::vector<std::size_t> MatchDetectionsToTruth(std::span<const modules::ArmorDe
 }
 
 EvaluatedArmorPose ConvertEstimate(const modules::ArmorPoseEstimate& value,
+                                   const modules::ArmorPoseDiagnostics& diagnostics,
                                    PnpEvaluationSource source) {
   EvaluatedArmorPose result;
   result.source = source;
@@ -255,28 +256,35 @@ EvaluatedArmorPose ConvertEstimate(const modules::ArmorPoseEstimate& value,
   result.width_m = value.width_m;
   result.height_m = value.height_m;
   result.camera_t_armor = value.camera_t_armor;
-  result.image_corners = value.image_corners;
-  result.reprojected_corners = value.reprojected_corners;
-  result.candidate_index = value.candidate_index;
-  result.candidate_rmse_gap_px = value.candidate_rmse_gap_px;
-  result.reprojection_rmse_px = value.reprojection_rmse_px;
-  result.image_width_px = value.image_width_px;
-  result.image_height_px = value.image_height_px;
-  result.distance_m = value.distance_m;
-  result.viewing_angle_deg = value.viewing_angle_deg;
+  result.image_corners = diagnostics.image_corners;
+  result.reprojected_corners = diagnostics.reprojected_corners;
+  result.candidate_index = diagnostics.candidate_index;
+  result.candidate_rmse_gap_px = diagnostics.candidate_rmse_gap_px;
+  result.reprojection_rmse_px = diagnostics.reprojection_rmse_px;
+  result.image_width_px = diagnostics.image_width_px;
+  result.image_height_px = diagnostics.image_height_px;
+  result.distance_m = diagnostics.distance_m;
+  result.viewing_angle_deg = diagnostics.viewing_angle_deg;
   return result;
 }
 
-PnpEvaluationAttempt ConvertAttempt(const modules::ArmorPnpAttempt& value,
-                                    PnpEvaluationSource source) {
+PnpEvaluationAttempt ConvertAttempt(
+    const modules::ArmorPoseEstimate* output,
+    const modules::ArmorPnpAttemptDiagnostics& diagnostics, PnpEvaluationSource source,
+    std::optional<modules::CornerRefinementDiagnostics> refinement = std::nullopt) {
   PnpEvaluationAttempt result{.source = source,
-                              .input_index = value.input_index,
-                              .status = value.status,
+                              .input_index = diagnostics.input_index,
+                              .status = diagnostics.status,
                               .estimate = std::nullopt,
-                              .refinement = value.refinement};
-  if (value.estimate)
-    result.estimate = ConvertEstimate(*value.estimate, source);
+                              .refinement = std::move(refinement)};
+  if (output != nullptr && diagnostics.pose)
+    result.estimate = ConvertEstimate(*output, *diagnostics.pose, source);
   return result;
+}
+
+PnpEvaluationAttempt ConvertAttempt(const modules::ArmorPnpSolveResult& value,
+                                    PnpEvaluationSource source) {
+  return ConvertAttempt(value.output ? &*value.output : nullptr, value.diagnostics, source);
 }
 
 void AddTruthErrors(EvaluatedArmorPose& estimate, const simulation::GroundTruthArmor& truth,
@@ -433,25 +441,36 @@ const char* PnpEvaluationSourceName(PnpEvaluationSource source) noexcept {
   return source == PnpEvaluationSource::GROUND_TRUTH ? "ground_truth" : "detection";
 }
 
-PnpEvaluationResult MakePnpDiagnosticResult(const modules::ArmorPnpFrameResult& formal) {
+PnpEvaluationResult MakePnpDiagnosticResult(
+    const modules::ArmorPnpOutput& output, const modules::ArmorPnpDiagnostics& diagnostics,
+    std::span<const modules::CornerRefinementDiagnostics> refinements) {
   PnpEvaluationResult result;
-  result.summary_sequence = formal.summary_sequence;
-  result.attempts.reserve(formal.attempts.size());
-  for (const auto& attempt : formal.attempts)
-    result.attempts.push_back(ConvertAttempt(attempt, PnpEvaluationSource::DETECTION));
-  const auto& reprojection = formal.detection_summary.reprojection_rmse_px;
-  result.detection_summary.reprojection_rmse_px = {
+  result.summary_sequence = diagnostics.summary_sequence;
+  result.attempts.reserve(diagnostics.attempts.size());
+  for (const auto& attempt : diagnostics.attempts) {
+    const auto ESTIMATE =
+        std::find_if(output.estimates.begin(), output.estimates.end(),
+                     [&](const auto& value) { return value.input_index == attempt.input_index; });
+    std::optional<modules::CornerRefinementDiagnostics> refinement;
+    if (attempt.input_index < refinements.size())
+      refinement = refinements[attempt.input_index];
+    result.attempts.push_back(
+        ConvertAttempt(ESTIMATE == output.estimates.end() ? nullptr : &*ESTIMATE, attempt,
+                       PnpEvaluationSource::DETECTION, std::move(refinement)));
+  }
+  const auto& reprojection = diagnostics.detection_summary.reprojection_rmse_px;
+  result.detection_summary.reprojection_rmse_px = EvaluationPercentiles{
       .samples = reprojection.samples, .p50 = reprojection.p50, .p95 = reprojection.p95};
-  result.solve_summary.attempted = formal.solve_summary.attempted;
-  result.solve_summary.succeeded = formal.solve_summary.succeeded;
-  result.solve_summary.rejection_reasons = formal.solve_summary.rejection_reasons;
-  result.refinement_summary.attempted = formal.refinement_summary.attempted;
-  result.refinement_summary.succeeded = formal.refinement_summary.succeeded;
-  result.refinement_summary.fallback = formal.refinement_summary.fallback;
-  result.refinement_summary.failure_reasons = formal.refinement_summary.failure_reasons;
-  const auto& elapsed = formal.refinement_summary.elapsed_ms;
-  result.refinement_summary.elapsed_ms = {
-      .samples = elapsed.samples, .p50 = elapsed.p50, .p95 = elapsed.p95};
+  result.solve_summary.attempted = diagnostics.solve_summary.attempted;
+  result.solve_summary.succeeded = diagnostics.solve_summary.succeeded;
+  result.solve_summary.rejection_reasons = diagnostics.solve_summary.rejection_reasons;
+  result.refinement_summary.attempted = diagnostics.refinement_summary.attempted;
+  result.refinement_summary.succeeded = diagnostics.refinement_summary.succeeded;
+  result.refinement_summary.fallback = diagnostics.refinement_summary.fallback;
+  result.refinement_summary.failure_reasons = diagnostics.refinement_summary.failure_reasons;
+  const auto& elapsed = diagnostics.refinement_summary.elapsed_ms;
+  result.refinement_summary.elapsed_ms =
+      EvaluationPercentiles{.samples = elapsed.samples, .p50 = elapsed.p50, .p95 = elapsed.p95};
   return result;
 }
 
@@ -465,7 +484,8 @@ SimulationEvaluationResult SimulationEvaluator::Evaluate(const SimulationEvaluat
   const auto START = std::chrono::steady_clock::now();
   SimulationEvaluationResult result;
   result.sequence = input.stamp.sequence;
-  if (input.refinements.size() == input.detections.size()) {
+  if (input.refinements.size() == input.detections.size() &&
+      input.refinement_diagnostics.size() == input.detections.size()) {
     std::vector<VisibleArmorTruth> visible_truth;
     for (std::size_t index = 0; index < input.simulation.armors.size(); ++index) {
       const auto& armor = input.simulation.armors[index];
@@ -482,14 +502,20 @@ SimulationEvaluationResult SimulationEvaluator::Evaluate(const SimulationEvaluat
     }
     const auto MATCHES = MatchDetectionsToTruth(input.detections, visible_truth, impl_->config);
     for (std::size_t index = 0; index < input.detections.size(); ++index) {
-      const auto FORMAL =
-          std::find_if(input.pnp.attempts.begin(), input.pnp.attempts.end(),
+      const auto FORMAL_DIAGNOSTIC =
+          std::find_if(input.pnp_diagnostics.attempts.begin(), input.pnp_diagnostics.attempts.end(),
                        [index](const auto& attempt) { return attempt.input_index == index; });
-      modules::ArmorPnpAttempt missing;
+      modules::ArmorPnpAttemptDiagnostics missing;
       missing.input_index = index;
-      auto attempt = ConvertAttempt(FORMAL == input.pnp.attempts.end() ? missing : *FORMAL,
-                                    PnpEvaluationSource::DETECTION);
-      const auto& refinement = input.refinements[index];
+      const auto& pnp_diagnostic =
+          FORMAL_DIAGNOSTIC == input.pnp_diagnostics.attempts.end() ? missing : *FORMAL_DIAGNOSTIC;
+      const auto FORMAL_OUTPUT =
+          std::find_if(input.pnp.estimates.begin(), input.pnp.estimates.end(),
+                       [index](const auto& estimate) { return estimate.input_index == index; });
+      const auto& refinement = input.refinement_diagnostics[index];
+      auto attempt =
+          ConvertAttempt(FORMAL_OUTPUT == input.pnp.estimates.end() ? nullptr : &*FORMAL_OUTPUT,
+                         pnp_diagnostic, PnpEvaluationSource::DETECTION, refinement);
       ++impl_->refinement_summary.attempted;
       impl_->refinement_elapsed_samples.push_back(refinement.elapsed_ms);
       if (refinement.success && !refinement.fallback) {
@@ -508,8 +534,7 @@ SimulationEvaluationResult SimulationEvaluator::Evaluate(const SimulationEvaluat
       const std::size_t BEST_TRUTH = MATCHES[index];
       if (BEST_TRUTH < visible_truth.size()) {
         const auto& truth = visible_truth[BEST_TRUTH];
-        const auto& final_corners =
-            refinement.success ? refinement.refined_corners : refinement.original_corners;
+        const auto& final_corners = input.refinements[index].corners;
         double raw_error = 0.0;
         double final_error = 0.0;
         for (std::size_t corner = 0; corner < 4; ++corner) {

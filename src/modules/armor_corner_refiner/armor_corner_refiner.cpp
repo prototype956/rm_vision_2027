@@ -232,28 +232,33 @@ CornerRefinementResult ArmorCornerRefiner::Refine(const cv::Mat& gray_image,
                                                   std::span<const cv::Point2f, 4> corners) const {
   const auto start = Clock::now();
   CornerRefinementResult result;
-  std::copy(corners.begin(), corners.end(), result.original_corners.begin());
-  result.refined_corners = result.original_corners;
+  auto& diagnostics = result.diagnostics;
+  std::copy(corners.begin(), corners.end(), diagnostics.original_corners.begin());
+  diagnostics.refined_corners = diagnostics.original_corners;
   for (std::size_t index = 0; index < 4; ++index) {
-    result.endpoints[index].original = corners[index];
-    result.endpoints[index].candidate = corners[index];
-    result.endpoints[index].final = corners[index];
+    diagnostics.endpoints[index].original = corners[index];
+    diagnostics.endpoints[index].candidate = corners[index];
+    diagnostics.endpoints[index].final = corners[index];
   }
   const auto finish = [&](CornerRefinementStatus status, int light_index = -1) {
-    result.status = status;
-    result.failure_light_index = light_index;
-    result.success = status == CornerRefinementStatus::SUCCESS;
-    result.fallback = !result.success;
+    diagnostics.status = status;
+    diagnostics.failure_light_index = light_index;
+    diagnostics.success = status == CornerRefinementStatus::SUCCESS;
+    diagnostics.fallback = !diagnostics.success;
     // 四个端点原子提交：任意阶段失败都撤销已经找到的另一侧候选。
-    if (result.fallback)
-      result.refined_corners = result.original_corners;
+    if (diagnostics.fallback)
+      diagnostics.refined_corners = diagnostics.original_corners;
     for (std::size_t index = 0; index < 4; ++index) {
-      result.endpoints[index].applied = result.success && result.endpoints[index].found;
-      result.endpoints[index].final = result.refined_corners[index];
-      result.corner_displacements[index] =
-          result.refined_corners[index] - result.original_corners[index];
+      diagnostics.endpoints[index].applied =
+          diagnostics.success && diagnostics.endpoints[index].found;
+      diagnostics.endpoints[index].final = diagnostics.refined_corners[index];
+      diagnostics.corner_displacements[index] =
+          diagnostics.refined_corners[index] - diagnostics.original_corners[index];
     }
-    result.elapsed_ms = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+    diagnostics.elapsed_ms =
+        std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+    result.output.corners = diagnostics.refined_corners;
+    result.output.refined = diagnostics.success;
     return result;
   };
 
@@ -272,7 +277,7 @@ CornerRefinementResult ArmorCornerRefiner::Refine(const cv::Mat& gray_image,
   constexpr std::array<std::array<std::size_t, 2>, 2> ENDPOINT_INDICES{{{0, 3}, {1, 2}}};
   for (std::size_t light_index = 0; light_index < lights.size(); ++light_index) {
     auto& light = lights[light_index];
-    auto& light_diagnostic = result.lightbars[light_index];
+    auto& light_diagnostic = diagnostics.lightbars[light_index];
     light_diagnostic.center = light.center;
     light_diagnostic.axis = light.axis;
     light_diagnostic.top = light.top;
@@ -301,8 +306,8 @@ CornerRefinementResult ArmorCornerRefiner::Refine(const cv::Mat& gray_image,
     light_diagnostic.mean_brightness = axis->mean_brightness;
     light_diagnostic.axis_valid = true;
 
-    auto& top_diagnostic = result.endpoints[ENDPOINT_INDICES[light_index][0]];
-    auto& bottom_diagnostic = result.endpoints[ENDPOINT_INDICES[light_index][1]];
+    auto& top_diagnostic = diagnostics.endpoints[ENDPOINT_INDICES[light_index][0]];
+    auto& bottom_diagnostic = diagnostics.endpoints[ENDPOINT_INDICES[light_index][1]];
     const auto top = FindCorner(gray_image, light, *axis, 1, config_, top_diagnostic);
     if (!top) {
       light_status[light_index] = CornerRefinementStatus::TOP_NOT_FOUND;
@@ -316,8 +321,8 @@ CornerRefinementResult ArmorCornerRefiner::Refine(const cv::Mat& gray_image,
     light_diagnostic.top = *top;
     light_diagnostic.bottom = *bottom;
     light_diagnostic.success = true;
-    result.refined_corners[ENDPOINT_INDICES[light_index][0]] = *top;
-    result.refined_corners[ENDPOINT_INDICES[light_index][1]] = *bottom;
+    diagnostics.refined_corners[ENDPOINT_INDICES[light_index][0]] = *top;
+    diagnostics.refined_corners[ENDPOINT_INDICES[light_index][1]] = *bottom;
   }
   for (std::size_t light_index = 0; light_index < light_status.size(); ++light_index) {
     if (light_status[light_index] != CornerRefinementStatus::SUCCESS)

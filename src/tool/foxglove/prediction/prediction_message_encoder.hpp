@@ -22,11 +22,12 @@ enum class ImagePredictionHorizon {
  * @return LOST 或没有 horizon 时返回空 SceneUpdate。
  */
 [[nodiscard]] ::foxglove::schemas::SceneUpdate EncodeScene(
-    const modules::ArmorPredictionResult& result, const ::foxglove::schemas::Timestamp& timestamp);
+    const modules::ArmorPredictionOutput& output, const ::foxglove::schemas::Timestamp& timestamp);
 
 /** @brief 将 EKF 状态、协方差、创新、NIS、关联和重置原因编码为诊断 JSON。 */
 [[nodiscard]] std::string EncodeState(
-    const modules::ArmorPredictionResult& result,
+    const modules::ArmorPredictionOutput& output,
+    const modules::ArmorPredictionDiagnostics& diagnostics,
     const simulation_evaluation::PredictionEvaluationResult* evaluation,
     const ::foxglove::schemas::Timestamp& timestamp);
 
@@ -35,7 +36,7 @@ enum class ImagePredictionHorizon {
  * @return 没有跟踪标签、当前预测或匹配真值时返回空 SceneUpdate。
  */
 [[nodiscard]] ::foxglove::schemas::SceneUpdate EncodeTruthOverlay(
-    const modules::ArmorPredictionResult& result,
+    const modules::ArmorPredictionOutput& output,
     const simulation_evaluation::PredictionEvaluationResult& evaluation,
     const ::foxglove::schemas::Timestamp& timestamp);
 
@@ -45,7 +46,8 @@ enum class ImagePredictionHorizon {
  * 正面装甲使用不透明粗线，背面装甲使用半透明细线；图像外或相机后的装甲不输出。
  */
 [[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeAnnotations(
-    const modules::ArmorPredictionResult& result, const frame::SpatialFrameView& spatial,
+    const modules::ArmorPredictionOutput& output,
+    const modules::ArmorPredictionDiagnostics& diagnostics, const frame::SpatialFrameView& spatial,
     ImagePredictionHorizon horizon, const ::foxglove::schemas::Timestamp& timestamp);
 
 /** @brief 生成只携带时间戳的空标注，使 Foxglove 清除上一帧预测线框。 */
@@ -54,7 +56,7 @@ enum class ImagePredictionHorizon {
 
 /** 将火控锁定槽位和待切换槽位重投影到与原图严格同帧的图像坐标。 */
 [[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeSelectedArmorAnnotations(
-    const modules::ArmorPredictionResult& result, const frame::SpatialFrameView& spatial,
+    const modules::ArmorPredictionOutput& output, const frame::SpatialFrameView& spatial,
     const modules::ArmorSelectionSnapshot& selection,
     const ::foxglove::schemas::Timestamp& timestamp);
 

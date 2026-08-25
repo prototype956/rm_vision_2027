@@ -12,6 +12,7 @@
 #include "modules/fire_control/fire_control_config.hpp"
 #include "modules/gimbal_trajectory_planner/gimbal_trajectory_planner_config.hpp"
 #include "runtime/control_runtime.hpp"
+#include "runtime/runtime_diagnostics_sink.hpp"
 #include "runtime/vision_pipeline.hpp"
 #include "runtime/vision_runtime.hpp"
 #include "tool/debug/debug_window.hpp"
@@ -47,6 +48,28 @@ bool LoadDebugWindowEnabled(const std::filesystem::path& config_path) {
     throw ConfigError("debug window config schema_version must be 1");
   return ConfigLoader::Require<bool>(ROOT, "enabled", CONTEXT);
 }
+
+/** @brief 应用层把传输无关运行时诊断适配到 Foxglove 发布器。 */
+class FoxgloveDiagnosticsSink final : public runtime::IRuntimeDiagnosticsSink {
+ public:
+  explicit FoxgloveDiagnosticsSink(tool::foxglove::VisionDebugPublisher& publisher) noexcept
+      : publisher_(publisher) {}
+
+  void PublishVision(const frame::FramePacket& packet, const runtime::VisionFrameOutput& output,
+                     const runtime::VisionFrameDiagnostics& diagnostics,
+                     const std::optional<tool::simulation_evaluation::SimulationEvaluationResult>&
+                         evaluation) noexcept override {
+    publisher_.Publish(packet, output, diagnostics, evaluation);
+  }
+
+  void PublishControl(const runtime::ControlCycleOutput& output,
+                      const runtime::ControlCycleDiagnostics& diagnostics) noexcept override {
+    publisher_.PublishControl(output, diagnostics);
+  }
+
+ private:
+  tool::foxglove::VisionDebugPublisher& publisher_;
+};
 
 struct CameraSelection {
   std::string backend;                ///< 传给相机工厂的后端名称。
@@ -175,6 +198,10 @@ int Run() {
       foxglove_publisher.reset();
     }
 
+    std::unique_ptr<FoxgloveDiagnosticsSink> diagnostics_sink;
+    if (foxglove_publisher)
+      diagnostics_sink = std::make_unique<FoxgloveDiagnosticsSink>(*foxglove_publisher);
+
     std::unique_ptr<runtime::ControlRuntime> control_runtime;
     if (CAMERA_SELECTION.backend == "talos") {
       const auto FIRE_YAML = ConfigLoader::LoadFile(CONFIG_ROOT / "modules/fire_control.yaml");
@@ -188,13 +215,13 @@ int Run() {
       control_runtime = std::make_unique<runtime::ControlRuntime>(
           modules::ParseFireControlConfig(FIRE_YAML),
           modules::ParseGimbalTrajectoryPlannerConfig(PLANNER_YAML), std::move(command_sink),
-          foxglove_publisher.get());
+          diagnostics_sink.get());
       control_runtime->Start();
       MV_LOG_INFO("Control", "Talos 100 Hz trajectory planning and fire control started");
     }
 
     runtime::VisionRuntime vision_runtime(*camera, *pipeline, control_runtime.get(), window.get(),
-                                          foxglove_publisher.get(), simulation_evaluator.get());
+                                          diagnostics_sink.get(), simulation_evaluator.get());
     return ExitCodeFor(vision_runtime.Run([] { return g_stop_requested != 0; }));
   } catch (const std::exception& error) {
     std::fprintf(stderr, "[App] FATAL: %s\n", error.what());

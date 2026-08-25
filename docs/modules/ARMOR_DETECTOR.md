@@ -218,7 +218,9 @@ scale          = 0.5
 - `ArmorColor`：公开红、蓝两种可返回颜色。
 - `ArmorLabel`：模型支持的 9 类装甲标签。
 - `ArmorDetection`：颜色、标签、sigmoid 后 objectness、轴对齐外接框和四角点。
-- `DetectorStats`：最近一次成功检测的分阶段耗时与候选数量。
+- `ArmorDetectorOutput`：正式检测集合，供角点精修、PnP 和预测消费。
+- `ArmorDetectorDiagnostics`：当前调用的分阶段耗时与候选数量。
+- `ArmorDetectorResult`：具名聚合 `output` 与 `diagnostics`，不保存跨调用状态。
 - `ArmorDetectorConfig`：已解析的模型、设备、敌方颜色和阈值配置。
 
 ### 生命周期与最小用法
@@ -236,14 +238,13 @@ mv::modules::YoloArmorDetector detector;
 detector.Init(mv::modules::ParseArmorDetectorConfig(yaml, project_root));
 
 // frame 必须是非空 CV_8UC3 BGR 图像。
-const auto detections = detector.Detect(frame);
-// 立即复制统计值，避免下一次 Detect() 覆盖。
-const auto stats = detector.LastStats();
+const auto result = detector.Detect(frame);
+const auto& detections = result.output.detections;
+const auto& diagnostics = result.diagnostics;
 ```
 
 建议初始化顺序是“日志 → 检测配置和检测器 → 相机 → 调试窗口”。检测器初始化失败
-时不要打开相机。无目标是正常情况，`Detect()` 返回空 `std::vector`，不应记录为
-错误。
+时不要打开相机。无目标是正常情况，此时 `result.output.detections` 为空，不应记录为错误。
 
 ## YAML 配置
 
@@ -286,8 +287,8 @@ nms_iou_threshold: 0.45
 
 ## 性能统计语义
 
-`LastStats()` 返回检测器内部最近一次成功结果的只读引用，下一次 `Detect()` 会覆盖。
-调用方需要在同一同步调用链中立即读取或复制。
+诊断与正式检测由同一次 `Detect()` 原子返回，不再提供 `LastStats()`。因此异步发布器可以复制
+同一个 `ArmorDetectorResult` 的两部分，不会误读下一帧统计。
 
 | 字段 | 计时范围 |
 | --- | --- |
@@ -322,4 +323,3 @@ nms_iou_threshold: 0.45
 - **坐标整体偏移**：确认没有按居中 Letterbox 减 padding；当前画布左上对齐。
 - **坐标无法对应原始相机画面**：检查调用方是否在检测前裁剪、缩放、旋转或
   去畸变；返回坐标只属于传入 `Detect()` 的那张图像。
-

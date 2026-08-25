@@ -1,31 +1,24 @@
 #pragma once
 
-#include "geometry/armor_type.hpp"
-#include "geometry/rigid_transform.hpp"
-#include "modules/armor_detector/armor_detector.hpp"
+#include "modules/armor_predictor/armor_prediction_output.hpp"
 
 #include <array>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
+#include <opencv2/core.hpp>
 #include <optional>
 
 namespace mv::modules {
 
-enum class TrackerState : std::uint8_t { LOST = 0, DETECTING, TRACKING, TEMP_LOST };
-
-[[nodiscard]] const char* TrackerStateName(TrackerState state) noexcept;
-
-/** @brief 单个二维装甲候选与预测槽位的像素关联诊断。 */
 struct ArmorAssociation {
   std::size_t input_index{0};
-  int slot{-1};            ///< 通过像素门控并进入本帧试更新的槽位。
-  int candidate_slot{-1};  ///< 无论是否通过门控，代价最小的可见候选槽位。
-  bool accepted{false};    ///< 本关联是否随通过 NIS 门控的后验正式提交。
-  double gate{0.0};        ///< 本次关联实际使用的像素组合代价门限。
+  int slot{-1};
+  int candidate_slot{-1};
+  bool accepted{false};
+  double gate{0.0};
   double center_error_px{0.0};
   double edge_angle_error_rad{0.0};
   double perimeter_ratio_error{0.0};
@@ -35,7 +28,6 @@ struct ArmorAssociation {
   std::string rejection_reason;
 };
 
-/** @brief 单根独立灯条与预测 `(slot,left/right)` 身份的关联诊断。 */
 struct LightbarAssociation {
   std::size_t input_index{0};
   int slot{-1};
@@ -56,41 +48,9 @@ struct LightbarAssociation {
   std::string rejection_reason;
 };
 
-struct PredictedArmorPose {
-  int slot{0};
-  geometry::RigidTransform world_t_armor;
-};
-
-/** @brief 某一未来时刻的完整车体姿态和四块装甲预测。 */
-struct PredictionHorizon {
-  double seconds{0.0};
-  geometry::Vector3 center_world{geometry::Vector3::Zero()};
-  geometry::Quaternion orientation_world{geometry::Quaternion::Identity()};
-  double yaw{0.0};
-  std::array<PredictedArmorPose, 4> armors{};
-};
-
-/** @brief 单帧13维 ESEKF 状态、具名物理量及图像更新诊断。 */
-struct ArmorPredictionResult {
-  std::uint64_t sequence{0};
-  std::optional<std::uint64_t> source_capture_timestamp_ns;
-  std::chrono::steady_clock::time_point source_receive_steady_time{};
-  TrackerState state{TrackerState::LOST};
-  std::optional<ArmorLabel> label;
-  std::optional<geometry::ArmorType> type;
+/** @brief 单帧预测过程的关联、滤波、机动和健康诊断。 */
+struct ArmorPredictionDiagnostics {
   double dt_s{0.0};
-  /** @brief cx,vx,cy,vy,cz,vz,rot_x,rot_y,rot_z,vyaw,log_r1,log_r2,h。 */
-  std::array<double, 13> state_vector{};
-  std::array<double, 13> covariance_diagonal{};
-  geometry::Vector3 center_world{geometry::Vector3::Zero()};
-  geometry::Vector3 velocity_world{geometry::Vector3::Zero()};
-  geometry::Quaternion orientation_world{geometry::Quaternion::Identity()};
-  double yaw_velocity_rad_s{0.0};
-  std::array<double, 2> radii_m{};
-  double height_offset_m{0.0};
-  double armor_tilt_rad{0.0};
-  Eigen::Matrix3d center_covariance_world{Eigen::Matrix3d::Zero()};
-  double yaw_variance_rad2{0.0};
   std::vector<ArmorAssociation> associations;
   std::vector<LightbarAssociation> lightbar_associations;
   std::vector<double> innovation;
@@ -115,19 +75,19 @@ struct ArmorPredictionResult {
   int matched_lightbar_count{0};
   int accepted_lightbar_count{0};
   int rejected_lightbar_count{0};
-  int light_only_pair_count{0};  ///< 无完整装甲时，同槽左右灯条完整配对数量。
+  int light_only_pair_count{0};
   bool light_only_update{false};
   bool light_only_update_blocked{false};
   std::string light_only_rejection_reason;
   bool light_fusion_used{false};
   bool armor_fallback_used{false};
   std::uint64_t reset_count{0};
-  std::vector<PredictionHorizon> horizons;
-  std::string reset_reason;  ///< 最近一次安全重置原因；结合 reset_count 判断是否为新事件。
+  std::string reset_reason;
 };
 
-/** @brief 从具名名义状态按匀速和车体系 z 轴匀角速模型外推。 */
-[[nodiscard]] PredictionHorizon ExtrapolatePrediction(const ArmorPredictionResult& prediction,
-                                                      double seconds);
+struct ArmorPredictionResult {
+  ArmorPredictionOutput output;
+  ArmorPredictionDiagnostics diagnostics;
+};
 
 }  // namespace mv::modules

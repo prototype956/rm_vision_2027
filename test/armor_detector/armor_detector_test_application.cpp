@@ -113,7 +113,8 @@ void DrawOutlinedText(cv::Mat& image, const std::string& text, const cv::Point& 
 // 在相机帧上叠加装甲四边形、分类结果以及检测链路的实时性能指标。
 void DrawOverlay(cv::Mat& image, const frame::FramePacket& packet,
                  const std::vector<modules::ArmorDetection>& detections,
-                 const modules::DetectorStats& stats, double loop_fps, double elapsed_sec) {
+                 const modules::ArmorDetectorDiagnostics& stats, double loop_fps,
+                 double elapsed_sec) {
   tool::DrawArmorDetections(image, detections);
 
   const std::vector<std::string> LINES = {
@@ -283,19 +284,21 @@ int ArmorDetectorTestApplication::Run() {
         last_valid_time = NOW;
 
         try {
-          // LastStats() 对应刚完成的 Detect()，因此二者必须在同一同步调用链中读取。
-          const auto DETECTIONS = detector_->Detect(packet.capture.image);
-          const auto STATS = detector_->LastStats();
+          const auto DETECTION_RESULT = detector_->Detect(packet.capture.image);
+          const auto& detections = DETECTION_RESULT.output.detections;
+          const auto& stats = DETECTION_RESULT.diagnostics;
           if (foxglove_publisher) {
-            foxglove_publisher->Publish(
-                packet, DETECTIONS, STATS, modules::LightbarDetectionResult{},
-                modules::ArmorPnpFrameResult{}, modules::ArmorPredictionResult{});
+            runtime::VisionFrameOutput output;
+            output.detections = detections;
+            runtime::VisionFrameDiagnostics diagnostics;
+            diagnostics.detector = stats;
+            foxglove_publisher->Publish(packet, output, diagnostics);
           }
           ++metrics.detection_success;
           ++report_detection_success;
-          metrics.total_detections += DETECTIONS.size();
-          metrics.total_candidates += STATS.threshold_candidates;
-          if (!DETECTIONS.empty()) {
+          metrics.total_detections += detections.size();
+          metrics.total_candidates += stats.threshold_candidates;
+          if (!detections.empty()) {
             ++metrics.target_frames;
           }
 
@@ -305,10 +308,10 @@ int ArmorDetectorTestApplication::Run() {
             ++warmup_detection_success;
           } else {
             post_warmup_success_times.push_back(NOW);
-            metrics.preprocess_ms.push_back(STATS.preprocess_ms);
-            metrics.inference_ms.push_back(STATS.inference_ms);
-            metrics.postprocess_ms.push_back(STATS.postprocess_ms);
-            metrics.total_ms.push_back(STATS.total_ms);
+            metrics.preprocess_ms.push_back(stats.preprocess_ms);
+            metrics.inference_ms.push_back(stats.inference_ms);
+            metrics.postprocess_ms.push_back(stats.postprocess_ms);
+            metrics.total_ms.push_back(stats.total_ms);
           }
 
           const double REPORT_ELAPSED = std::max(Seconds(NOW - report_start), 1.0e-6);
@@ -317,7 +320,7 @@ int ArmorDetectorTestApplication::Run() {
           // 仅在需要预览或保存样本时克隆图像，避免绘制开销污染常规检测路径。
           if (preview_window || SAVE_SAMPLE) {
             last_preview = packet.capture.image.clone();
-            DrawOverlay(last_preview, packet, DETECTIONS, STATS, LOOP_FPS, ELAPSED);
+            DrawOverlay(last_preview, packet, detections, stats, LOOP_FPS, ELAPSED);
           }
           if (SAVE_SAMPLE) {
             const auto SAMPLE_PATH =

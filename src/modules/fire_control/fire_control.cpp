@@ -322,39 +322,41 @@ FireControlResult FireControl::Step(const ControlInputSnapshot& input,
                                     const hal::GimbalFeedback& feedback,
                                     std::chrono::steady_clock::time_point now) {
   FireControlResult result;
-  result.source_sequence = input.prediction.sequence;
-  result.source_capture_timestamp_ns = input.prediction.source_capture_timestamp_ns;
-  result.command_timestamp_ns = SystemNowNs();
-  result.tracker_state = input.prediction.state;
-  result.tracked_label = input.prediction.label;
-  result.tracked_type = input.prediction.type;
-  result.feedback = feedback;
-  result.external_control_enabled = input.external_control_enabled;
-  result.auto_fire_enabled = config_.auto_fire;
-  result.target_linear_speed_mps = input.prediction.velocity_world.norm();
-  result.target_spin_rate_rad_s = std::abs(input.prediction.yaw_velocity_rad_s);
+  auto& output = result.output;
+  auto& diagnostics = result.diagnostics;
+  output.source_sequence = input.prediction.sequence;
+  output.source_capture_timestamp_ns = input.prediction.source_capture_timestamp_ns;
+  output.command_timestamp_ns = SystemNowNs();
+  output.tracker_state = input.prediction.state;
+  output.tracked_label = input.prediction.label;
+  output.tracked_type = input.prediction.type;
+  diagnostics.feedback = feedback;
+  output.external_control_enabled = input.external_control_enabled;
+  output.auto_fire_enabled = config_.auto_fire;
+  diagnostics.target_linear_speed_mps = input.prediction.velocity_world.norm();
+  diagnostics.target_spin_rate_rad_s = std::abs(input.prediction.yaw_velocity_rad_s);
   const auto& planner_config = planner_.Config();
-  result.trajectory_dt_s = planner_config.dt_s;
-  result.bullet_speed_mps = config_.bullet_speed_mps;
-  result.max_yaw_velocity_rad_s = planner_config.max_yaw_velocity_rad_s;
-  result.max_pitch_velocity_rad_s = planner_config.max_pitch_velocity_rad_s;
-  result.max_yaw_acceleration_rad_s2 = planner_config.max_yaw_acceleration_rad_s2;
-  result.max_pitch_acceleration_rad_s2 = planner_config.max_pitch_acceleration_rad_s2;
-  result.prediction_age_s = std::max(
+  diagnostics.trajectory_dt_s = planner_config.dt_s;
+  diagnostics.bullet_speed_mps = config_.bullet_speed_mps;
+  diagnostics.max_yaw_velocity_rad_s = planner_config.max_yaw_velocity_rad_s;
+  diagnostics.max_pitch_velocity_rad_s = planner_config.max_pitch_velocity_rad_s;
+  diagnostics.max_yaw_acceleration_rad_s2 = planner_config.max_yaw_acceleration_rad_s2;
+  diagnostics.max_pitch_acceleration_rad_s2 = planner_config.max_pitch_acceleration_rad_s2;
+  output.prediction_age_s = std::max(
       0.0,
       std::chrono::duration<double>(now - input.prediction.source_receive_steady_time).count());
-  result.feedback_age_s =
+  output.feedback_age_s =
       feedback.valid
           ? std::max(0.0, std::chrono::duration<double>(now - feedback.timestamp).count())
           : std::numeric_limits<double>::infinity();
-  result.command.timestamp_ns = result.command_timestamp_ns;
+  output.command.timestamp_ns = output.command_timestamp_ns;
 
   // 标签或物理尺寸变化意味着预测器已切换跟踪对象，不能继承槽位和求解器历史。
   if (tracked_label_ != input.prediction.label || tracked_type_ != input.prediction.type) {
     ResetSelection();
     RequestPlannerRebase("tracking_object_changed");
     previous_reference_valid_ = false;
-    result.tracking_object_reset = true;
+    output.tracking_object_reset = true;
     tracked_label_ = input.prediction.label;
     tracked_type_ = input.prediction.type;
   }
@@ -389,16 +391,16 @@ FireControlResult FireControl::Step(const ControlInputSnapshot& input,
                                  input.gimbal_t_muzzle.rotation.coeffs().allFinite();
   // 控制前置校验失败时不生成云台目标；调用方会把默认 command 当作停止命令发布。
   if (!STATE_ALLOWS_CONTROL || !FEEDBACK_FINITE || !PREDICTION_FINITE || !TRANSFORMS_FINITE ||
-      result.feedback_age_s > config_.max_prediction_age_s ||
-      result.prediction_age_s > config_.max_prediction_age_s) {
+      output.feedback_age_s > config_.max_prediction_age_s ||
+      output.prediction_age_s > config_.max_prediction_age_s) {
     ResetSelection();
     tracking_input_valid_ = false;
     previous_reference_valid_ = false;
-    result.reject_reason =
+    output.reject_reason =
         !FEEDBACK_FINITE                                       ? FireRejectReason::INVALID_FEEDBACK
         : !PREDICTION_FINITE || !TRANSFORMS_FINITE             ? FireRejectReason::NUMERICAL_INVALID
-        : result.feedback_age_s > config_.max_prediction_age_s ? FireRejectReason::STALE_FEEDBACK
-        : result.prediction_age_s > config_.max_prediction_age_s
+        : output.feedback_age_s > config_.max_prediction_age_s ? FireRejectReason::STALE_FEEDBACK
+        : output.prediction_age_s > config_.max_prediction_age_s
             ? FireRejectReason::STALE_PREDICTION
             : FireRejectReason::TRACK_NOT_CONFIRMED;
     return result;
@@ -406,16 +408,16 @@ FireControlResult FireControl::Step(const ControlInputSnapshot& input,
   tracking_input_valid_ = true;
 
   const auto WORLD_T_MUZZLE = geometry::Compose(input.world_t_gimbal, input.gimbal_t_muzzle);
-  result.world_t_muzzle = WORLD_T_MUZZLE;
-  result.muzzle_pose_valid = true;
-  const auto CENTER = ExtrapolatePrediction(input.prediction, result.prediction_age_s).center_world;
+  output.world_t_muzzle = WORLD_T_MUZZLE;
+  output.muzzle_pose_valid = true;
+  const auto CENTER = ExtrapolatePrediction(input.prediction, output.prediction_age_s).center_world;
   const double INITIAL_FLY_TIME =
       (CENTER - WORLD_T_MUZZLE.translation).norm() / config_.bullet_speed_mps;
   const int SLOT = SelectSlot(input, WORLD_T_MUZZLE.translation,
-                              result.prediction_age_s + config_.command_delay_s + INITIAL_FLY_TIME,
-                              feedback, now, result.armor_selection);
-  result.selected_slot = SLOT;
-  if (result.armor_selection.switched) {
+                              output.prediction_age_s + config_.command_delay_s + INITIAL_FLY_TIME,
+                              feedback, now, diagnostics.armor_selection);
+  output.selected_slot = SLOT;
+  if (diagnostics.armor_selection.switched) {
     RequestPlannerRebase("armor_slot_switched");
     last_stable_slot_ = -1;
     stable_cycles_ = 0;
@@ -424,89 +426,91 @@ FireControlResult FireControl::Step(const ControlInputSnapshot& input,
   if (SLOT < 0) {
     stable_cycles_ = 0;
     pulse_until_ = {};
-    result.reject_reason = FireRejectReason::NO_SHOOTABLE_ARMOR;
+    output.reject_reason = FireRejectReason::NO_SHOOTABLE_ARMOR;
     return result;
   }
 
-  auto reference = BuildReference(input, SLOT, WORLD_T_MUZZLE, result.prediction_age_s,
-                                  result.ballistic, feedback.yaw);
-  if (reference.empty() || !result.ballistic.valid) {
+  auto reference = BuildReference(input, SLOT, WORLD_T_MUZZLE, output.prediction_age_s,
+                                  output.ballistic, feedback.yaw);
+  if (reference.empty() || !output.ballistic.valid) {
     stable_cycles_ = 0;
     pulse_until_ = {};
-    result.reject_reason = FireRejectReason::BALLISTIC_UNSOLVABLE;
+    output.reject_reason = FireRejectReason::BALLISTIC_UNSOLVABLE;
     return result;
   }
-  result.target_yaw = reference.front().yaw;
-  result.target_pitch = reference.front().pitch;
+  output.target_yaw = reference.front().yaw;
+  output.target_pitch = reference.front().pitch;
   if (reference.size() > 1) {
     const auto& next_reference = reference[1];
     if (previous_reference_valid_) {
-      result.reference_step_valid = true;
-      result.reference_yaw_step = Wrap(next_reference.yaw - previous_reference_yaw_);
-      result.reference_pitch_step = next_reference.pitch - previous_reference_pitch_;
+      diagnostics.reference_step_valid = true;
+      diagnostics.reference_yaw_step = Wrap(next_reference.yaw - previous_reference_yaw_);
+      diagnostics.reference_pitch_step = next_reference.pitch - previous_reference_pitch_;
     }
     previous_reference_yaw_ = next_reference.yaw;
     previous_reference_pitch_ = next_reference.pitch;
     previous_reference_valid_ = true;
   }
-  result.plan = planner_.Plan(feedback, reference);
+  auto plan = planner_.Plan(feedback, reference);
+  output.plan = std::move(plan.output);
+  diagnostics.plan = std::move(plan.diagnostics);
   // warm-start 重建原因与残差跨周期变化只用于诊断，不参与本周期轨迹有效性判断。
-  if (result.plan.warm_start_action == GimbalWarmStartAction::REBASE) {
-    result.solver_warm_start_reset = true;
-    result.solver_warm_start_reset_reason = std::move(pending_solver_rebase_reason_);
+  if (diagnostics.plan.warm_start_action == GimbalWarmStartAction::REBASE) {
+    diagnostics.solver_warm_start_reset = true;
+    diagnostics.solver_warm_start_reset_reason = std::move(pending_solver_rebase_reason_);
     pending_solver_rebase_reason_.clear();
     solver_cycles_since_reset_ = 0;
     previous_mpc_failed_ = false;
     previous_solver_residual_valid_ = false;
   }
-  result.solver_continued_after_failure = previous_mpc_failed_;
-  result.solver_cycles_since_reset = solver_cycles_since_reset_;
+  diagnostics.solver_continued_after_failure = previous_mpc_failed_;
+  diagnostics.solver_cycles_since_reset = solver_cycles_since_reset_;
   if (previous_solver_residual_valid_) {
-    result.previous_solver_residual_valid = true;
-    result.previous_yaw_solver_residual = previous_yaw_solver_residual_;
-    result.previous_pitch_solver_residual = previous_pitch_solver_residual_;
-    result.yaw_solver_residual_delta =
-        MaxResidual(result.plan.yaw_solver) - previous_yaw_solver_residual_;
-    result.pitch_solver_residual_delta =
-        MaxResidual(result.plan.pitch_solver) - previous_pitch_solver_residual_;
+    diagnostics.previous_solver_residual_valid = true;
+    diagnostics.previous_yaw_solver_residual = previous_yaw_solver_residual_;
+    diagnostics.previous_pitch_solver_residual = previous_pitch_solver_residual_;
+    diagnostics.yaw_solver_residual_delta =
+        MaxResidual(diagnostics.plan.yaw_solver) - previous_yaw_solver_residual_;
+    diagnostics.pitch_solver_residual_delta =
+        MaxResidual(diagnostics.plan.pitch_solver) - previous_pitch_solver_residual_;
   }
   ++solver_cycles_since_reset_;
-  if (result.plan.trajectory.size() > 1)
-    result.raw_mpc_command = result.plan.trajectory[1];
-  result.raw_mpc_valid = result.plan.valid;
-  if (!result.plan.valid) {
+  if (output.plan.trajectory.size() > 1)
+    output.raw_mpc_command = output.plan.trajectory[1];
+  output.raw_mpc_valid = output.plan.valid;
+  if (!output.plan.valid) {
     previous_mpc_failed_ = true;
     previous_solver_residual_valid_ = true;
-    previous_yaw_solver_residual_ = MaxResidual(result.plan.yaw_solver);
-    previous_pitch_solver_residual_ = MaxResidual(result.plan.pitch_solver);
+    previous_yaw_solver_residual_ = MaxResidual(diagnostics.plan.yaw_solver);
+    previous_pitch_solver_residual_ = MaxResidual(diagnostics.plan.pitch_solver);
     stable_cycles_ = 0;
     pulse_until_ = {};
-    result.reject_reason = FireRejectReason::MPC_FAILED;
+    output.reject_reason = FireRejectReason::MPC_FAILED;
     return result;
   }
   previous_mpc_failed_ = false;
   previous_solver_residual_valid_ = false;
 
-  result.command = {.valid = true,
+  output.command = {.valid = true,
                     .fire = false,
-                    .timestamp_ns = result.command_timestamp_ns,
-                    .yaw = result.plan.command.yaw,
-                    .yaw_velocity = result.plan.command.yaw_velocity,
-                    .yaw_acceleration = result.plan.command.yaw_acceleration,
-                    .pitch = result.plan.command.pitch,
-                    .pitch_velocity = result.plan.command.pitch_velocity,
-                    .pitch_acceleration = result.plan.command.pitch_acceleration,
-                    .target_distance_m = result.ballistic.distance_m};
-  result.command_source = GimbalCommandSource::MPC;
-  result.yaw_error = Wrap(result.target_yaw - feedback.yaw);
-  result.pitch_error = result.target_pitch - feedback.pitch;
+                    .timestamp_ns = output.command_timestamp_ns,
+                    .yaw = output.plan.command.yaw,
+                    .yaw_velocity = output.plan.command.yaw_velocity,
+                    .yaw_acceleration = output.plan.command.yaw_acceleration,
+                    .pitch = output.plan.command.pitch,
+                    .pitch_velocity = output.plan.command.pitch_velocity,
+                    .pitch_acceleration = output.plan.command.pitch_acceleration,
+                    .target_distance_m = output.ballistic.distance_m};
+  output.command_source = GimbalCommandSource::MPC;
+  diagnostics.yaw_error = Wrap(output.target_yaw - feedback.yaw);
+  diagnostics.pitch_error = output.target_pitch - feedback.pitch;
   const double WIDTH = input.prediction.type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
   constexpr double HEIGHT = 0.055;
-  result.fire_yaw_window =
-      std::clamp(std::atan2(0.5 * WIDTH * config_.fire_window_scale, result.ballistic.distance_m),
+  output.fire_yaw_window =
+      std::clamp(std::atan2(0.5 * WIDTH * config_.fire_window_scale, output.ballistic.distance_m),
                  config_.min_fire_yaw_rad, config_.max_fire_yaw_rad);
-  result.fire_pitch_window =
-      std::clamp(std::atan2(0.5 * HEIGHT * config_.fire_window_scale, result.ballistic.distance_m),
+  output.fire_pitch_window =
+      std::clamp(std::atan2(0.5 * HEIGHT * config_.fire_window_scale, output.ballistic.distance_m),
                  config_.min_fire_pitch_rad, config_.max_fire_pitch_rad);
 
   const double POSITION_STD =
@@ -514,8 +518,8 @@ FireControlResult FireControl::Step(const ControlInputSnapshot& input,
   const double YAW_STD = std::sqrt(std::max(0.0, input.prediction.yaw_variance_rad2));
   const bool UNCERTAINTY_OK =
       POSITION_STD <= config_.max_center_position_std_m && YAW_STD <= config_.max_yaw_std_rad;
-  const bool AIM_OK = std::abs(result.yaw_error) <= result.fire_yaw_window &&
-                      std::abs(result.pitch_error) <= result.fire_pitch_window;
+  const bool AIM_OK = std::abs(diagnostics.yaw_error) <= output.fire_yaw_window &&
+                      std::abs(diagnostics.pitch_error) <= output.fire_pitch_window;
   // 稳定计数与槽位绑定；换槽或离开窗口都会重新累计，防止切换瞬间误触发。
   if (SLOT == last_stable_slot_ && AIM_OK) {
     ++stable_cycles_;
@@ -523,24 +527,24 @@ FireControlResult FireControl::Step(const ControlInputSnapshot& input,
     last_stable_slot_ = SLOT;
     stable_cycles_ = AIM_OK ? 1 : 0;
   }
-  result.stable_cycles = stable_cycles_;
+  output.stable_cycles = stable_cycles_;
 
   if (!config_.auto_fire) {
-    result.reject_reason = FireRejectReason::AUTO_FIRE_DISABLED;
+    output.reject_reason = FireRejectReason::AUTO_FIRE_DISABLED;
   } else if (!input.external_control_enabled) {
-    result.reject_reason = FireRejectReason::EXTERNAL_CONTROL_DISABLED;
+    output.reject_reason = FireRejectReason::EXTERNAL_CONTROL_DISABLED;
   } else if (input.prediction.state == TrackerState::TEMP_LOST) {
-    result.reject_reason = FireRejectReason::TEMPORARY_LOSS;
+    output.reject_reason = FireRejectReason::TEMPORARY_LOSS;
   } else if (input.prediction.state != TrackerState::TRACKING) {
-    result.reject_reason = FireRejectReason::TRACK_NOT_CONFIRMED;
+    output.reject_reason = FireRejectReason::TRACK_NOT_CONFIRMED;
   } else if (!UNCERTAINTY_OK) {
-    result.reject_reason = FireRejectReason::HIGH_UNCERTAINTY;
+    output.reject_reason = FireRejectReason::HIGH_UNCERTAINTY;
   } else if (!AIM_OK) {
-    result.reject_reason = FireRejectReason::AIM_ERROR_TOO_LARGE;
+    output.reject_reason = FireRejectReason::AIM_ERROR_TOO_LARGE;
   } else if (stable_cycles_ < config_.stable_cycles) {
-    result.reject_reason = FireRejectReason::AIM_NOT_STABLE;
+    output.reject_reason = FireRejectReason::AIM_NOT_STABLE;
   } else {
-    result.fire_eligible = true;
+    output.fire_eligible = true;
     // 开火采用有宽度的电平脉冲，并以脉冲起点限制最小重复间隔。
     const bool PULSE_ACTIVE =
         pulse_until_ != std::chrono::steady_clock::time_point{} && now < pulse_until_;
@@ -548,19 +552,19 @@ FireControlResult FireControl::Step(const ControlInputSnapshot& input,
         last_fire_start_ == std::chrono::steady_clock::time_point{} ||
         std::chrono::duration<double>(now - last_fire_start_).count() >= config_.fire_interval_s;
     if (PULSE_ACTIVE) {
-      result.command.fire = true;
-      result.reject_reason = FireRejectReason::NONE;
+      output.command.fire = true;
+      output.reject_reason = FireRejectReason::NONE;
     } else if (INTERVAL_READY) {
       last_fire_start_ = now;
       pulse_until_ = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                                std::chrono::duration<double>(config_.fire_pulse_width_s));
-      result.command.fire = true;
-      result.reject_reason = FireRejectReason::NONE;
+      output.command.fire = true;
+      output.reject_reason = FireRejectReason::NONE;
     } else {
-      result.reject_reason = FireRejectReason::COOLDOWN;
+      output.reject_reason = FireRejectReason::COOLDOWN;
     }
   }
-  if (!result.fire_eligible)
+  if (!output.fire_eligible)
     pulse_until_ = {};
   return result;
 }

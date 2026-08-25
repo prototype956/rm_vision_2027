@@ -21,7 +21,7 @@ PnpPercentiles Percentiles(const std::vector<double>& samples) {
 
 }  // namespace
 
-void PnpMetrics::RecordRefinement(const CornerRefinementResult& refinement) {
+void PnpMetrics::RecordRefinement(const CornerRefinementDiagnostics& refinement) {
   ++refinement_summary_.attempted;
   refinement_elapsed_samples_.push_back(refinement.elapsed_ms);
   if (refinement.success && !refinement.fallback) {
@@ -32,17 +32,17 @@ void PnpMetrics::RecordRefinement(const CornerRefinementResult& refinement) {
   }
 }
 
-void PnpMetrics::RecordDetectionSolve(const ArmorPnpAttempt& attempt) {
+void PnpMetrics::RecordDetectionSolve(const ArmorPnpSolveResult& result) {
   ++solve_summary_.attempted;
-  if (attempt.estimate) {
+  if (result.output && result.diagnostics.pose) {
     ++solve_summary_.succeeded;
-    reprojection_samples_.push_back(attempt.estimate->reprojection_rmse_px);
+    reprojection_samples_.push_back(result.diagnostics.pose->reprojection_rmse_px);
   } else {
-    ++solve_summary_.rejection_reasons[PnpStatusName(attempt.status)];
+    ++solve_summary_.rejection_reasons[PnpStatusName(result.diagnostics.status)];
   }
 }
 
-void PnpMetrics::PopulateSnapshot(std::uint64_t sequence, ArmorPnpFrameResult& result) {
+void PnpMetrics::PopulateSnapshot(std::uint64_t sequence, ArmorPnpDiagnostics& diagnostics) {
   if (!summary_initialized_ || sequence % 100 == 0) {
     summary_initialized_ = true;
     summary_sequence_ = sequence;
@@ -51,10 +51,10 @@ void PnpMetrics::PopulateSnapshot(std::uint64_t sequence, ArmorPnpFrameResult& r
     solve_snapshot_ = solve_summary_;
     refinement_snapshot_ = refinement_summary_;
   }
-  result.summary_sequence = summary_sequence_;
-  result.detection_summary = detection_snapshot_;
-  result.solve_summary = solve_snapshot_;
-  result.refinement_summary = refinement_snapshot_;
+  diagnostics.summary_sequence = summary_sequence_;
+  diagnostics.detection_summary = detection_snapshot_;
+  diagnostics.solve_summary = solve_snapshot_;
+  diagnostics.refinement_summary = refinement_snapshot_;
 }
 
 }  // namespace mv::modules::detail

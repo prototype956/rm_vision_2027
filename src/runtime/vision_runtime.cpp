@@ -4,10 +4,10 @@
 #include "hal/camera/i_camera.hpp"
 #include "modules/armor_pnp/armor_pnp_types.hpp"
 #include "runtime/control_runtime.hpp"
+#include "runtime/runtime_diagnostics_sink.hpp"
 #include "runtime/vision_pipeline.hpp"
 #include "tool/debug/armor_detection_overlay.hpp"
 #include "tool/debug/debug_window.hpp"
-#include "tool/foxglove/vision_debug_publisher.hpp"
 #include "tool/simulation_evaluation/simulation_evaluator.hpp"
 
 #include <algorithm>
@@ -23,7 +23,7 @@ namespace mv::runtime {
 namespace {
 
 void DrawDetections(cv::Mat& image, const std::vector<modules::ArmorDetection>& detections,
-                    const modules::DetectorStats& stats) {
+                    const modules::ArmorDetectorDiagnostics& stats) {
   tool::DrawArmorDetections(image, detections);
 
   const auto SUMMARY = fmt::format("detections={} candidates={} total={:.2f} ms", detections.size(),
@@ -99,7 +99,7 @@ void LogPnpHealth(const tool::simulation_evaluation::PnpEvaluationResult& result
 
 VisionRuntime::VisionRuntime(hal::ICamera& camera, VisionPipeline& pipeline,
                              ControlRuntime* control, tool::DebugWindow* window,
-                             tool::foxglove::VisionDebugPublisher* diagnostics,
+                             IRuntimeDiagnosticsSink* diagnostics,
                              tool::simulation_evaluation::SimulationEvaluator* evaluator) noexcept
     : camera_(camera),
       pipeline_(pipeline),
@@ -122,18 +122,21 @@ VisionRunStatus VisionRuntime::Run(const std::function<bool()>& stop_requested) 
         const auto SPATIAL = frame::MakeSpatialFrameView(packet);
         const auto RESULT = pipeline_.Process({.capture = packet.capture, .spatial = SPATIAL});
         if (control_ && packet.camera_model && packet.kinematics)
-          control_->Update(RESULT.prediction, *packet.kinematics, packet.gimbal_actuator);
+          control_->Update(RESULT.output.prediction, *packet.kinematics, packet.gimbal_actuator);
         std::optional<tool::simulation_evaluation::SimulationEvaluationResult> evaluation;
         if (evaluator_ && packet.camera_model && packet.kinematics && packet.simulation) {
           try {
-            evaluation = evaluator_->Evaluate({.stamp = packet.capture.stamp,
-                                               .camera_model = *packet.camera_model,
-                                               .kinematics = *packet.kinematics,
-                                               .simulation = *packet.simulation,
-                                               .detections = RESULT.detections,
-                                               .refinements = RESULT.refinements,
-                                               .pnp = RESULT.pnp,
-                                               .prediction = RESULT.prediction});
+            evaluation =
+                evaluator_->Evaluate({.stamp = packet.capture.stamp,
+                                      .camera_model = *packet.camera_model,
+                                      .kinematics = *packet.kinematics,
+                                      .simulation = *packet.simulation,
+                                      .detections = RESULT.output.detections,
+                                      .refinements = RESULT.output.refinements,
+                                      .refinement_diagnostics = RESULT.diagnostics.refinements,
+                                      .pnp = RESULT.output.pnp,
+                                      .pnp_diagnostics = RESULT.diagnostics.pnp,
+                                      .prediction = RESULT.output.prediction});
           } catch (const std::exception& error) {
             MV_LOG_WARN("SimulationEvaluation", "frame evaluation skipped: {}", error.what());
           }
@@ -142,12 +145,11 @@ VisionRunStatus VisionRuntime::Run(const std::function<bool()>& stop_requested) 
           LogPnpHealth(evaluation->pnp, packet.capture.stamp.sequence,
                        packet.simulation->armors.size());
         if (diagnostics_) {
-          diagnostics_->Publish(packet, RESULT.detections, RESULT.detector_stats, RESULT.lightbars,
-                                RESULT.pnp, RESULT.prediction, evaluation);
+          diagnostics_->PublishVision(packet, RESULT.output, RESULT.diagnostics, evaluation);
         }
         if (window_) {
           cv::Mat debug_image = packet.capture.image.clone();
-          DrawDetections(debug_image, RESULT.detections, RESULT.detector_stats);
+          DrawDetections(debug_image, RESULT.output.detections, RESULT.diagnostics.detector);
           window_->Show(debug_image);
         }
       } catch (const std::exception& error) {

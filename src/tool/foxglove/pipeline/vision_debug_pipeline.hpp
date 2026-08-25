@@ -1,7 +1,8 @@
 #pragma once
 
 #include "frame/frame_packet.hpp"
-#include "modules/armor_detector/armor_detector.hpp"
+#include "runtime/vision_frame_diagnostics.hpp"
+#include "runtime/vision_frame_output.hpp"
 #include "tool/foxglove/foxglove_config.hpp"
 #include "tool/foxglove/pipeline/latest_frame_queue.hpp"
 #include "tool/foxglove/pipeline/vision_channel_set.hpp"
@@ -15,7 +16,6 @@
 #include <thread>
 
 #include <optional>
-#include <span>
 
 namespace mv::tool::foxglove::pipeline {
 
@@ -39,11 +39,8 @@ class VisionDebugPipeline final {
   void Start() noexcept;
   /** @brief 非阻塞提交同帧图像、检测结果和指标。 */
   void Publish(
-      const frame::FramePacket& packet, std::span<const modules::ArmorDetection> detections,
-      const modules::DetectorStats& detector_stats,
-      const modules::LightbarDetectionResult& lightbar_result,
-      const modules::ArmorPnpFrameResult& pnp_result,
-      const modules::ArmorPredictionResult& prediction_result,
+      const frame::FramePacket& packet, const ::mv::runtime::VisionFrameOutput& output,
+      const ::mv::runtime::VisionFrameDiagnostics& diagnostics,
       const std::optional<simulation_evaluation::SimulationEvaluationResult>& simulation_evaluation,
       std::optional<modules::ArmorSelectionSnapshot> selection) noexcept;
   /** @brief 获取流水线、会话和关键实时订阅的线程安全组合快照。 */

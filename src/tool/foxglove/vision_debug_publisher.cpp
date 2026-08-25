@@ -38,17 +38,19 @@ struct VisionDebugPublisher::Impl {
     return latest_selection;
   }
 
-  void UpdateSelection(const modules::FireControlResult& result) noexcept {
+  void UpdateSelection(const ::mv::runtime::ControlCycleOutput& output,
+                       const ::mv::runtime::ControlCycleDiagnostics& diagnostics) noexcept {
     std::lock_guard lock(selection_mutex);
-    latest_selection = {.valid = true,
-                        .source_sequence = result.source_sequence,
-                        .tracker_state = result.tracker_state,
-                        .tracked_label = result.tracked_label,
-                        .tracked_type = result.tracked_type,
-                        .selected_slot = result.selected_slot,
-                        .pending_slot = result.armor_selection.pending_slot,
-                        .pending_duration_s = result.armor_selection.pending_duration_s,
-                        .switch_confirmation_s = result.armor_selection.switch_confirmation_s};
+    latest_selection = modules::ArmorSelectionSnapshot{
+        .valid = true,
+        .source_sequence = output.fire_control.source_sequence,
+        .tracker_state = output.fire_control.tracker_state,
+        .tracked_label = output.fire_control.tracked_label,
+        .tracked_type = output.fire_control.tracked_type,
+        .selected_slot = output.fire_control.selected_slot,
+        .pending_slot = diagnostics.fire_control.armor_selection.pending_slot,
+        .pending_duration_s = diagnostics.fire_control.armor_selection.pending_duration_s,
+        .switch_confirmation_s = diagnostics.fire_control.armor_selection.switch_confirmation_s};
   }
 
   runtime::FoxgloveSession session;
@@ -65,34 +67,32 @@ VisionDebugPublisher::VisionDebugPublisher(const Config& config)
 VisionDebugPublisher::~VisionDebugPublisher() = default;
 
 void VisionDebugPublisher::Publish(
-    const frame::FramePacket& packet, std::span<const modules::ArmorDetection> detections,
-    const modules::DetectorStats& detector_stats,
-    const modules::LightbarDetectionResult& lightbar_result,
-    const modules::ArmorPnpFrameResult& pnp_result,
-    const modules::ArmorPredictionResult& prediction_result,
+    const frame::FramePacket& packet, const ::mv::runtime::VisionFrameOutput& output,
+    const ::mv::runtime::VisionFrameDiagnostics& diagnostics,
     const std::optional<simulation_evaluation::SimulationEvaluationResult>&
         simulation_evaluation) noexcept {
   const auto SELECTION = impl_->SelectionSnapshot();
   const bool SEQUENCE_MATCHES = SELECTION.valid &&
-                                SELECTION.source_sequence <= prediction_result.sequence &&
-                                prediction_result.sequence - SELECTION.source_sequence <= 2;
-  const bool IDENTITY_MATCHES = SELECTION.tracked_label == prediction_result.label &&
-                                SELECTION.tracked_type == prediction_result.type;
-  const bool TRACKER_MATCHES = prediction_result.state != modules::TrackerState::LOST &&
+                                SELECTION.source_sequence <= output.prediction.sequence &&
+                                output.prediction.sequence - SELECTION.source_sequence <= 2;
+  const bool IDENTITY_MATCHES = SELECTION.tracked_label == output.prediction.label &&
+                                SELECTION.tracked_type == output.prediction.type;
+  const bool TRACKER_MATCHES = output.prediction.state != modules::TrackerState::LOST &&
                                SELECTION.tracker_state != modules::TrackerState::LOST &&
-                               prediction_result.reset_reason.empty() &&
-                               !(prediction_result.state == modules::TrackerState::DETECTING &&
-                                 SELECTION.source_sequence != prediction_result.sequence);
-  impl_->pipeline.Publish(packet, detections, detector_stats, lightbar_result, pnp_result,
-                          prediction_result, simulation_evaluation,
+                               diagnostics.prediction.reset_reason.empty() &&
+                               !(output.prediction.state == modules::TrackerState::DETECTING &&
+                                 SELECTION.source_sequence != output.prediction.sequence);
+  impl_->pipeline.Publish(packet, output, diagnostics, simulation_evaluation,
                           SEQUENCE_MATCHES && IDENTITY_MATCHES && TRACKER_MATCHES
                               ? std::optional(SELECTION)
                               : std::nullopt);
 }
 
-void VisionDebugPublisher::PublishControl(const modules::FireControlResult& result) noexcept {
-  impl_->UpdateSelection(result);
-  impl_->control.Publish(result);
+void VisionDebugPublisher::PublishControl(
+    const ::mv::runtime::ControlCycleOutput& output,
+    const ::mv::runtime::ControlCycleDiagnostics& diagnostics) noexcept {
+  impl_->UpdateSelection(output, diagnostics);
+  impl_->control.Publish(output, diagnostics);
 }
 
 VisionPublisherStats VisionDebugPublisher::SnapshotStats() const noexcept {

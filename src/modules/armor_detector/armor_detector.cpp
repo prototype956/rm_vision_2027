@@ -81,7 +81,6 @@ struct YoloArmorDetector::Impl {
   ov::Tensor input_tensor;
   cv::Mat input_image{detail::K_MODEL_HEIGHT, detail::K_MODEL_WIDTH, CV_8UC3, cv::Scalar(0, 0, 0)};
   ArmorDetectorConfig config;
-  DetectorStats stats;
   bool initialized{false};
 };
 
@@ -151,7 +150,7 @@ void YoloArmorDetector::Init(const ArmorDetectorConfig& config) {
                    impl_->input_image.data);
     impl_->infer_request = impl_->compiled_model.create_infer_request();
     impl_->infer_request.set_input_tensor(impl_->input_tensor);
-    // 使用全黑输入预热 GPU 和内部执行图，预热耗时不进入任何 DetectorStats。
+    // 使用全黑输入预热 GPU 和内部执行图，预热耗时不进入任何 ArmorDetectorDiagnostics。
     for (int run = 0; run < K_WARMUP_RUNS; ++run) {
       impl_->infer_request.infer();
     }
@@ -170,7 +169,7 @@ void YoloArmorDetector::Init(const ArmorDetectorConfig& config) {
   }
 }
 
-std::vector<ArmorDetection> YoloArmorDetector::Detect(const cv::Mat& bgr_image) {
+ArmorDetectorResult YoloArmorDetector::Detect(const cv::Mat& bgr_image) {
   if (!impl_->initialized) {
     throw std::logic_error("armor detector is not initialized");
   }
@@ -204,22 +203,23 @@ std::vector<ArmorDetection> YoloArmorDetector::Detect(const cv::Mat& bgr_image) 
         OUTPUT.get_shape() != ov::Shape{1, detail::K_OUTPUT_ROWS, detail::K_OUTPUT_COLUMNS}) {
       throw ArmorDetectorRuntimeError("OpenVINO returned an unexpected 0526 output tensor");
     }
-    const detail::DecodeThresholds THRESHOLDS{
-        .confidence = impl_->config.confidence_threshold,
-        .nms_iou = impl_->config.nms_iou_threshold};
-    auto decoded = detail::DecodeYolo0526(
-        OUTPUT.data<const float>(), detail::K_OUTPUT_ROWS, detail::K_OUTPUT_COLUMNS, TRANSFORM,
-        impl_->config.enemy_color, THRESHOLDS);
+    const detail::DecodeThresholds THRESHOLDS{.confidence = impl_->config.confidence_threshold,
+                                              .nms_iou = impl_->config.nms_iou_threshold};
+    auto decoded = detail::DecodeYolo0526(OUTPUT.data<const float>(), detail::K_OUTPUT_ROWS,
+                                          detail::K_OUTPUT_COLUMNS, TRANSFORM,
+                                          impl_->config.enemy_color, THRESHOLDS);
     const auto POSTPROCESS_END = Clock::now();
 
     // 统计值只在整次检测成功后更新，异常不会留下部分阶段的新旧混合数据。
-    impl_->stats.preprocess_ms = Milliseconds(TOTAL_START, PREPROCESS_END);
-    impl_->stats.inference_ms = Milliseconds(PREPROCESS_END, INFERENCE_END);
-    impl_->stats.postprocess_ms = Milliseconds(INFERENCE_END, POSTPROCESS_END);
-    impl_->stats.total_ms = Milliseconds(TOTAL_START, POSTPROCESS_END);
-    impl_->stats.threshold_candidates = decoded.threshold_candidates;
-    impl_->stats.kept_detections = decoded.detections.size();
-    return std::move(decoded.detections);
+    ArmorDetectorResult result;
+    result.output.detections = std::move(decoded.detections);
+    result.diagnostics.preprocess_ms = Milliseconds(TOTAL_START, PREPROCESS_END);
+    result.diagnostics.inference_ms = Milliseconds(PREPROCESS_END, INFERENCE_END);
+    result.diagnostics.postprocess_ms = Milliseconds(INFERENCE_END, POSTPROCESS_END);
+    result.diagnostics.total_ms = Milliseconds(TOTAL_START, POSTPROCESS_END);
+    result.diagnostics.threshold_candidates = decoded.threshold_candidates;
+    result.diagnostics.kept_detections = result.output.detections.size();
+    return result;
   } catch (const ArmorDetectorRuntimeError&) {
     throw;
   } catch (const std::exception& error) {
@@ -229,10 +229,6 @@ std::vector<ArmorDetection> YoloArmorDetector::Detect(const cv::Mat& bgr_image) 
 
 bool YoloArmorDetector::IsInitialized() const noexcept {
   return impl_->initialized;
-}
-
-const DetectorStats& YoloArmorDetector::LastStats() const noexcept {
-  return impl_->stats;
 }
 
 }  // namespace mv::modules

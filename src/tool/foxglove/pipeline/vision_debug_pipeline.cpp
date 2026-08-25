@@ -119,11 +119,8 @@ TopicDemand VisionDebugPipeline::LiveDemand() const noexcept {
 }
 
 void VisionDebugPipeline::Publish(
-    const frame::FramePacket& packet, std::span<const modules::ArmorDetection> detections,
-    const modules::DetectorStats& detector_stats,
-    const modules::LightbarDetectionResult& lightbar_result,
-    const modules::ArmorPnpFrameResult& pnp_result,
-    const modules::ArmorPredictionResult& prediction_result,
+    const frame::FramePacket& packet, const ::mv::runtime::VisionFrameOutput& output,
+    const ::mv::runtime::VisionFrameDiagnostics& diagnostics,
     const std::optional<simulation_evaluation::SimulationEvaluationResult>& simulation_evaluation,
     std::optional<modules::ArmorSelectionSnapshot> selection) noexcept {
   metrics_.OnSubmitted();
@@ -134,8 +131,7 @@ void VisionDebugPipeline::Publish(
     return;
   }
   try {
-    const auto RESULT = queue_.Push(packet, detections, detector_stats, lightbar_result, pnp_result,
-                                    prediction_result, simulation_evaluation, selection);
+    const auto RESULT = queue_.Push(packet, output, diagnostics, simulation_evaluation, selection);
     if (RESULT.rate_limited) {
       metrics_.OnRateLimited();
     } else if (RESULT.enqueued) {

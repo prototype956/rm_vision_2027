@@ -21,6 +21,9 @@ ESEKF，不能从 LOST 初始化跟踪器。
 自适应阈值范围、轮廓几何、颜色差和最大候选数。主链顺序为网络检测、灰度转换、角点精修、
 独立灯条检测、PnP、装甲/灯条联合 ESEKF、控制与 Foxglove。
 
+正式 `LightbarDetectorOutput` 只保存筛选后的灯条；阈值来源、各级计数、拒绝原因和耗时位于
+`LightbarDetectorDiagnostics`。预测器只接收正式灯条，Foxglove 在诊断边界组合两套数据。
+
 ## 诊断与验收
 
 `/vision/lightbars/annotations` 显示原始/拒绝灯条、完整装甲重复灯条、预测灯条和正式接受
