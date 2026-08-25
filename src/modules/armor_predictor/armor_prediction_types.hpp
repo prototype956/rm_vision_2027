@@ -98,10 +98,6 @@ struct ArmorPredictionResult {
   std::optional<double> nis_per_dof;
   int esekf_iterations{0};
   double estimation_elapsed_ms{0.0};
-  std::optional<double> truth_center_error_m;
-  std::optional<double> truth_yaw_error_rad;
-  std::optional<double> truth_yaw_equivalent_error_rad;
-  std::optional<double> truth_yaw_velocity_error_rad_s;
   bool maneuver_active{false};
   std::string maneuver_phase{"idle"};
   std::string maneuver_trigger;

@@ -107,8 +107,9 @@ mv::geometry::RigidTransform ConvertTransform(const RigidTransformF32& value) no
                                                value.rotation.z)};
 }
 
-void PopulateFrameContext(const CapturedFrameMeta& metadata, frame::FramePacket& packet) {
-  // Grab() 已完整验证数量、时间戳和数值范围，这里只负责从 ABI 类型提升到帧数据类型。
+void PopulateFrameContext(const CapturedFrameMeta& metadata, bool truth_valid,
+                          bool projectile_valid, frame::FramePacket& packet) {
+  // Grab() 已分别验证正式数据和可选仿真附件，这里只负责从 ABI 类型提升。
   const auto& camera = metadata.camera_info;
   packet.camera_model = frame::CameraModel{
       .width = camera.width,
@@ -124,13 +125,6 @@ void PopulateFrameContext(const CapturedFrameMeta& metadata, frame::FramePacket&
       .gimbal_t_camera_optical = ConvertTransform(metadata.gimbal_t_camera_optical),
       .gimbal_t_muzzle = ConvertTransform(metadata.gimbal_t_muzzle)};
 
-  simulation::SimulationFrameData simulation;
-  const auto& projectiles = metadata.projectile_statistics;
-  simulation.projectile_statistics =
-      simulation::ProjectileStatistics{.bullet_launch_count = projectiles.bullet_launch_count,
-                                       .armor_hit_count = projectiles.armor_hit_count,
-                                       .rune_hit_count = projectiles.rune_hit_count,
-                                       .dart_launch_count = projectiles.dart_launch_count};
   if (metadata.gimbal_telemetry_valid != 0) {
     const auto FORWARD =
         packet.kinematics->world_t_gimbal.rotation * mv::geometry::Vector3::UnitX();
@@ -149,6 +143,17 @@ void PopulateFrameContext(const CapturedFrameMeta& metadata, frame::FramePacket&
         .pitch_acceleration = metadata.gimbal_pitch_acceleration_rad_s2};
   }
 
+  if (!truth_valid)
+    return;
+  simulation::SimulationFrameData simulation;
+  if (projectile_valid) {
+    const auto& projectiles = metadata.projectile_statistics;
+    simulation.projectile_statistics =
+        simulation::ProjectileStatistics{.bullet_launch_count = projectiles.bullet_launch_count,
+                                         .armor_hit_count = projectiles.armor_hit_count,
+                                         .rune_hit_count = projectiles.rune_hit_count,
+                                         .dart_launch_count = projectiles.dart_launch_count};
+  }
   const auto& truth = metadata.ground_truth;
   simulation.targets.reserve(truth.target_count);
   for (std::size_t index = 0; index < truth.target_count; ++index) {
@@ -198,6 +203,7 @@ struct TalosDevice::Impl {
   std::optional<uint64_t> last_frame_sequence;  ///< 最近接收帧序号，用于拒绝重复或回退帧。
   std::optional<uint64_t> last_capture_timestamp_ns;  ///< 最近采集时间，用于检查严格单调性。
   uint64_t invalid_frames{0};  ///< 本次连接以来被完整性校验拒绝的帧数。
+  uint64_t invalid_simulation_frames{0};  ///< 未影响正式抓帧的非法仿真附件数。
 
   /** 按映射、文件描述符的逆依赖顺序释放资源，并恢复关闭状态。 */
   void ResetMappings() noexcept {
@@ -223,6 +229,7 @@ struct TalosDevice::Impl {
     last_frame_sequence.reset();
     last_capture_timestamp_ns.reset();
     invalid_frames = 0;
+    invalid_simulation_frames = 0;
   }
 
   bool HeartbeatFresh() const noexcept {
@@ -396,10 +403,10 @@ GrabStatus TalosDevice::Grab(frame::FramePacket& packet) {
       return GrabStatus::INVALID_FRAME;
     };
 
-    // 图像、标定、TF 和真值必须来自同一个原子发布的采集快照。任一子结构不同步，
-    // 整帧都不能交给上层，否则 Foxglove 的三维实体和二维重投影将产生假误差。
+    // 仿真附件只在与正式帧序号和时间戳一致时交给评估层；附件失效不拒绝正式帧。
     const auto& truth = metadata.ground_truth;
     const auto& projectiles = metadata.projectile_statistics;
+    const bool PROJECTILE_VALID = projectiles.timestamp_ns == metadata.capture_timestamp_ns;
     bool truth_valid = truth.frame_sequence == metadata.frame_sequence &&
                        truth.timestamp_ns == metadata.capture_timestamp_ns &&
                        truth.target_count <= K_GROUND_TRUTH_MAX_TARGETS &&
@@ -440,7 +447,6 @@ GrabStatus TalosDevice::Grab(frame::FramePacket& packet) {
 
     if (metadata.capture_timestamp_ns == 0 ||
         metadata.camera_info.timestamp_ns != metadata.capture_timestamp_ns ||
-        projectiles.timestamp_ns != metadata.capture_timestamp_ns ||
         metadata.width != static_cast<uint32_t>(impl_->info.output_width) ||
         metadata.height != static_cast<uint32_t>(impl_->info.output_height) ||
         metadata.buffer_id >= K_BUFFER_COUNT ||
@@ -448,7 +454,7 @@ GrabStatus TalosDevice::Grab(frame::FramePacket& packet) {
         !ValidCalibration(metadata.camera_info, metadata.width, metadata.height) ||
         !ValidTransform(metadata.world_t_gimbal) ||
         !ValidTransform(metadata.gimbal_t_camera_optical) ||
-        !ValidTransform(metadata.gimbal_t_muzzle) || !truth_valid ||
+        !ValidTransform(metadata.gimbal_t_muzzle) ||
         (metadata.gimbal_telemetry_valid != 0 &&
          (metadata.gimbal_telemetry_valid != 1 || metadata.gimbal_actuator_mode > 2 ||
           metadata.gimbal_command_valid > 1 || !Finite(metadata.gimbal_yaw_velocity_rad_s) ||
@@ -460,6 +466,15 @@ GrabStatus TalosDevice::Grab(frame::FramePacket& packet) {
         (impl_->last_capture_timestamp_ns.has_value() &&
          metadata.capture_timestamp_ns <= *impl_->last_capture_timestamp_ns)) {
       return INVALID();
+    }
+
+    if (!truth_valid || !PROJECTILE_VALID) {
+      const std::uint64_t COUNT = ++impl_->invalid_simulation_frames;
+      if (COUNT == 1 || COUNT % 100 == 0) {
+        MV_LOG_WARN("HAL.Camera.Talos",
+                    "ignored invalid simulation attachment #{} (seq={} truth={} projectiles={})",
+                    COUNT, metadata.frame_sequence, truth_valid, PROJECTILE_VALID);
+      }
     }
 
     const std::size_t FRAME_SIZE =
@@ -488,7 +503,7 @@ GrabStatus TalosDevice::Grab(frame::FramePacket& packet) {
     packet.capture.stamp.capture_timestamp_ns = metadata.capture_timestamp_ns;
     packet.capture.stamp.sequence = metadata.frame_sequence;
     packet.capture.stamp.source_invalid_frames = impl_->invalid_frames;
-    PopulateFrameContext(metadata, packet);
+    PopulateFrameContext(metadata, truth_valid, PROJECTILE_VALID, packet);
     return GrabStatus::OK;
   }
   return GrabStatus::TIMEOUT;

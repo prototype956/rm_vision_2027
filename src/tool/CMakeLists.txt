@@ -6,5 +6,6 @@ add_subdirectory(debug)
 add_subdirectory(calibration)
 
 if(USE_OPENVINO)
+    add_subdirectory(simulation_evaluation)
     add_subdirectory(foxglove)
 endif()

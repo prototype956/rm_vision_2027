@@ -6,6 +6,7 @@ message(STATUS "  Configuring source modules...")
 
 add_subdirectory(core)
 add_subdirectory(geometry)
+add_subdirectory(simulation)
 add_subdirectory(frame)
 add_subdirectory(tool)
 

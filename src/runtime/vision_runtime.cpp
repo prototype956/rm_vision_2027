@@ -8,6 +8,7 @@
 #include "tool/debug/armor_detection_overlay.hpp"
 #include "tool/debug/debug_window.hpp"
 #include "tool/foxglove/vision_debug_publisher.hpp"
+#include "tool/simulation_evaluation/simulation_evaluator.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -31,8 +32,8 @@ void DrawDetections(cv::Mat& image, const std::vector<modules::ArmorDetection>& 
               cv::LINE_AA);
 }
 
-void LogPnpHealth(const modules::ArmorPnpFrameResult& result, std::uint64_t sequence,
-                  std::size_t total_truth_armors) {
+void LogPnpHealth(const tool::simulation_evaluation::PnpEvaluationResult& result,
+                  std::uint64_t sequence, std::size_t total_truth_armors) {
   if (sequence % 100 != 0)
     return;
   std::string dominant_refinement_failure = "none";
@@ -49,7 +50,7 @@ void LogPnpHealth(const modules::ArmorPnpFrameResult& result, std::uint64_t sequ
   double max_position_error = 0.0;
   double max_rotation_error = 0.0;
   for (const auto& attempt : result.attempts) {
-    if (attempt.source == modules::PnpInputSource::GROUND_TRUTH) {
+    if (attempt.source == tool::simulation_evaluation::PnpEvaluationSource::GROUND_TRUTH) {
       ++truth_attempted;
       if (attempt.estimate) {
         ++truth_succeeded;
@@ -78,10 +79,10 @@ void LogPnpHealth(const modules::ArmorPnpFrameResult& result, std::uint64_t sequ
               result.refinement_summary.final_mean_corner_error_px.p95,
               result.detection_summary.depth_error_m.p95, dominant_refinement_failure,
               dominant_refinement_failure_count);
-  const auto MATCHED_DETECTION = std::find_if(
-      result.attempts.begin(), result.attempts.end(), [](const modules::ArmorPnpAttempt& attempt) {
-        return attempt.source == modules::PnpInputSource::DETECTION && attempt.estimate &&
-               attempt.estimate->truth_id;
+  const auto MATCHED_DETECTION =
+      std::find_if(result.attempts.begin(), result.attempts.end(), [](const auto& attempt) {
+        return attempt.source == tool::simulation_evaluation::PnpEvaluationSource::DETECTION &&
+               attempt.estimate && attempt.estimate->truth_id;
       });
   if (MATCHED_DETECTION != result.attempts.end()) {
     const auto& value = *MATCHED_DETECTION->estimate;
@@ -98,12 +99,14 @@ void LogPnpHealth(const modules::ArmorPnpFrameResult& result, std::uint64_t sequ
 
 VisionRuntime::VisionRuntime(hal::ICamera& camera, VisionPipeline& pipeline,
                              ControlRuntime* control, tool::DebugWindow* window,
-                             tool::foxglove::VisionDebugPublisher* diagnostics) noexcept
+                             tool::foxglove::VisionDebugPublisher* diagnostics,
+                             tool::simulation_evaluation::SimulationEvaluator* evaluator) noexcept
     : camera_(camera),
       pipeline_(pipeline),
       control_(control),
       window_(window),
-      diagnostics_(diagnostics) {}
+      diagnostics_(diagnostics),
+      evaluator_(evaluator) {}
 
 VisionRunStatus VisionRuntime::Run(const std::function<bool()>& stop_requested) {
   while (!stop_requested()) {
@@ -116,14 +119,31 @@ VisionRunStatus VisionRuntime::Run(const std::function<bool()>& stop_requested) 
 
     if (STATUS == hal::GrabStatus::OK) {
       try {
-        const auto RESULT = pipeline_.Process(packet);
+        const auto SPATIAL = frame::MakeSpatialFrameView(packet);
+        const auto RESULT = pipeline_.Process({.capture = packet.capture, .spatial = SPATIAL});
         if (control_ && packet.camera_model && packet.kinematics)
           control_->Update(RESULT.prediction, *packet.kinematics, packet.gimbal_actuator);
-        LogPnpHealth(RESULT.pnp, packet.capture.stamp.sequence,
-                     packet.simulation ? packet.simulation->armors.size() : 0);
+        std::optional<tool::simulation_evaluation::SimulationEvaluationResult> evaluation;
+        if (evaluator_ && packet.camera_model && packet.kinematics && packet.simulation) {
+          try {
+            evaluation = evaluator_->Evaluate({.stamp = packet.capture.stamp,
+                                               .camera_model = *packet.camera_model,
+                                               .kinematics = *packet.kinematics,
+                                               .simulation = *packet.simulation,
+                                               .detections = RESULT.detections,
+                                               .refinements = RESULT.refinements,
+                                               .pnp = RESULT.pnp,
+                                               .prediction = RESULT.prediction});
+          } catch (const std::exception& error) {
+            MV_LOG_WARN("SimulationEvaluation", "frame evaluation skipped: {}", error.what());
+          }
+        }
+        if (evaluation)
+          LogPnpHealth(evaluation->pnp, packet.capture.stamp.sequence,
+                       packet.simulation->armors.size());
         if (diagnostics_) {
           diagnostics_->Publish(packet, RESULT.detections, RESULT.detector_stats, RESULT.lightbars,
-                                RESULT.pnp, RESULT.prediction);
+                                RESULT.pnp, RESULT.prediction, evaluation);
         }
         if (window_) {
           cv::Mat debug_image = packet.capture.image.clone();

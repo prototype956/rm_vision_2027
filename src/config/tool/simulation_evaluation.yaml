@@ -1,0 +1,4 @@
+schema_version: 1
+truth_match_min_iou: 0.05
+truth_match_max_center_distance_ratio: 0.75
+truth_match_max_corner_distance_ratio: 0.75

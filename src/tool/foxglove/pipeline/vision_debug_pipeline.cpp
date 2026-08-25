@@ -124,6 +124,7 @@ void VisionDebugPipeline::Publish(
     const modules::LightbarDetectionResult& lightbar_result,
     const modules::ArmorPnpFrameResult& pnp_result,
     const modules::ArmorPredictionResult& prediction_result,
+    const std::optional<simulation_evaluation::SimulationEvaluationResult>& simulation_evaluation,
     std::optional<modules::ArmorSelectionSnapshot> selection) noexcept {
   metrics_.OnSubmitted();
   const auto LIVE_DEMAND = LiveDemand();
@@ -134,7 +135,7 @@ void VisionDebugPipeline::Publish(
   }
   try {
     const auto RESULT = queue_.Push(packet, detections, detector_stats, lightbar_result, pnp_result,
-                                    prediction_result, selection);
+                                    prediction_result, simulation_evaluation, selection);
     if (RESULT.rate_limited) {
       metrics_.OnRateLimited();
     } else if (RESULT.enqueued) {

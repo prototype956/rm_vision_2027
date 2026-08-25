@@ -12,13 +12,14 @@ LatestFrameQueue::LatestFrameQueue(double max_fps)
           std::min(std::chrono::duration_cast<SteadyClock::duration>(std::chrono::milliseconds(2)),
                    PERIOD / 10)) {}
 
-QueuePushResult LatestFrameQueue::Push(const frame::FramePacket& packet,
-                                       std::span<const modules::ArmorDetection> detections,
-                                       const modules::DetectorStats& detector_stats,
-                                       const modules::LightbarDetectionResult& lightbar_result,
-                                       const modules::ArmorPnpFrameResult& pnp_result,
-                                       const modules::ArmorPredictionResult& prediction_result,
-                                       std::optional<modules::ArmorSelectionSnapshot> selection) {
+QueuePushResult LatestFrameQueue::Push(
+    const frame::FramePacket& packet, std::span<const modules::ArmorDetection> detections,
+    const modules::DetectorStats& detector_stats,
+    const modules::LightbarDetectionResult& lightbar_result,
+    const modules::ArmorPnpFrameResult& pnp_result,
+    const modules::ArmorPredictionResult& prediction_result,
+    const std::optional<simulation_evaluation::SimulationEvaluationResult>& simulation_evaluation,
+    std::optional<modules::ArmorSelectionSnapshot> selection) {
   std::lock_guard lock(mutex_);
   if (stopped_) {
     return {};
@@ -41,6 +42,7 @@ QueuePushResult LatestFrameQueue::Push(const frame::FramePacket& packet,
   item.lightbar_result = lightbar_result;
   item.pnp_result = pnp_result;
   item.prediction_result = prediction_result;
+  item.simulation_evaluation = simulation_evaluation;
   item.armor_selection = selection;
 
   const bool OVERWRITTEN = queued_frame_.has_value();

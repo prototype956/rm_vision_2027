@@ -16,6 +16,7 @@ target_link_libraries(mv-vision-main
         mv-modules-fire-control
         mv-tool-debug
         mv-tool-foxglove
+        mv-tool-simulation-evaluation
 )
 
 target_compile_definitions(mv-vision-main PRIVATE

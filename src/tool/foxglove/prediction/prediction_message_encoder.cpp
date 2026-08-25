@@ -186,6 +186,7 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionResu
 }
 
 std::string EncodeState(const modules::ArmorPredictionResult& result,
+                        const simulation_evaluation::PredictionEvaluationResult* evaluation,
                         const ::foxglove::schemas::Timestamp& timestamp) {
   std::string associations = "[";
   for (std::size_t index = 0; index < result.associations.size(); ++index) {
@@ -228,16 +229,18 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
   const auto TRIAL_YAW_UPDATE = result.trial_yaw_velocity_update_rad_s
                                     ? fmt::format("{:.9g}", *result.trial_yaw_velocity_update_rad_s)
                                     : "null";
-  const auto CENTER_ERROR =
-      result.truth_center_error_m ? fmt::format("{:.9g}", *result.truth_center_error_m) : "null";
-  const auto YAW_ERROR =
-      result.truth_yaw_error_rad ? fmt::format("{:.9g}", *result.truth_yaw_error_rad) : "null";
+  const auto CENTER_ERROR = evaluation && evaluation->center_error_m
+                                ? fmt::format("{:.9g}", *evaluation->center_error_m)
+                                : "null";
+  const auto YAW_ERROR = evaluation && evaluation->yaw_error_rad
+                             ? fmt::format("{:.9g}", *evaluation->yaw_error_rad)
+                             : "null";
   const auto EQUIVALENT_YAW_ERROR =
-      result.truth_yaw_equivalent_error_rad
-          ? fmt::format("{:.9g}", *result.truth_yaw_equivalent_error_rad)
+      evaluation && evaluation->yaw_equivalent_error_rad
+          ? fmt::format("{:.9g}", *evaluation->yaw_equivalent_error_rad)
           : "null";
-  const auto YAW_RATE_ERROR = result.truth_yaw_velocity_error_rad_s
-                                  ? fmt::format("{:.9g}", *result.truth_yaw_velocity_error_rad_s)
+  const auto YAW_RATE_ERROR = evaluation && evaluation->yaw_velocity_error_rad_s
+                                  ? fmt::format("{:.9g}", *evaluation->yaw_velocity_error_rad_s)
                                   : "null";
   const int LABEL = result.label ? static_cast<int>(*result.label) : -1;
   return fmt::format(
@@ -285,38 +288,27 @@ std::string EncodeState(const modules::ArmorPredictionResult& result,
 
 ::foxglove::schemas::SceneUpdate EncodeTruthOverlay(
     const modules::ArmorPredictionResult& result,
-    const simulation::SimulationFrameData& simulation_data,
+    const simulation_evaluation::PredictionEvaluationResult& evaluation,
     const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::SceneUpdate update;
-  if (!result.label || result.horizons.empty())
+  if (!result.label || result.horizons.empty() || !evaluation.truth_position_world)
     return update;
   const auto& center = result.horizons.front().center_world;
-  const simulation::GroundTruthTarget* best = nullptr;
-  double best_distance = std::numeric_limits<double>::infinity();
-  for (const auto& target : simulation_data.targets) {
-    if (target.armor_label != static_cast<std::uint8_t>(*result.label))
-      continue;
-    // 仿真目标没有与检测稳定共享的 ID，因此在同标签集合中选择中心最近者用于展示。
-    const double DISTANCE = (target.position_world - center).norm();
-    if (DISTANCE < best_distance) {
-      best = &target;
-      best_distance = DISTANCE;
-    }
-  }
-  if (!best)
-    return update;
+  const double CENTER_ERROR = evaluation.center_error_m.value_or(0.0);
   ::foxglove::schemas::SceneEntity entity;
   entity.timestamp = timestamp;
   entity.frame_id = "world";
   entity.id = "prediction_truth_error";
   entity.lifetime = {.sec = 0, .nsec = 200'000'000};
-  entity.metadata = {{.key = "center_error_m", .value = fmt::format("{:.6f}", best_distance)},
-                     {.key = "truth_yaw_rate", .value = fmt::format("{:.6f}", best->yaw_velocity)}};
+  entity.metadata = {
+      {.key = "center_error_m", .value = fmt::format("{:.6f}", CENTER_ERROR)},
+      {.key = "truth_yaw_rate",
+       .value = fmt::format("{:.6f}", evaluation.truth_yaw_velocity_rad_s.value_or(0.0))}};
   ::foxglove::schemas::LinePrimitive error;
   error.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LIST;
   error.thickness = 0.018;
   error.color = {.r = 1.0, .g = 0.1, .b = 0.1, .a = 1.0};
-  error.points = {Point(center), Point(best->position_world)};
+  error.points = {Point(center), Point(*evaluation.truth_position_world)};
   entity.lines.push_back(std::move(error));
   update.entities.push_back(std::move(entity));
   return update;

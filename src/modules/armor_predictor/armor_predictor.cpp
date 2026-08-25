@@ -21,8 +21,6 @@
 namespace mv::modules {
 namespace {
 
-constexpr double HALF_PI = 1.57079632679489661923;
-
 struct DetectionObservation {
   std::size_t input_index{0};
   ArmorLabel label{ArmorLabel::SENTRY};
@@ -60,10 +58,6 @@ struct LightbarPairCost {
 
 double WrapAngle(double angle) noexcept {
   return std::remainder(angle, 2.0 * std::acos(-1.0));
-}
-
-double WrapFourArmorYaw(double angle) noexcept {
-  return std::remainder(angle, HALF_PI);
 }
 
 int LabelPriority(ArmorLabel label, const ArmorPredictorConfig& config) noexcept {
@@ -604,12 +598,9 @@ struct ArmorPredictor::Impl {
       std::span<const ArmorDetection> detections,
       std::span<const CornerRefinementResult> refinements,
       const ArmorPnpFrameResult& pnp_result) const;
-  [[nodiscard]] ArmorPredictionResult Snapshot(
-      const frame::FrameStamp& stamp, const simulation::SimulationFrameData* simulation_data,
-      double dt) const;
+  [[nodiscard]] ArmorPredictionResult Snapshot(const frame::FrameStamp& stamp, double dt) const;
   [[nodiscard]] ArmorPredictionResult ProcessFrame(
       const frame::FrameStamp& stamp, std::optional<frame::SpatialFrameView> spatial,
-      const simulation::SimulationFrameData* simulation_data,
       std::span<const ArmorDetection> detections,
       std::span<const CornerRefinementResult> refinements, const ArmorPnpFrameResult& pnp_result,
       const LightbarDetectionResult& lightbar_result);
@@ -724,8 +715,7 @@ std::vector<DetectionObservation> ArmorPredictor::Impl::ExtractObservations(
       continue;
     const ArmorPoseEstimate* estimate = nullptr;
     for (const auto& attempt : pnp_result.attempts) {
-      if (attempt.source == PnpInputSource::DETECTION && attempt.input_index == index &&
-          attempt.estimate) {
+      if (attempt.input_index == index && attempt.estimate) {
         estimate = &*attempt.estimate;
         break;
       }
@@ -740,9 +730,8 @@ std::vector<DetectionObservation> ArmorPredictor::Impl::ExtractObservations(
   return result;
 }
 
-ArmorPredictionResult ArmorPredictor::Impl::Snapshot(
-    const frame::FrameStamp& stamp, const simulation::SimulationFrameData* simulation_data,
-    double dt) const {
+ArmorPredictionResult ArmorPredictor::Impl::Snapshot(const frame::FrameStamp& stamp,
+                                                     double dt) const {
   ArmorPredictionResult result;
   result.sequence = stamp.sequence;
   result.source_capture_timestamp_ns = stamp.capture_timestamp_ns;
@@ -802,31 +791,11 @@ ArmorPredictionResult ArmorPredictor::Impl::Snapshot(
     result.horizons.push_back(std::move(horizon));
   }
 
-  if (simulation_data && label) {
-    const auto BEST = std::min_element(
-        simulation_data->targets.begin(), simulation_data->targets.end(),
-        [&](const auto& left, const auto& right) {
-          const double LEFT_PENALTY =
-              left.armor_label == static_cast<std::uint8_t>(*label) ? 0.0 : 1.0e6;
-          const double RIGHT_PENALTY =
-              right.armor_label == static_cast<std::uint8_t>(*label) ? 0.0 : 1.0e6;
-          return LEFT_PENALTY + (left.position_world - state.position_world).squaredNorm() <
-                 RIGHT_PENALTY + (right.position_world - state.position_world).squaredNorm();
-        });
-    if (BEST != simulation_data->targets.end() &&
-        BEST->armor_label == static_cast<std::uint8_t>(*label)) {
-      result.truth_center_error_m = (state.position_world - BEST->position_world).norm();
-      result.truth_yaw_error_rad = WrapAngle(detail::HeadingYaw(state) - BEST->yaw);
-      result.truth_yaw_equivalent_error_rad = WrapFourArmorYaw(*result.truth_yaw_error_rad);
-      result.truth_yaw_velocity_error_rad_s = state.yaw_velocity_rad_s - BEST->yaw_velocity;
-    }
-  }
   return result;
 }
 
 ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
     const frame::FrameStamp& stamp, std::optional<frame::SpatialFrameView> spatial,
-    const simulation::SimulationFrameData* simulation_data,
     std::span<const ArmorDetection> detections, std::span<const CornerRefinementResult> refinements,
     const ArmorPnpFrameResult& pnp_result, const LightbarDetectionResult& lightbar_result) {
   const auto START = std::chrono::steady_clock::now();
@@ -873,15 +842,15 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
   };
   if (detections.size() != refinements.size()) {
     Reset("detection_refinement_count_mismatch");
-    return FINISH(Snapshot(stamp, simulation_data, dt));
+    return FINISH(Snapshot(stamp, dt));
   }
   if (!spatial) {
     Reset("missing_frame_geometry");
-    return FINISH(Snapshot(stamp, simulation_data, dt));
+    return FINISH(Snapshot(stamp, dt));
   }
   if (!ValidGeometry(*spatial)) {
     Reset("invalid_frame_geometry");
-    return FINISH(Snapshot(stamp, simulation_data, dt));
+    return FINISH(Snapshot(stamp, dt));
   }
   const bool MANEUVER_ACTIVE_AT_PREDICT = maneuver_phase == ManeuverPhase::ACTIVE;
   if (tracker_state != TrackerState::LOST && dt > 0.0) {
@@ -891,7 +860,7 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
     frame_yaw_process_variance_used = YAW_VARIANCE;
     if (!filter.Predict(dt, config, YAW_VARIANCE)) {
       Reset("esekf_prediction_failed");
-      return FINISH(Snapshot(stamp, simulation_data, dt));
+      return FINISH(Snapshot(stamp, dt));
     }
   }
 
@@ -903,7 +872,7 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
         candidates.push_back(&observation);
     }
     if (candidates.empty()) {
-      auto result = Snapshot(stamp, simulation_data, dt);
+      auto result = Snapshot(stamp, dt);
       result.detected_lightbar_count = static_cast<int>(lightbar_result.detections.size());
       for (const auto& lightbar : lightbar_result.detections) {
         result.lightbar_associations.push_back({.input_index = lightbar.input_index,
@@ -925,7 +894,7 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
                  std::hypot(right->center.x - calibration.cx, right->center.y - calibration.cy);
         });
     Initialize(*BEST, *spatial);
-    auto result = Snapshot(stamp, simulation_data, dt);
+    auto result = Snapshot(stamp, dt);
     result.detected_lightbar_count = static_cast<int>(lightbar_result.detections.size());
     for (const auto& lightbar : lightbar_result.detections) {
       result.lightbar_associations.push_back({.input_index = lightbar.input_index,
@@ -952,7 +921,7 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
     if (observation.label == *label && observation.type == *type)
       candidates.push_back(observation);
   }
-  ArmorPredictionResult diagnostic = Snapshot(stamp, simulation_data, dt);
+  ArmorPredictionResult diagnostic = Snapshot(stamp, dt);
   std::vector<int> slots;
   double association_gate_used = 0.0;
   bool used_recovery_gate = false;
@@ -1189,7 +1158,7 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
   if (tracker_state != TrackerState::LOST && filter.Diverged(config))
     Reset("state_diverged");
 
-  auto result = Snapshot(stamp, simulation_data, dt);
+  auto result = Snapshot(stamp, dt);
   result.associations = std::move(diagnostic.associations);
   result.lightbar_associations = std::move(diagnostic.lightbar_associations);
   result.innovation = std::move(diagnostic.innovation);
@@ -1239,11 +1208,9 @@ ArmorPredictor& ArmorPredictor::operator=(ArmorPredictor&& other) noexcept = def
 
 ArmorPredictionResult ArmorPredictor::ProcessFrame(
     const frame::FrameStamp& stamp, std::optional<frame::SpatialFrameView> spatial,
-    const simulation::SimulationFrameData* simulation_data,
     std::span<const ArmorDetection> detections, std::span<const CornerRefinementResult> refinements,
     const ArmorPnpFrameResult& pnp_result, const LightbarDetectionResult& lightbar_result) {
-  return impl_->ProcessFrame(stamp, spatial, simulation_data, detections, refinements, pnp_result,
-                             lightbar_result);
+  return impl_->ProcessFrame(stamp, spatial, detections, refinements, pnp_result, lightbar_result);
 }
 
 PredictionHorizon ExtrapolatePrediction(const ArmorPredictionResult& prediction, double seconds) {

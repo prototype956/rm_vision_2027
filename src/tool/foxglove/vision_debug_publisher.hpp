@@ -7,6 +7,7 @@
 #include "modules/armor_predictor/armor_prediction_types.hpp"
 #include "modules/fire_control/fire_control.hpp"
 #include "tool/foxglove/foxglove_config.hpp"
+#include "tool/simulation_evaluation/simulation_evaluation_types.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -82,14 +83,18 @@ class VisionDebugPublisher final {
    * @param detections 与该图像对应的检测结果，调用期间复制。
    * @param detector_stats 与该图像对应的检测性能统计。
    * @param lightbar_result 与该图像对应的独立灯条和检测统计。
-   * @param pnp_result 与该图像对应的 PnP 解算、基准及角点精修结果。
+   * @param pnp_result 与该图像对应的正式 PnP 解算及角点精修健康结果。
+   * @param prediction_result 与该图像对应的正式跟踪预测及诊断结果。
+   * @param simulation_evaluation 可选的同帧仿真评估结果。
    */
   void Publish(const frame::FramePacket& packet,
                std::span<const modules::ArmorDetection> detections,
                const modules::DetectorStats& detector_stats,
                const modules::LightbarDetectionResult& lightbar_result,
                const modules::ArmorPnpFrameResult& pnp_result,
-               const modules::ArmorPredictionResult& prediction_result) noexcept;
+               const modules::ArmorPredictionResult& prediction_result,
+               const std::optional<simulation_evaluation::SimulationEvaluationResult>&
+                   simulation_evaluation = std::nullopt) noexcept;
   /** @brief 非阻塞提交一个 100 Hz 控制诊断样本。 */
   void PublishControl(const modules::FireControlResult& result) noexcept;
   /** @brief 获取自启动以来的线程安全累计统计。 */

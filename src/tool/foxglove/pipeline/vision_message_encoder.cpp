@@ -95,6 +95,12 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
   const auto& packet = frame.packet;
   const auto& stamp = packet.capture.stamp;
   const auto SPATIAL_VIEW = mv::frame::MakeSpatialFrameView(packet);
+  const auto PNP_DIAGNOSTIC =
+      frame.simulation_evaluation
+          ? frame.simulation_evaluation->pnp
+          : simulation_evaluation::MakePnpDiagnosticResult(frame.pnp_result);
+  const auto* prediction_evaluation =
+      frame.simulation_evaluation ? &frame.simulation_evaluation->prediction : nullptr;
   // 实机帧没有 epoch 时间时，用固定双时钟锚点换算，避免运行中系统校时造成时间跳变。
   const auto SYSTEM_TIME = system_anchor_ + (stamp.receive_steady_time - steady_anchor_);
   const auto FALLBACK_EPOCH_COUNT =
@@ -142,9 +148,9 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
       result.projectile_stats_json = simulation::EncodeProjectileStats(
           *packet.simulation->projectile_statistics, stamp.sequence, TIMESTAMP);
     }
-    if (demand.prediction_truth_overlay)
-      result.prediction_truth_overlay =
-          prediction::EncodeTruthOverlay(frame.prediction_result, *packet.simulation, TIMESTAMP);
+    if (demand.prediction_truth_overlay && prediction_evaluation)
+      result.prediction_truth_overlay = prediction::EncodeTruthOverlay(
+          frame.prediction_result, *prediction_evaluation, TIMESTAMP);
   }
   if (packet.simulation && packet.camera_model && packet.kinematics &&
       demand.projection_annotations) {
@@ -152,7 +158,7 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
         *packet.simulation, *packet.camera_model, *packet.kinematics, TIMESTAMP);
   }
   if (packet.kinematics && demand.pnp_estimates)
-    result.pnp_estimates = pnp::EncodeEstimates(frame.pnp_result, *packet.kinematics, TIMESTAMP);
+    result.pnp_estimates = pnp::EncodeEstimates(PNP_DIAGNOSTIC, *packet.kinematics, TIMESTAMP);
   if (demand.prediction_current_annotations) {
     result.prediction_current_annotations =
         SPATIAL_VIEW
@@ -175,29 +181,30 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
             : prediction::EncodeEmptyAnnotations(TIMESTAMP);
   }
   if (demand.pnp_corners) {
-    result.pnp_corners = pnp::EncodeCorners(frame.pnp_result, TIMESTAMP);
+    result.pnp_corners = pnp::EncodeCorners(PNP_DIAGNOSTIC, TIMESTAMP);
   }
   if (demand.pnp_reprojection) {
-    result.pnp_reprojection = pnp::EncodeReprojection(frame.pnp_result, TIMESTAMP);
+    result.pnp_reprojection = pnp::EncodeReprojection(PNP_DIAGNOSTIC, TIMESTAMP);
   }
   if (demand.pnp_error_vectors) {
-    result.pnp_error_vectors = pnp::EncodeErrorVectors(frame.pnp_result, TIMESTAMP);
+    result.pnp_error_vectors = pnp::EncodeErrorVectors(PNP_DIAGNOSTIC, TIMESTAMP);
   }
   if (demand.corner_refiner_axes) {
-    result.corner_refiner_axes = pnp::EncodeCornerRefinerAxes(frame.pnp_result, TIMESTAMP);
+    result.corner_refiner_axes = pnp::EncodeCornerRefinerAxes(PNP_DIAGNOSTIC, TIMESTAMP);
   }
   if (demand.corner_refiner_candidates) {
     result.corner_refiner_candidates =
-        pnp::EncodeCornerRefinerCandidates(frame.pnp_result, TIMESTAMP);
+        pnp::EncodeCornerRefinerCandidates(PNP_DIAGNOSTIC, TIMESTAMP);
   }
   if (demand.pnp_stats) {
-    result.pnp_stats_json = pnp::EncodeStats(frame.pnp_result, stamp.sequence, TIMESTAMP);
+    result.pnp_stats_json = pnp::EncodeStats(PNP_DIAGNOSTIC, stamp.sequence, TIMESTAMP);
   }
   if (demand.prediction_scene) {
     result.prediction_scene = prediction::EncodeScene(frame.prediction_result, TIMESTAMP);
   }
   if (demand.prediction_state) {
-    result.prediction_state_json = prediction::EncodeState(frame.prediction_result, TIMESTAMP);
+    result.prediction_state_json =
+        prediction::EncodeState(frame.prediction_result, prediction_evaluation, TIMESTAMP);
   }
 
   result.publish_latency_ms = Milliseconds(SteadyClock::now() - stamp.receive_steady_time);

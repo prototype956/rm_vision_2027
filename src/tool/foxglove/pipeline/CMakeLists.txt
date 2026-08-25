@@ -26,6 +26,7 @@ target_link_libraries(mv-tool-foxglove-pipeline
         mv-tool-foxglove-simulation
         mv-tool-foxglove-pnp
         mv-tool-foxglove-prediction
+        mv-tool-simulation-evaluation
         fmt::fmt
 )
 

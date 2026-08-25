@@ -7,7 +7,6 @@
 #include "modules/armor_pnp/armor_pnp_types.hpp"
 #include "modules/armor_predictor/armor_prediction_types.hpp"
 #include "modules/armor_predictor/armor_predictor_config.hpp"
-#include "simulation/simulation_frame_data.hpp"
 
 #include <memory>
 
@@ -43,7 +42,6 @@ class ArmorPredictor final {
    */
   [[nodiscard]] ArmorPredictionResult ProcessFrame(
       const frame::FrameStamp& stamp, std::optional<frame::SpatialFrameView> spatial,
-      const simulation::SimulationFrameData* simulation_data,
       std::span<const ArmorDetection> detections,
       std::span<const CornerRefinementResult> refinements, const ArmorPnpFrameResult& pnp_result,
       const LightbarDetectionResult& lightbar_result);

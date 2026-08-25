@@ -12,9 +12,9 @@ VisionPipeline::VisionPipeline(const VisionPipelineConfig& config)
   detector_.Init(config.detector);
 }
 
-VisionFrameResult VisionPipeline::Process(const frame::FramePacket& packet) {
+VisionFrameResult VisionPipeline::Process(const VisionFrameInput& input) {
   VisionFrameResult result;
-  const auto& image = packet.capture.image;
+  const auto& image = input.capture.image;
   result.detections = detector_.Detect(image);
   result.detector_stats = detector_.LastStats();
 
@@ -26,16 +26,12 @@ VisionFrameResult VisionPipeline::Process(const frame::FramePacket& packet) {
   }
   result.lightbars =
       light_detector_.Detect(image, gray_image, result.detections, result.refinements);
-  const auto SPATIAL = frame::MakeSpatialFrameView(packet);
-  const auto* simulation_data = packet.simulation ? &*packet.simulation : nullptr;
-  if (SPATIAL) {
-    result.pnp =
-        pnp_.ProcessFrame(packet.capture.stamp.sequence, *packet.camera_model, *packet.kinematics,
-                          simulation_data, result.detections, result.refinements);
+  if (input.spatial) {
+    result.pnp = pnp_.ProcessFrame(input.capture.stamp.sequence, input.spatial->calibration,
+                                   result.detections, result.refinements);
   }
-  result.prediction =
-      predictor_.ProcessFrame(packet.capture.stamp, SPATIAL, simulation_data, result.detections,
-                              result.refinements, result.pnp, result.lightbars);
+  result.prediction = predictor_.ProcessFrame(input.capture.stamp, input.spatial, result.detections,
+                                              result.refinements, result.pnp, result.lightbars);
   return result;
 }
 

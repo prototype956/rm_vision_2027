@@ -29,6 +29,7 @@ target_link_libraries(mv-tool-foxglove
         mv-modules-armor-pnp
         mv-modules-armor-predictor
         mv-modules-fire-control
+        mv-tool-simulation-evaluation
     PRIVATE
         mv-tool-foxglove-pipeline
         mv-tool-foxglove-runtime

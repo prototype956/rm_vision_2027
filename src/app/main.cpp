@@ -17,6 +17,8 @@
 #include "tool/debug/debug_window.hpp"
 #include "tool/foxglove/foxglove_config.hpp"
 #include "tool/foxglove/vision_debug_publisher.hpp"
+#include "tool/simulation_evaluation/simulation_evaluation_config.hpp"
+#include "tool/simulation_evaluation/simulation_evaluator.hpp"
 
 #include <csignal>
 #include <cstdio>
@@ -108,7 +110,7 @@ int Run() {
       return 2;
     }
 
-    const auto PNP_YAML = ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_pnp.yaml", 2);
+    const auto PNP_YAML = ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_pnp.yaml", 3);
     pipeline_config.pnp = modules::ParseArmorPnpConfig(PNP_YAML);
     const auto PREDICTOR_YAML =
         ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_predictor.yaml",
@@ -128,6 +130,18 @@ int Run() {
     } catch (const std::exception& error) {
       MV_LOG_ERROR("App", "armor detector initialization failed: {}", error.what());
       return 2;
+    }
+
+    std::unique_ptr<tool::simulation_evaluation::SimulationEvaluator> simulation_evaluator;
+    try {
+      const auto EVALUATION_YAML =
+          ConfigLoader::LoadFile(CONFIG_ROOT / "tool/simulation_evaluation.yaml", 1);
+      simulation_evaluator = std::make_unique<tool::simulation_evaluation::SimulationEvaluator>(
+          tool::simulation_evaluation::ParseSimulationEvaluationConfig(EVALUATION_YAML),
+          pipeline_config.pnp);
+    } catch (const std::exception& error) {
+      MV_LOG_WARN("App", "simulation evaluation disabled after initialization failure: {}",
+                  error.what());
     }
 
     const auto CAMERA_SELECTION = LoadCameraSelection(CONFIG_ROOT);
@@ -180,7 +194,7 @@ int Run() {
     }
 
     runtime::VisionRuntime vision_runtime(*camera, *pipeline, control_runtime.get(), window.get(),
-                                          foxglove_publisher.get());
+                                          foxglove_publisher.get(), simulation_evaluator.get());
     return ExitCodeFor(vision_runtime.Run([] { return g_stop_requested != 0; }));
   } catch (const std::exception& error) {
     std::fprintf(stderr, "[App] FATAL: %s\n", error.what());

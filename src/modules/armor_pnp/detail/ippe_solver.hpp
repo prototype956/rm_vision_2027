@@ -16,7 +16,6 @@ namespace mv::modules::detail {
                                         std::span<const cv::Point2f, 4> image_corners,
                                         geometry::ArmorType type,
                                         const frame::CameraModel& calibration,
-                                        PnpInputSource source, std::size_t input_index,
-                                        std::uint8_t label);
+                                        std::size_t input_index, std::uint8_t label);
 
 }  // namespace mv::modules::detail

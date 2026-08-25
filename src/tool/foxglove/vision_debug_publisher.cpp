@@ -69,7 +69,9 @@ void VisionDebugPublisher::Publish(
     const modules::DetectorStats& detector_stats,
     const modules::LightbarDetectionResult& lightbar_result,
     const modules::ArmorPnpFrameResult& pnp_result,
-    const modules::ArmorPredictionResult& prediction_result) noexcept {
+    const modules::ArmorPredictionResult& prediction_result,
+    const std::optional<simulation_evaluation::SimulationEvaluationResult>&
+        simulation_evaluation) noexcept {
   const auto SELECTION = impl_->SelectionSnapshot();
   const bool SEQUENCE_MATCHES = SELECTION.valid &&
                                 SELECTION.source_sequence <= prediction_result.sequence &&
@@ -81,10 +83,11 @@ void VisionDebugPublisher::Publish(
                                prediction_result.reset_reason.empty() &&
                                !(prediction_result.state == modules::TrackerState::DETECTING &&
                                  SELECTION.source_sequence != prediction_result.sequence);
-  impl_->pipeline.Publish(
-      packet, detections, detector_stats, lightbar_result, pnp_result, prediction_result,
-      SEQUENCE_MATCHES && IDENTITY_MATCHES && TRACKER_MATCHES ? std::optional(SELECTION)
-                                                              : std::nullopt);
+  impl_->pipeline.Publish(packet, detections, detector_stats, lightbar_result, pnp_result,
+                          prediction_result, simulation_evaluation,
+                          SEQUENCE_MATCHES && IDENTITY_MATCHES && TRACKER_MATCHES
+                              ? std::optional(SELECTION)
+                              : std::nullopt);
 }
 
 void VisionDebugPublisher::PublishControl(const modules::FireControlResult& result) noexcept {

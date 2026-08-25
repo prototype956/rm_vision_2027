@@ -14,6 +14,10 @@ namespace mv::tool::foxglove {
 class VisionDebugPublisher;
 }
 
+namespace mv::tool::simulation_evaluation {
+class SimulationEvaluator;
+}
+
 namespace mv::runtime {
 
 class ControlRuntime;
@@ -31,8 +35,8 @@ enum class VisionRunStatus {
 class VisionRuntime final {
  public:
   VisionRuntime(hal::ICamera& camera, VisionPipeline& pipeline, ControlRuntime* control,
-                tool::DebugWindow* window,
-                tool::foxglove::VisionDebugPublisher* diagnostics) noexcept;
+                tool::DebugWindow* window, tool::foxglove::VisionDebugPublisher* diagnostics,
+                tool::simulation_evaluation::SimulationEvaluator* evaluator) noexcept;
 
   /**
    * @brief 持续处理相机帧，直到收到停止请求、窗口退出或运行时故障。
@@ -47,6 +51,7 @@ class VisionRuntime final {
   ControlRuntime* control_{nullptr};
   tool::DebugWindow* window_{nullptr};
   tool::foxglove::VisionDebugPublisher* diagnostics_{nullptr};
+  tool::simulation_evaluation::SimulationEvaluator* evaluator_{nullptr};
 };
 
 }  // namespace mv::runtime

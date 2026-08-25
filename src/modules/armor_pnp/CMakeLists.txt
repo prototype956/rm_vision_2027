@@ -1,9 +1,9 @@
 add_library(mv-modules-armor-pnp STATIC
     armor_pnp.cpp
     armor_pnp_config.cpp
+    armor_pnp_solver.cpp
     detail/ippe_solver.cpp
     detail/pnp_metrics.cpp
-    detail/truth_evaluator.cpp
 )
 
 target_include_directories(mv-modules-armor-pnp PUBLIC
@@ -12,7 +12,7 @@ target_include_directories(mv-modules-armor-pnp PUBLIC
 )
 
 target_link_libraries(mv-modules-armor-pnp
-    PUBLIC mv-core mv-frame-data mv-modules-armor-detector mv-modules-armor-corner-refiner
+    PUBLIC mv-core mv-frame-core mv-modules-armor-detector mv-modules-armor-corner-refiner
     PRIVATE opencv_calib3d opencv_imgproc yaml-cpp
 )
 

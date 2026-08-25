@@ -14,6 +14,7 @@ target_link_libraries(mv-runtime
     PUBLIC
         mv-hal-camera
         mv-hal-gimbal
+        mv-frame-core
         mv-modules-armor-corner-refiner
         mv-modules-armor-detector
         mv-modules-armor-light-detector
@@ -26,6 +27,7 @@ target_link_libraries(mv-runtime
         mv-tool-armor-overlay
         mv-tool-debug
         mv-tool-foxglove
+        mv-tool-simulation-evaluation
         fmt::fmt
         opencv_imgproc
 )

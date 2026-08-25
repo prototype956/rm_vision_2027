@@ -38,13 +38,14 @@ class VisionDebugPipeline final {
   /** @brief 会话启动后创建后台线程；无可用 sink 时保持停止。 */
   void Start() noexcept;
   /** @brief 非阻塞提交同帧图像、检测结果和指标。 */
-  void Publish(const frame::FramePacket& packet,
-               std::span<const modules::ArmorDetection> detections,
-               const modules::DetectorStats& detector_stats,
-               const modules::LightbarDetectionResult& lightbar_result,
-               const modules::ArmorPnpFrameResult& pnp_result,
-               const modules::ArmorPredictionResult& prediction_result,
-               std::optional<modules::ArmorSelectionSnapshot> selection) noexcept;
+  void Publish(
+      const frame::FramePacket& packet, std::span<const modules::ArmorDetection> detections,
+      const modules::DetectorStats& detector_stats,
+      const modules::LightbarDetectionResult& lightbar_result,
+      const modules::ArmorPnpFrameResult& pnp_result,
+      const modules::ArmorPredictionResult& prediction_result,
+      const std::optional<simulation_evaluation::SimulationEvaluationResult>& simulation_evaluation,
+      std::optional<modules::ArmorSelectionSnapshot> selection) noexcept;
   /** @brief 获取流水线、会话和关键实时订阅的线程安全组合快照。 */
   [[nodiscard]] VisionPublisherStats SnapshotStats() const noexcept;
   /** @brief 查询流水线是否仍接受帧且至少有一个 sink 可用。 */

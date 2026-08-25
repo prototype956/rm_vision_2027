@@ -1,6 +1,6 @@
 #pragma once
 
-#include "frame/frame_packet.hpp"
+#include "frame/frame_types.hpp"
 #include "modules/armor_corner_refiner/armor_corner_refiner.hpp"
 #include "modules/armor_detector/armor_detector.hpp"
 #include "modules/armor_light_detector/armor_light_detector.hpp"
@@ -30,6 +30,12 @@ struct VisionFrameResult {
   modules::ArmorPredictionResult prediction;
 };
 
+/** @brief 正式视觉算法可见的图像与可选同帧空间视图。 */
+struct VisionFrameInput {
+  const frame::CapturedFrame& capture;
+  std::optional<frame::SpatialFrameView> spatial;
+};
+
 /** @brief 串行执行检测、角点精修、独立灯条、PnP 和目标预测的单帧流水线。 */
 class VisionPipeline final {
  public:
@@ -43,10 +49,10 @@ class VisionPipeline final {
 
   /**
    * @brief 同步处理一帧图像，并保持所有中间结果来自同一帧。
-   * @param frame 相机 HAL 返回的完整帧。
+   * @param input 不含执行器或仿真附件的正式算法输入视图。
    * @return 检测、PnP、预测和诊断结果。
    */
-  [[nodiscard]] VisionFrameResult Process(const frame::FramePacket& packet);
+  [[nodiscard]] VisionFrameResult Process(const VisionFrameInput& input);
 
  private:
   modules::YoloArmorDetector detector_;

@@ -18,13 +18,13 @@ namespace {
 constexpr double K_RAD_TO_DEG = 180.0 / std::numbers::pi;
 
 std::array<cv::Point3d, 4> ObjectPoints(geometry::ArmorType type, const ArmorPnpConfig& config) {
-  const double width =
+  const double WIDTH =
       type == geometry::ArmorType::LARGE ? config.large_width_m : config.small_width_m;
-  const double half_width = width * 0.5;
-  const double half_height = config.height_m * 0.5;
+  const double HALF_WIDTH = WIDTH * 0.5;
+  const double HALF_HEIGHT = config.height_m * 0.5;
   // armor 坐标系中的 TL、TR、BR、BL 顺序必须与检测角点顺序严格一致。
-  return {cv::Point3d(-half_width, half_height, 0.0), cv::Point3d(half_width, half_height, 0.0),
-          cv::Point3d(half_width, -half_height, 0.0), cv::Point3d(-half_width, -half_height, 0.0)};
+  return {cv::Point3d(-HALF_WIDTH, HALF_HEIGHT, 0.0), cv::Point3d(HALF_WIDTH, HALF_HEIGHT, 0.0),
+          cv::Point3d(HALF_WIDTH, -HALF_HEIGHT, 0.0), cv::Point3d(-HALF_WIDTH, -HALF_HEIGHT, 0.0)};
 }
 
 cv::Matx33d CameraMatrix(const frame::CameraModel& value) {
@@ -57,10 +57,9 @@ bool Finite(const cv::Point2f& point) {
 
 ArmorPnpAttempt SolveIppe(const ArmorPnpConfig& config,
                           std::span<const cv::Point2f, 4> image_corners, geometry::ArmorType type,
-                          const frame::CameraModel& calibration, PnpInputSource source,
-                          std::size_t input_index, std::uint8_t label) {
-  ArmorPnpAttempt result{.source = source,
-                         .input_index = input_index,
+                          const frame::CameraModel& calibration, std::size_t input_index,
+                          std::uint8_t label) {
+  ArmorPnpAttempt result{.input_index = input_index,
                          .status = PnpStatus::INVALID_INPUT,
                          .estimate = std::nullopt,
                          .refinement = std::nullopt};
@@ -68,16 +67,16 @@ ArmorPnpAttempt SolveIppe(const ArmorPnpConfig& config,
       !std::all_of(image_corners.begin(), image_corners.end(), Finite)) {
     return result;
   }
-  const auto object_points = ObjectPoints(type, config);
+  const auto OBJECT_POINTS = ObjectPoints(type, config);
   std::vector<cv::Mat> rvecs;
   std::vector<cv::Mat> tvecs;
   try {
     // 平面目标使用 IPPE 保留多个可能姿态，再由物理约束与重投影误差统一筛选。
-    const int count = cv::solvePnPGeneric(
-        std::vector<cv::Point3d>(object_points.begin(), object_points.end()),
+    const int COUNT = cv::solvePnPGeneric(
+        std::vector<cv::Point3d>(OBJECT_POINTS.begin(), OBJECT_POINTS.end()),
         std::vector<cv::Point2f>(image_corners.begin(), image_corners.end()),
         CameraMatrix(calibration), Distortion(calibration), rvecs, tvecs, false, cv::SOLVEPNP_IPPE);
-    if (count <= 0) {
+    if (COUNT <= 0) {
       result.status = PnpStatus::NO_SOLUTION;
       return result;
     }
@@ -91,79 +90,67 @@ ArmorPnpAttempt SolveIppe(const ArmorPnpConfig& config,
   PnpStatus last_rejection = PnpStatus::NO_SOLUTION;
   std::optional<ArmorPoseEstimate> best;
   for (std::size_t candidate = 0; candidate < rvecs.size(); ++candidate) {
-    const auto pose = ToTransform(rvecs[candidate], tvecs[candidate]);
+    const auto POSE = ToTransform(rvecs[candidate], tvecs[candidate]);
     bool positive = true;
-    for (const auto& object_point : object_points) {
-      const geometry::Vector3 point =
-          geometry::TransformPoint(pose, {object_point.x, object_point.y, object_point.z});
-      positive = positive && point.z() > 0.0;
+    for (const auto& object_point : OBJECT_POINTS) {
+      const geometry::Vector3 POINT =
+          geometry::TransformPoint(POSE, {object_point.x, object_point.y, object_point.z});
+      positive = positive && POINT.z() > 0.0;
     }
     if (!positive) {
       last_rejection = PnpStatus::NEGATIVE_DEPTH;
       continue;
     }
-    if (geometry::TransformVector(pose, geometry::Vector3::UnitZ()).dot(pose.translation) >= 0.0) {
+    if (geometry::TransformVector(POSE, geometry::Vector3::UnitZ()).dot(POSE.translation) >= 0.0) {
       last_rejection = PnpStatus::BACK_FACING;
       continue;
     }
-    const double distance = pose.translation.norm();
-    if (distance < config.min_distance_m || distance > config.max_distance_m) {
+    const double DISTANCE = POSE.translation.norm();
+    if (DISTANCE < config.min_distance_m || DISTANCE > config.max_distance_m) {
       last_rejection = PnpStatus::OUT_OF_RANGE;
       continue;
     }
     std::vector<cv::Point2d> projected;
-    cv::projectPoints(std::vector<cv::Point3d>(object_points.begin(), object_points.end()),
+    cv::projectPoints(std::vector<cv::Point3d>(OBJECT_POINTS.begin(), OBJECT_POINTS.end()),
                       rvecs[candidate], tvecs[candidate], CameraMatrix(calibration),
                       Distortion(calibration), projected);
     double squared_error = 0.0;
     for (std::size_t corner = 0; corner < projected.size(); ++corner) {
-      const double dx = projected[corner].x - image_corners[corner].x;
-      const double dy = projected[corner].y - image_corners[corner].y;
-      squared_error += dx * dx + dy * dy;
+      const double DX = projected[corner].x - image_corners[corner].x;
+      const double DY = projected[corner].y - image_corners[corner].y;
+      squared_error += DX * DX + DY * DY;
     }
-    const double rmse = std::sqrt(squared_error / static_cast<double>(projected.size()));
+    const double RMSE = std::sqrt(squared_error / static_cast<double>(projected.size()));
     // 候选选择只依据同一输入四角下的 RMSE，次优间隔单独保留用于歧义诊断。
-    if (rmse >= best_rmse) {
-      second_rmse = std::min(second_rmse, rmse);
+    if (RMSE >= best_rmse) {
+      second_rmse = std::min(second_rmse, RMSE);
       continue;
     }
     second_rmse = best_rmse;
     ArmorPoseEstimate estimate{
-        .source = source,
         .input_index = input_index,
-        .truth_id = std::nullopt,
         .label = label,
         .type = type,
         .width_m = type == geometry::ArmorType::LARGE ? config.large_width_m : config.small_width_m,
         .height_m = config.height_m,
-        .camera_t_armor = pose,
+        .camera_t_armor = POSE,
         .candidate_index = candidate,
         .candidate_rmse_gap_px = std::nullopt,
-        .reprojection_rmse_px = rmse,
+        .reprojection_rmse_px = RMSE,
         .image_width_px = 0.5 * (cv::norm(image_corners[1] - image_corners[0]) +
                                  cv::norm(image_corners[2] - image_corners[3])),
         .image_height_px = 0.5 * (cv::norm(image_corners[3] - image_corners[0]) +
                                   cv::norm(image_corners[2] - image_corners[1])),
-        .distance_m = distance,
+        .distance_m = DISTANCE,
         .viewing_angle_deg =
-            std::acos(std::clamp(-geometry::TransformVector(pose, geometry::Vector3::UnitZ())
-                                      .dot(pose.translation.normalized()),
+            std::acos(std::clamp(-geometry::TransformVector(POSE, geometry::Vector3::UnitZ())
+                                      .dot(POSE.translation.normalized()),
                                  -1.0, 1.0)) *
-            K_RAD_TO_DEG,
-        .truth_distance_m = std::nullopt,
-        .truth_viewing_angle_deg = std::nullopt,
-        .truth_type = std::nullopt,
-        .mean_corner_error_px = std::nullopt,
-        .position_error_m = std::nullopt,
-        .position_error_camera_m = std::nullopt,
-        .depth_error_m = std::nullopt,
-        .signed_depth_error_m = std::nullopt,
-        .rotation_error_deg = std::nullopt,
-        .position_jitter_m = std::nullopt};
+            K_RAD_TO_DEG};
     std::copy(image_corners.begin(), image_corners.end(), estimate.image_corners.begin());
     for (std::size_t corner = 0; corner < projected.size(); ++corner)
       estimate.reprojected_corners[corner] = cv::Point2f(projected[corner]);
-    best_rmse = rmse;
+    best_rmse = RMSE;
     best = std::move(estimate);
   }
   if (!best) {
