@@ -18,7 +18,7 @@ PASS/FAIL 判定。
 
 - `/vision/camera/image`：JPEG `foxglove.CompressedImage`。
 - `/vision/armor/annotations`：四角框和颜色、类别、置信度文字。
-- `/vision/armor/stats`：检测耗时、候选数和最终检测数。
+- `/vision/armor/stats`：检测耗时、候选数、最终检测数及装甲检测阶段状态。
 - `/vision/lightbars/annotations`：独立灯条原始/去重/拒绝/接受状态及预测灯条。
 - `/vision/lightbars/stats`：实际阈值、轮廓筛选、检测耗时、融合计数和安全回退状态。
 - `/vision/debug/stats`：采集时间、空间元数据状态、JPEG 耗时、发布延迟及调试丢帧统计。
@@ -38,7 +38,7 @@ PASS/FAIL 判定。
 - `/vision/pnp/error_vectors`：网络原角点到真值的灰线，以及成功精修角点到真值的洋红线。
 - `/vision/corner_refiner/axes`：左右灯条浅蓝 PCA 中心轴与质心。
 - `/vision/corner_refiner/candidates`：橙色搜索区间、黄色扫描线候选、绿色已提交或红色回退端点。
-- `/vision/pnp/stats`：逐次求解状态、候选、重投影和真值误差 JSON。
+- `/vision/pnp/stats`：正式 PnP 阶段状态、逐次求解、候选、重投影和真值误差 JSON。
 - `/vision/prediction/scene`：13维 ESEKF 当前车体中心、速度、姿态轴、双半径和当前四装甲。
 - `/vision/control/impact_scene`：弹道命中时域的紫色四装甲；最终选中槽位使用不透明粗线，
   其余槽位使用半透明细线。
@@ -48,6 +48,7 @@ PASS/FAIL 判定。
   射线；目标球红/黄/紫分别表示已开火、满足开火资格和其余有效弹道状态，不附加状态文字。
 - `/vision/control/trajectory_scene`：最近 1 秒白色估计反馈、洋红色实测反馈、青色参考轨迹，
   以及有效时黄色、无效时红色的 MPC 计划轨迹，不附加文字。
+- `/vision/control/state`：100 Hz 火控状态、MPC 阶段状态、弹道、命令和开火门控 JSON。
 - `/vision/prediction/state`：固定顺序状态、协方差、创新、NIS及每自由度NIS、机动模式、关联
   门限与接受/拒绝计数、逐灯条关联、灯条-only/联合融合/装甲回退标志、累计重置计数、耗时及
   Talos 中心/yaw/yaw角速度误差。
@@ -63,6 +64,28 @@ annotations 话题加入 Image annotations。Plot 面板可直接选择 stats �
 Talos 仿真验收时在 3D 面板将固定坐标系设为 `world`，同时启用 transforms、frustum 和
 ground truth；在 Image 面板额外启用 ground truth annotations。
 `0.0.0.0` 不包含认证和 TLS，只应用于可信机器人局域网。
+
+## 处理链状态转移
+
+在 Foxglove 的 State Transitions 面板中分别添加以下四个消息路径，即可按行观察
+`装甲检测 -> PnP -> EKF -> MPC` 的处理状态：
+
+- `/vision/armor/stats.detection_state`：`not_detected` 表示当前帧没有正式检测结果，
+  `detected` 表示至少检测到一块装甲板。
+- `/vision/pnp/stats.pnp_state`：`not_attempted` 表示没有装甲输入，`unavailable` 表示检测到
+  装甲但缺少空间或标定数据，`failed` 表示正式 PnP 已运行但没有有效位姿，`solved` 表示
+  至少得到一个正式位姿。该字段不使用仿真真值求解结果。
+- `/vision/prediction/state.tracker_state`：ESEKF 跟踪器的 `lost`、`detecting`、`tracking` 或
+  `temp_lost`。
+- `/vision/control/state.mpc.state`：`inactive` 表示控制前置条件不满足、MPC 未运行，
+  `solved` 表示当前周期规划成功，`failed` 表示规划失败，`fallback` 表示规划失败后仍在发布
+  最近有效轨迹的 100 ms 短时回退。
+
+四行都是周期快照而不是仅在转换时发布的事件。检测、PnP 和 EKF 行使用图像采集时间并受
+`image.max_fps` 限流；MPC 行使用控制命令时间并保持 100 Hz。实时连接与 MCAP 回放使用相同
+字段和 Schema，因此同一 State Transitions 布局可以直接复用。各行独立表达当前阶段，遮挡时
+可能同时出现 `not_detected / not_attempted / temp_lost / solved`，这表示预测与控制正在短时
+延续历史目标，并不代表数据跨阶段串错。
 
 TF 不再跟随 `image.max_fps` 的图像调试限流，而是由 100 Hz 控制诊断管线发布。
 其平移使用与采集帧同步的底盘体系线速度做最长 100 ms 恒速外推，姿态使用新鲜

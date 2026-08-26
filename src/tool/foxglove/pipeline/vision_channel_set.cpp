@@ -40,6 +40,7 @@ constexpr char K_ARMOR_STATS_SCHEMA[] = R"json({
   "properties":{
     "timestamp":{"type":"object","properties":{"sec":{"type":"integer"},"nsec":{"type":"integer"}},"required":["sec","nsec"]},
     "sequence":{"type":"integer"},
+    "detection_state":{"type":"string","enum":["not_detected","detected"]},
     "preprocess_ms":{"type":"number"},
     "inference_ms":{"type":"number"},
     "postprocess_ms":{"type":"number"},
@@ -47,7 +48,7 @@ constexpr char K_ARMOR_STATS_SCHEMA[] = R"json({
     "threshold_candidates":{"type":"integer"},
     "kept_detections":{"type":"integer"}
   },
-  "required":["timestamp","sequence","preprocess_ms","inference_ms","postprocess_ms","total_ms","threshold_candidates","kept_detections"]
+  "required":["timestamp","sequence","detection_state","preprocess_ms","inference_ms","postprocess_ms","total_ms","threshold_candidates","kept_detections"]
 })json";
 
 constexpr char K_LIGHTBAR_STATS_SCHEMA[] = R"json({
@@ -118,6 +119,7 @@ constexpr char K_PNP_STATS_SCHEMA[] = R"json({
     "timestamp":{"type":"object","properties":{"sec":{"type":"integer"},"nsec":{"type":"integer"}},"required":["sec","nsec"]},
     "sequence":{"type":"integer"},
     "summary_sequence":{"type":"integer"},
+    "pnp_state":{"type":"string","enum":["not_attempted","unavailable","failed","solved"]},
     "attempted":{"type":"integer"},
     "successful":{"type":"integer"},
     "summary":{"type":"object"},
@@ -126,7 +128,7 @@ constexpr char K_PNP_STATS_SCHEMA[] = R"json({
     "refinement":{"type":"object"},
     "attempts":{"type":"array","items":{"type":"object"}}
   },
-  "required":["timestamp","sequence","summary_sequence","attempted","successful","summary","groups","solve","refinement","attempts"]
+  "required":["timestamp","sequence","summary_sequence","pnp_state","attempted","successful","summary","groups","solve","refinement","attempts"]
 })json";
 
 constexpr char K_PREDICTION_STATE_SCHEMA[] = R"json({
@@ -134,7 +136,7 @@ constexpr char K_PREDICTION_STATE_SCHEMA[] = R"json({
   "properties":{
     "timestamp":{"type":"object","properties":{"sec":{"type":"integer"},"nsec":{"type":"integer"}},"required":["sec","nsec"]},
     "sequence":{"type":"integer"},
-    "tracker_state":{"type":"string"},
+    "tracker_state":{"type":"string","enum":["lost","detecting","tracking","temp_lost"]},
     "label":{"type":"integer"},
     "dt_s":{"type":"number"},
     "state_order":{"type":"array","items":{"type":"string"}},

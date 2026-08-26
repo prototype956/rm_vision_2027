@@ -406,7 +406,8 @@ void AddCornerOutline(::foxglove::schemas::ImageAnnotations& annotations,
 }
 
 std::string EncodeStats(const simulation_evaluation::PnpEvaluationResult& result,
-                        std::uint64_t sequence, const ::foxglove::schemas::Timestamp& timestamp) {
+                        std::string_view pnp_state, std::uint64_t sequence,
+                        const ::foxglove::schemas::Timestamp& timestamp) {
   // attempts 是当前帧明细；summary、groups、solve 和 refinement 是最近原子统计快照。
   std::string attempts;
   std::size_t successes = 0;
@@ -470,7 +471,8 @@ std::string EncodeStats(const simulation_evaluation::PnpEvaluationResult& result
   }
   return fmt::format(
       "{{\"timestamp\":{{\"sec\":{},\"nsec\":{}}},\"sequence\":{},\"summary_sequence\":{},"
-      "\"attempted\":{},\"successful\":{},\"summary\":{{\"ground_truth\":{},"
+      "\"pnp_state\":\"{}\",\"attempted\":{},\"successful\":{},"
+      "\"summary\":{{\"ground_truth\":{},"
       "\"detection\":{}}},"
       "\"groups\":{{\"distance\":{},\"viewing_angle\":{},\"armor_size\":{}}},"
       "\"solve\":{},"
@@ -478,8 +480,8 @@ std::string EncodeStats(const simulation_evaluation::PnpEvaluationResult& result
       "\"failure_reasons\":{},\"elapsed_ms\":{},"
       "\"raw_mean_corner_error_px\":{},\"final_mean_corner_error_px\":{}}},"
       "\"attempts\":[{}]}}",
-      timestamp.sec, timestamp.nsec, sequence, result.summary_sequence, result.attempts.size(),
-      successes, DetailedSummaryJson(result.ground_truth_summary),
+      timestamp.sec, timestamp.nsec, sequence, result.summary_sequence, pnp_state,
+      result.attempts.size(), successes, DetailedSummaryJson(result.ground_truth_summary),
       DetailedSummaryJson(result.detection_summary), GroupJson(result.distance_groups),
       GroupJson(result.angle_groups), GroupJson(result.size_groups),
       SolveSummaryJson(result.solve_summary), result.refinement_summary.attempted,

@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 #include <foxglove/schemas.hpp>
 
@@ -62,9 +63,10 @@ namespace mv::tool::foxglove::pnp {
  *
  * 输出字段必须与 VisionChannelSet 注册的 mv.vision.ArmorPnpStats JSON Schema 保持同步。
  * result 中的累计摘要可能来自较早的 summary_sequence，逐目标 attempts 始终对应当前帧。
+ * @param pnp_state 仅依据正式检测输入、空间数据和正式 PnP 输出得到的稳定阶段状态。
  */
 [[nodiscard]] std::string EncodeStats(const simulation_evaluation::PnpEvaluationResult& result,
-                                      std::uint64_t sequence,
+                                      std::string_view pnp_state, std::uint64_t sequence,
                                       const ::foxglove::schemas::Timestamp& timestamp);
 
 }  // namespace mv::tool::foxglove::pnp

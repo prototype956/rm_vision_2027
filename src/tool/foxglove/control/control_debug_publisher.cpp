@@ -38,6 +38,19 @@ struct ControlDebugView final : modules::FireControlOutput, modules::FireControl
   GimbalTrajectoryDebugView plan;
 };
 
+/** @brief 将当前控制周期归类为 State Transitions 面板使用的稳定 MPC 状态。 */
+std::string_view MpcStateName(const ControlDebugView& value) noexcept {
+  if (value.fallback_active)
+    return "fallback";
+  if (value.raw_mpc_valid)
+    return "solved";
+  if (value.reject_reason == modules::FireRejectReason::MPC_FAILED ||
+      value.plan.failure_reason != modules::GimbalTrajectoryFailureReason::NONE) {
+    return "failed";
+  }
+  return "inactive";
+}
+
 // 高频 state/tracking 使用 JSON 便于 Foxglove Plot 直接选择字段；低频 trajectory
 // 携带完整数组，三个 scene 按选择、瞄准和轨迹职责提供 world 系空间关系。
 constexpr char K_STATE_TOPIC[] = "/vision/control/state";
@@ -53,11 +66,14 @@ constexpr char K_STATE_SCHEMA[] = R"json({
     "timestamp":{"type":"object"},"source_sequence":{"type":"integer"},
     "source_capture_timestamp_ns":{"type":["integer","null"]},
     "prediction_age_s":{"type":["number","null"]},"feedback_age_s":{"type":["number","null"]},
-    "tracker_state":{"type":"string"},"armor_slot":{"type":"integer"},
+    "tracker_state":{"type":"string","enum":["lost","detecting","tracking","temp_lost"]},
+    "armor_slot":{"type":"integer"},
     "armor_selection":{"type":"object"},
     "ballistics":{"type":"object"},"angles":{"type":"object"},
     "motion":{"type":"object"},"limits":{"type":"object"},"fire_window":{"type":"object"},
-    "command":{"type":"object"},"mpc":{"type":"object"},"fire":{"type":"object"},
+    "command":{"type":"object"},
+    "mpc":{"type":"object","properties":{"state":{"type":"string","enum":["inactive","solved","failed","fallback"]}},"required":["state"]},
+    "fire":{"type":"object"},
     "talos":{"type":"object"},"actuator":{"type":"object"},
     "frame_actuator":{"type":["object","null"]},
     "runtime":{"type":"object"}
@@ -393,7 +409,8 @@ std::string EncodeState(const ControlDebugView& value, std::uint64_t dropped_sam
       "\"fallback_expired_this_cycle\":{},\"output_projection_cleared\":{},"
       "\"output_projection_clear_reason\":\"{}\","
       "\"reference_step_valid\":{},\"reference_yaw_step\":{},\"reference_pitch_step\":{}}},"
-      "\"mpc\":{{\"valid\":{},\"command_index\":{},\"command_lookahead_s\":{},"
+      "\"mpc\":{{\"state\":\"{}\",\"valid\":{},\"command_index\":{},"
+      "\"command_lookahead_s\":{},"
       "\"residuals_normalized\":{},"
       "\"normalization\":{{\"angle_scale_rad\":{},\"yaw_velocity_scale_rad_s\":{},"
       "\"pitch_velocity_scale_rad_s\":{},\"yaw_acceleration_scale_rad_s2\":{},"
@@ -467,8 +484,8 @@ std::string EncodeState(const ControlDebugView& value, std::uint64_t dropped_sam
       value.fallback_expired_this_cycle, value.output_projection_cleared,
       value.output_projection_clear_reason, value.reference_step_valid,
       OptionalNumber(value.reference_step_valid, value.reference_yaw_step),
-      OptionalNumber(value.reference_step_valid, value.reference_pitch_step), plan.valid,
-      plan.command_index, Number(plan.command_lookahead_s), plan.residuals_normalized,
+      OptionalNumber(value.reference_step_valid, value.reference_pitch_step), MpcStateName(value),
+      plan.valid, plan.command_index, Number(plan.command_lookahead_s), plan.residuals_normalized,
       Number(plan.normalization_angle_scale_rad),
       Number(plan.normalization_yaw_velocity_scale_rad_s),
       Number(plan.normalization_pitch_velocity_scale_rad_s),
@@ -1196,7 +1213,7 @@ void ControlDebugPublisher::Start() noexcept {
 void ControlDebugPublisher::Publish(
     const ::mv::runtime::ControlCycleOutput& output,
     const ::mv::runtime::ControlCycleDiagnostics& diagnostics) noexcept {
-  const bool live_demand = live_ && session_.LiveActive() &&
+  const bool LIVE_DEMAND = live_ && session_.LiveActive() &&
                            (session_.Subscription(live_state_id_).subscribers > 0 ||
                             session_.Subscription(live_tracking_id_).subscribers > 0 ||
                             session_.Subscription(live_trajectory_id_).subscribers > 0 ||
@@ -1204,7 +1221,7 @@ void ControlDebugPublisher::Publish(
                             session_.Subscription(live_aim_scene_id_).subscribers > 0 ||
                             session_.Subscription(live_trajectory_scene_id_).subscribers > 0 ||
                             session_.Subscription(live_transforms_id_).subscribers > 0);
-  if (!accepting_.load(std::memory_order_acquire) || (!live_demand && !session_.RecordingActive()))
+  if (!accepting_.load(std::memory_order_acquire) || (!LIVE_DEMAND && !session_.RecordingActive()))
     return;
   try {
     std::lock_guard lock(mutex_);
@@ -1240,7 +1257,7 @@ void ControlDebugPublisher::WorkerLoop() noexcept {
 }
 
 void ControlDebugPublisher::UpdateHistory(const modules::FireControlResult& result) noexcept {
-  constexpr std::uint64_t history_ns = 1'000'000'000ULL;
+  constexpr std::uint64_t HISTORY_NS = 1'000'000'000ULL;
   const auto& output = result.output;
   const auto& diagnostics = result.diagnostics;
   if (diagnostics.feedback.valid) {
@@ -1255,48 +1272,48 @@ void ControlDebugPublisher::UpdateHistory(const modules::FireControlResult& resu
       timestamp_ns = *output.source_capture_timestamp_ns;
     } else if (std::isfinite(diagnostics.measurement_age_s) &&
                diagnostics.measurement_age_s >= 0.0) {
-      const auto age_ns = static_cast<std::uint64_t>(diagnostics.measurement_age_s * 1.0e9);
-      timestamp_ns = age_ns < timestamp_ns ? timestamp_ns - age_ns : 0;
+      const auto AGE_NS = static_cast<std::uint64_t>(diagnostics.measurement_age_s * 1.0e9);
+      timestamp_ns = AGE_NS < timestamp_ns ? timestamp_ns - AGE_NS : 0;
     }
     measured_history_.push_back(
         {.timestamp_ns = timestamp_ns, .feedback = diagnostics.measured_feedback});
     last_measured_sequence_ = diagnostics.measured_feedback.source_sequence;
   }
-  const auto oldest =
-      output.command_timestamp_ns > history_ns ? output.command_timestamp_ns - history_ns : 0;
-  while (!estimated_history_.empty() && estimated_history_.front().timestamp_ns < oldest)
+  const auto OLDEST =
+      output.command_timestamp_ns > HISTORY_NS ? output.command_timestamp_ns - HISTORY_NS : 0;
+  while (!estimated_history_.empty() && estimated_history_.front().timestamp_ns < OLDEST)
     estimated_history_.pop_front();
-  while (!measured_history_.empty() && measured_history_.front().timestamp_ns < oldest)
+  while (!measured_history_.empty() && measured_history_.front().timestamp_ns < OLDEST)
     measured_history_.pop_front();
 }
 
 void ControlDebugPublisher::Process(const modules::FireControlResult& result) noexcept {
   try {
     UpdateHistory(result);
-    const ControlDebugView value(result);
-    const auto state_json = EncodeState(value, dropped_.load(std::memory_order_relaxed));
-    const auto tracking_json = EncodeTracking(value);
+    const ControlDebugView VALUE(result);
+    const auto STATE_JSON = EncodeState(VALUE, dropped_.load(std::memory_order_relaxed));
+    const auto TRACKING_JSON = EncodeTracking(VALUE);
     std::optional<::foxglove::schemas::FrameTransforms> transforms;
-    if (value.projected_kinematics) {
+    if (VALUE.projected_kinematics) {
       constexpr std::uint64_t NANOSECONDS_PER_SECOND = 1'000'000'000ULL;
       const ::foxglove::schemas::Timestamp TIMESTAMP{
-          .sec = static_cast<std::uint32_t>(value.command_timestamp_ns / NANOSECONDS_PER_SECOND),
-          .nsec = static_cast<std::uint32_t>(value.command_timestamp_ns % NANOSECONDS_PER_SECOND)};
-      transforms = spatial::EncodeTransforms(*value.projected_kinematics, TIMESTAMP);
+          .sec = static_cast<std::uint32_t>(VALUE.command_timestamp_ns / NANOSECONDS_PER_SECOND),
+          .nsec = static_cast<std::uint32_t>(VALUE.command_timestamp_ns % NANOSECONDS_PER_SECOND)};
+      transforms = spatial::EncodeTransforms(*VALUE.projected_kinematics, TIMESTAMP);
     }
-    const bool trajectory_sample =
-        value.source_sequence != last_trajectory_sequence_ &&
+    const bool TRAJECTORY_SAMPLE =
+        VALUE.source_sequence != last_trajectory_sequence_ &&
         (last_trajectory_timestamp_ns_ == 0 ||
-         value.command_timestamp_ns >= last_trajectory_timestamp_ns_ + trajectory_period_ns_);
+         VALUE.command_timestamp_ns >= last_trajectory_timestamp_ns_ + trajectory_period_ns_);
     // 数组轨迹和三维场景编码较重，按图像帧率采样；标量频道仍保留每个控制周期。
     std::string trajectory_json;
     std::optional<::foxglove::schemas::SceneUpdate> selection_scene;
     std::optional<::foxglove::schemas::SceneUpdate> aim_scene;
     std::optional<::foxglove::schemas::SceneUpdate> trajectory_scene;
-    if (trajectory_sample) {
-      last_trajectory_sequence_ = value.source_sequence;
-      last_trajectory_timestamp_ns_ = value.command_timestamp_ns;
-      trajectory_json = EncodeTrajectory(value, estimated_history_, measured_history_);
+    if (TRAJECTORY_SAMPLE) {
+      last_trajectory_sequence_ = VALUE.source_sequence;
+      last_trajectory_timestamp_ns_ = VALUE.command_timestamp_ns;
+      trajectory_json = EncodeTrajectory(VALUE, estimated_history_, measured_history_);
       const bool RECORD_SCENES = recording_ && session_.RecordingActive();
       const bool LIVE_SELECTION_SCENE =
           live_ && session_.LiveActive() &&
@@ -1307,95 +1324,95 @@ void ControlDebugPublisher::Process(const modules::FireControlResult& result) no
           live_ && session_.LiveActive() &&
           session_.Subscription(live_trajectory_scene_id_).subscribers > 0;
       if (RECORD_SCENES || LIVE_SELECTION_SCENE)
-        selection_scene = EncodeSelectionScene(value);
+        selection_scene = EncodeSelectionScene(VALUE);
       if (RECORD_SCENES || LIVE_AIM_SCENE)
-        aim_scene = EncodeAimScene(value);
+        aim_scene = EncodeAimScene(VALUE);
       if (RECORD_SCENES || LIVE_TRAJECTORY_SCENE) {
-        trajectory_scene = EncodeTrajectoryScene(value, estimated_history_, measured_history_);
+        trajectory_scene = EncodeTrajectoryScene(VALUE, estimated_history_, measured_history_);
       }
     }
     // Foxglove Context 的写入由会话级互斥量串行化，避免其他发布器并发写 live/MCAP。
     std::lock_guard publish_lock(session_.PublishMutex());
     if (live_ && session_.LiveActive()) {
       if (session_.Subscription(live_state_id_).subscribers > 0) {
-        const auto error = Log(*live_->state, state_json, value.command_timestamp_ns);
-        if (error != ::foxglove::FoxgloveError::Ok) {
-          session_.ReportLiveError("publish control state", error);
+        const auto ERROR = Log(*live_->state, STATE_JSON, VALUE.command_timestamp_ns);
+        if (ERROR != ::foxglove::FoxgloveError::Ok) {
+          session_.ReportLiveError("publish control state", ERROR);
         }
       }
       if (session_.Subscription(live_tracking_id_).subscribers > 0) {
-        const auto error = Log(*live_->tracking, tracking_json, value.command_timestamp_ns);
-        if (error != ::foxglove::FoxgloveError::Ok) {
-          session_.ReportLiveError("publish gimbal tracking", error);
+        const auto ERROR = Log(*live_->tracking, TRACKING_JSON, VALUE.command_timestamp_ns);
+        if (ERROR != ::foxglove::FoxgloveError::Ok) {
+          session_.ReportLiveError("publish gimbal tracking", ERROR);
         }
       }
-      if (trajectory_sample && session_.Subscription(live_trajectory_id_).subscribers > 0) {
-        const auto error = Log(*live_->trajectory, trajectory_json, value.command_timestamp_ns);
-        if (error != ::foxglove::FoxgloveError::Ok) {
-          session_.ReportLiveError("publish control trajectory", error);
+      if (TRAJECTORY_SAMPLE && session_.Subscription(live_trajectory_id_).subscribers > 0) {
+        const auto ERROR = Log(*live_->trajectory, trajectory_json, VALUE.command_timestamp_ns);
+        if (ERROR != ::foxglove::FoxgloveError::Ok) {
+          session_.ReportLiveError("publish control trajectory", ERROR);
         }
       }
       if (selection_scene && session_.Subscription(live_selection_scene_id_).subscribers > 0) {
         const auto ERROR =
-            live_->selection_scene->log(*selection_scene, value.command_timestamp_ns);
+            live_->selection_scene->log(*selection_scene, VALUE.command_timestamp_ns);
         if (ERROR != ::foxglove::FoxgloveError::Ok) {
           session_.ReportLiveError("publish control selection scene", ERROR);
         }
       }
       if (aim_scene && session_.Subscription(live_aim_scene_id_).subscribers > 0) {
-        const auto ERROR = live_->aim_scene->log(*aim_scene, value.command_timestamp_ns);
+        const auto ERROR = live_->aim_scene->log(*aim_scene, VALUE.command_timestamp_ns);
         if (ERROR != ::foxglove::FoxgloveError::Ok) {
           session_.ReportLiveError("publish control aim scene", ERROR);
         }
       }
       if (trajectory_scene && session_.Subscription(live_trajectory_scene_id_).subscribers > 0) {
         const auto ERROR =
-            live_->trajectory_scene->log(*trajectory_scene, value.command_timestamp_ns);
+            live_->trajectory_scene->log(*trajectory_scene, VALUE.command_timestamp_ns);
         if (ERROR != ::foxglove::FoxgloveError::Ok) {
           session_.ReportLiveError("publish control trajectory scene", ERROR);
         }
       }
       if (transforms && session_.Subscription(live_transforms_id_).subscribers > 0) {
-        const auto ERROR = live_->transforms->log(*transforms, value.command_timestamp_ns);
+        const auto ERROR = live_->transforms->log(*transforms, VALUE.command_timestamp_ns);
         if (ERROR != ::foxglove::FoxgloveError::Ok)
           session_.ReportLiveError("publish projected transforms", ERROR);
       }
     }
     if (recording_ && session_.RecordingActive()) {
-      if (const auto error = Log(*recording_->state, state_json, value.command_timestamp_ns);
-          error != ::foxglove::FoxgloveError::Ok) {
-        session_.ReportRecordingError("record control state", error);
+      if (const auto ERROR = Log(*recording_->state, STATE_JSON, VALUE.command_timestamp_ns);
+          ERROR != ::foxglove::FoxgloveError::Ok) {
+        session_.ReportRecordingError("record control state", ERROR);
       }
-      if (const auto error = Log(*recording_->tracking, tracking_json, value.command_timestamp_ns);
-          error != ::foxglove::FoxgloveError::Ok) {
-        session_.ReportRecordingError("record gimbal tracking", error);
+      if (const auto ERROR = Log(*recording_->tracking, TRACKING_JSON, VALUE.command_timestamp_ns);
+          ERROR != ::foxglove::FoxgloveError::Ok) {
+        session_.ReportRecordingError("record gimbal tracking", ERROR);
       }
-      if (trajectory_sample) {
-        const auto error =
-            Log(*recording_->trajectory, trajectory_json, value.command_timestamp_ns);
-        if (error != ::foxglove::FoxgloveError::Ok) {
-          session_.ReportRecordingError("record control trajectory", error);
+      if (TRAJECTORY_SAMPLE) {
+        const auto ERROR =
+            Log(*recording_->trajectory, trajectory_json, VALUE.command_timestamp_ns);
+        if (ERROR != ::foxglove::FoxgloveError::Ok) {
+          session_.ReportRecordingError("record control trajectory", ERROR);
         }
         if (selection_scene) {
           const auto ERROR =
-              recording_->selection_scene->log(*selection_scene, value.command_timestamp_ns);
+              recording_->selection_scene->log(*selection_scene, VALUE.command_timestamp_ns);
           if (ERROR != ::foxglove::FoxgloveError::Ok)
             session_.ReportRecordingError("record control selection scene", ERROR);
         }
         if (aim_scene) {
-          const auto ERROR = recording_->aim_scene->log(*aim_scene, value.command_timestamp_ns);
+          const auto ERROR = recording_->aim_scene->log(*aim_scene, VALUE.command_timestamp_ns);
           if (ERROR != ::foxglove::FoxgloveError::Ok)
             session_.ReportRecordingError("record control aim scene", ERROR);
         }
         if (trajectory_scene) {
           const auto ERROR =
-              recording_->trajectory_scene->log(*trajectory_scene, value.command_timestamp_ns);
+              recording_->trajectory_scene->log(*trajectory_scene, VALUE.command_timestamp_ns);
           if (ERROR != ::foxglove::FoxgloveError::Ok)
             session_.ReportRecordingError("record control trajectory scene", ERROR);
         }
       }
       if (transforms) {
-        const auto ERROR = recording_->transforms->log(*transforms, value.command_timestamp_ns);
+        const auto ERROR = recording_->transforms->log(*transforms, VALUE.command_timestamp_ns);
         if (ERROR != ::foxglove::FoxgloveError::Ok)
           session_.ReportRecordingError("record projected transforms", ERROR);
       }

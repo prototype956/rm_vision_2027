@@ -198,7 +198,11 @@ PreparedFrame VisionMessageEncoder::Encode(
         pnp::EncodeCornerRefinerCandidates(PNP_DIAGNOSTIC, TIMESTAMP);
   }
   if (demand.pnp_stats) {
-    result.pnp_stats_json = pnp::EncodeStats(PNP_DIAGNOSTIC, stamp.sequence, TIMESTAMP);
+    const char* const PNP_STATE = frame.output.detections.empty()      ? "not_attempted"
+                                  : !SPATIAL_VIEW                      ? "unavailable"
+                                  : frame.output.pnp.estimates.empty() ? "failed"
+                                                                       : "solved";
+    result.pnp_stats_json = pnp::EncodeStats(PNP_DIAGNOSTIC, PNP_STATE, stamp.sequence, TIMESTAMP);
   }
   if (demand.prediction_scene) {
     result.prediction_scene = prediction::EncodeScene(frame.output.prediction, TIMESTAMP);
