@@ -54,7 +54,16 @@ sudo ./build/bin/mv-camera-test
 ### 拔线
 
 基线运行时拔出相机。程序应在取帧超时后报告 SDK 错误码、Grab 状态和最后成功帧号，
-不切换 OpenCV、不自动恢复，随后正常关闭。重新插入后由人工再次启动。
+不切换 OpenCV、不自动重连。生产入口中 `DISCONNECTED` 或 `FATAL` 会立即先停止控制再以
+退出码 4 结束；`TIMEOUT` 与 `INVALID_FRAME` 共用“连续无合法帧”计时，达到
+`runtime/error_policy.yaml` 的 2 秒门限后同样以退出码 4 结束。门限前恢复合法帧应清零
+计时。重新插入后由人工再次启动。
+
+策略本身可由无需相机的验收程序检查：
+
+```bash
+./build-openvino/bin/mv-runtime-policy-test
+```
 
 ## 常见定位
 

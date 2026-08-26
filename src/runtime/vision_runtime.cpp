@@ -100,72 +100,194 @@ void LogPnpHealth(const tool::simulation_evaluation::PnpEvaluationResult& result
 VisionRuntime::VisionRuntime(hal::ICamera& camera, VisionPipeline& pipeline,
                              ControlRuntime* control, tool::DebugWindow* window,
                              IRuntimeDiagnosticsSink* diagnostics,
-                             tool::simulation_evaluation::SimulationEvaluator* evaluator) noexcept
+                             tool::simulation_evaluation::SimulationEvaluator* evaluator,
+                             RuntimeSupervisor& supervisor) noexcept
     : camera_(camera),
       pipeline_(pipeline),
       control_(control),
       window_(window),
       diagnostics_(diagnostics),
-      evaluator_(evaluator) {}
+      evaluator_(evaluator),
+      supervisor_(supervisor) {}
 
-VisionRunStatus VisionRuntime::Run(const std::function<bool()>& stop_requested) {
+RuntimeRunResult VisionRuntime::Run(const std::function<bool()>& stop_requested) {
+  const auto STOP_WITH_TERMINAL = [this](RuntimeTerminationReason fallback) {
+    if (control_)
+      control_->Stop();
+    return supervisor_.TerminalResult().value_or(
+        RuntimeRunResult{.reason = fallback, .fault = std::nullopt});
+  };
+  supervisor_.Recover(RuntimeComponent::CAMERA);
   while (!stop_requested()) {
-    if (control_ && control_->Failed()) {
-      MV_LOG_ERROR("App", "control thread failed; stopping vision pipeline safely");
-      return VisionRunStatus::CONTROL_FAILURE;
+    bool window_operation_failed = false;
+    if (const auto TERMINAL = supervisor_.TerminalResult()) {
+      if (control_)
+        control_->Stop();
+      return *TERMINAL;
     }
     frame::FramePacket packet;
-    const auto STATUS = camera_.Grab(packet);
-
-    if (STATUS == hal::GrabStatus::OK) {
-      try {
-        const auto SPATIAL = frame::MakeSpatialFrameView(packet);
-        const auto RESULT = pipeline_.Process({.capture = packet.capture, .spatial = SPATIAL});
-        if (control_ && packet.camera_model && packet.kinematics)
-          control_->Update(RESULT.output.prediction, *packet.kinematics, packet.gimbal_actuator);
-        std::optional<tool::simulation_evaluation::SimulationEvaluationResult> evaluation;
-        if (evaluator_ && packet.camera_model && packet.kinematics && packet.simulation) {
-          try {
-            evaluation =
-                evaluator_->Evaluate({.stamp = packet.capture.stamp,
-                                      .camera_model = *packet.camera_model,
-                                      .kinematics = *packet.kinematics,
-                                      .simulation = *packet.simulation,
-                                      .detections = RESULT.output.detections,
-                                      .refinements = RESULT.output.refinements,
-                                      .refinement_diagnostics = RESULT.diagnostics.refinements,
-                                      .pnp = RESULT.output.pnp,
-                                      .pnp_diagnostics = RESULT.diagnostics.pnp,
-                                      .prediction = RESULT.output.prediction});
-          } catch (const std::exception& error) {
-            MV_LOG_WARN("SimulationEvaluation", "frame evaluation skipped: {}", error.what());
-          }
-        }
-        if (evaluation)
-          LogPnpHealth(evaluation->pnp, packet.capture.stamp.sequence,
-                       packet.simulation->armors.size());
-        if (diagnostics_) {
-          diagnostics_->PublishVision(packet, RESULT.output, RESULT.diagnostics, evaluation);
-        }
-        if (window_) {
-          cv::Mat debug_image = packet.capture.image.clone();
-          DrawDetections(debug_image, RESULT.output.detections, RESULT.diagnostics.detector);
-          window_->Show(debug_image);
-        }
-      } catch (const std::exception& error) {
-        MV_LOG_ERROR("App", "armor detection failed: {}", error.what());
-        return VisionRunStatus::PIPELINE_FAILURE;
-      }
-    } else if (STATUS == hal::GrabStatus::DISCONNECTED || STATUS == hal::GrabStatus::FATAL) {
-      MV_LOG_ERROR("App", "camera grab failed: {}", hal::GrabStatusName(STATUS));
-      return VisionRunStatus::CAMERA_FAILURE;
+    hal::GrabStatus status{hal::GrabStatus::FATAL};
+    try {
+      status = camera_.Grab(packet);
+    } catch (const std::exception& error) {
+      static_cast<void>(supervisor_.Report(RuntimeFaultCode::CAMERA_FATAL, error.what()));
+      MV_LOG_ERROR("App", "camera grab failed: fatal");
+      return STOP_WITH_TERMINAL(RuntimeTerminationReason::CAMERA_FAILURE);
+    } catch (...) {
+      static_cast<void>(
+          supervisor_.Report(RuntimeFaultCode::CAMERA_FATAL, "unknown camera exception"));
+      MV_LOG_ERROR("App", "camera grab failed: fatal");
+      return STOP_WITH_TERMINAL(RuntimeTerminationReason::CAMERA_FAILURE);
     }
 
-    if (window_ && window_->Poll().exit_requested)
-      return VisionRunStatus::NORMAL;
+    if (status == hal::GrabStatus::OK) {
+      supervisor_.Recover(RuntimeComponent::CAMERA);
+      VisionFrameResult result;
+      try {
+        const auto SPATIAL = frame::MakeSpatialFrameView(packet);
+        result = pipeline_.Process({.capture = packet.capture, .spatial = SPATIAL});
+      } catch (const std::exception& error) {
+        static_cast<void>(
+            supervisor_.Report(RuntimeFaultCode::VISION_PIPELINE_EXCEPTION, error.what()));
+        MV_LOG_ERROR("App", "armor detection failed: {}", error.what());
+        return STOP_WITH_TERMINAL(RuntimeTerminationReason::PIPELINE_FAILURE);
+      } catch (...) {
+        static_cast<void>(supervisor_.Report(RuntimeFaultCode::VISION_PIPELINE_EXCEPTION,
+                                             "unknown vision pipeline exception"));
+        MV_LOG_ERROR("App", "armor detection failed: unknown exception");
+        return STOP_WITH_TERMINAL(RuntimeTerminationReason::PIPELINE_FAILURE);
+      }
+
+      if (control_ && packet.camera_model && packet.kinematics) {
+        try {
+          control_->Update(result.output.prediction, *packet.kinematics, packet.chassis_motion,
+                           packet.gimbal_actuator);
+        } catch (const std::exception& error) {
+          static_cast<void>(
+              supervisor_.Report(RuntimeFaultCode::CONTROL_UPDATE_EXCEPTION, error.what()));
+          return STOP_WITH_TERMINAL(RuntimeTerminationReason::CONTROL_FAILURE);
+        } catch (...) {
+          static_cast<void>(supervisor_.Report(RuntimeFaultCode::CONTROL_UPDATE_EXCEPTION,
+                                               "unknown control snapshot exception"));
+          return STOP_WITH_TERMINAL(RuntimeTerminationReason::CONTROL_FAILURE);
+        }
+      }
+
+      std::optional<tool::simulation_evaluation::SimulationEvaluationResult> evaluation;
+      if (evaluator_ && packet.camera_model && packet.kinematics && packet.simulation) {
+        try {
+          evaluation =
+              evaluator_->Evaluate({.stamp = packet.capture.stamp,
+                                    .camera_model = *packet.camera_model,
+                                    .kinematics = *packet.kinematics,
+                                    .simulation = *packet.simulation,
+                                    .detections = result.output.detections,
+                                    .refinements = result.output.refinements,
+                                    .refinement_diagnostics = result.diagnostics.refinements,
+                                    .pnp = result.output.pnp,
+                                    .pnp_diagnostics = result.diagnostics.pnp,
+                                    .prediction = result.output.prediction});
+          supervisor_.Recover(RuntimeComponent::SIMULATION_EVALUATION);
+        } catch (const std::exception& error) {
+          const auto DECISION =
+              supervisor_.Report(RuntimeFaultCode::EVALUATION_EXCEPTION, error.what());
+          if (DECISION.disable_component)
+            evaluator_ = nullptr;
+        } catch (...) {
+          const auto DECISION = supervisor_.Report(RuntimeFaultCode::EVALUATION_EXCEPTION,
+                                                   "unknown evaluation exception");
+          if (DECISION.disable_component)
+            evaluator_ = nullptr;
+        }
+      }
+      if (evaluation) {
+        try {
+          LogPnpHealth(evaluation->pnp, packet.capture.stamp.sequence,
+                       packet.simulation->armors.size());
+        } catch (const std::exception& error) {
+          static_cast<void>(
+              supervisor_.Report(RuntimeFaultCode::DIAGNOSTICS_EXCEPTION, error.what()));
+        } catch (...) {
+          static_cast<void>(supervisor_.Report(RuntimeFaultCode::DIAGNOSTICS_EXCEPTION,
+                                               "unknown PnP health logging exception"));
+        }
+      }
+
+      if (diagnostics_) {
+        diagnostics_->PublishVision(packet, result.output, result.diagnostics, evaluation);
+        const auto HEALTH = diagnostics_->SnapshotHealth();
+        if (HEALTH.available) {
+          supervisor_.Recover(RuntimeComponent::DIAGNOSTICS);
+        } else {
+          static_cast<void>(supervisor_.Report(RuntimeFaultCode::DIAGNOSTICS_UNAVAILABLE,
+                                               "all configured diagnostics sinks are unavailable"));
+        }
+      }
+
+      if (window_) {
+        try {
+          cv::Mat debug_image = packet.capture.image.clone();
+          DrawDetections(debug_image, result.output.detections, result.diagnostics.detector);
+          window_->Show(debug_image);
+        } catch (const std::exception& error) {
+          window_operation_failed = true;
+          const auto DECISION =
+              supervisor_.Report(RuntimeFaultCode::DEBUG_WINDOW_EXCEPTION, error.what());
+          if (DECISION.disable_component) {
+            window_->Close();
+            window_ = nullptr;
+          }
+        } catch (...) {
+          window_operation_failed = true;
+          const auto DECISION = supervisor_.Report(RuntimeFaultCode::DEBUG_WINDOW_EXCEPTION,
+                                                   "unknown debug window exception");
+          if (DECISION.disable_component) {
+            window_->Close();
+            window_ = nullptr;
+          }
+        }
+      }
+    } else {
+      RuntimeFaultCode code{RuntimeFaultCode::CAMERA_TIMEOUT};
+      if (status == hal::GrabStatus::INVALID_FRAME) {
+        code = RuntimeFaultCode::CAMERA_INVALID_FRAME;
+      } else if (status == hal::GrabStatus::DISCONNECTED) {
+        code = RuntimeFaultCode::CAMERA_DISCONNECTED;
+      } else if (status == hal::GrabStatus::FATAL) {
+        code = RuntimeFaultCode::CAMERA_FATAL;
+      }
+      const auto DECISION = supervisor_.Report(code, hal::GrabStatusName(status));
+      if (DECISION.termination) {
+        MV_LOG_ERROR("App", "camera grab failed: {}", hal::GrabStatusName(status));
+        return STOP_WITH_TERMINAL(RuntimeTerminationReason::CAMERA_FAILURE);
+      }
+    }
+
+    if (window_) {
+      try {
+        if (window_->Poll().exit_requested)
+          return {};
+        if (!window_operation_failed)
+          supervisor_.Recover(RuntimeComponent::DEBUG_WINDOW);
+      } catch (const std::exception& error) {
+        const auto DECISION =
+            supervisor_.Report(RuntimeFaultCode::DEBUG_WINDOW_EXCEPTION, error.what());
+        if (DECISION.disable_component) {
+          window_->Close();
+          window_ = nullptr;
+        }
+      } catch (...) {
+        const auto DECISION = supervisor_.Report(RuntimeFaultCode::DEBUG_WINDOW_EXCEPTION,
+                                                 "unknown debug window exception");
+        if (DECISION.disable_component) {
+          window_->Close();
+          window_ = nullptr;
+        }
+      }
+    }
   }
   MV_LOG_INFO("App", "stop signal received");
-  return VisionRunStatus::NORMAL;
+  return {};
 }
 
 }  // namespace mv::runtime

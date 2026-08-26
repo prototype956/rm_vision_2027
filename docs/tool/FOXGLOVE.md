@@ -22,7 +22,7 @@ PASS/FAIL 判定。
 - `/vision/lightbars/annotations`：独立灯条原始/去重/拒绝/接受状态及预测灯条。
 - `/vision/lightbars/stats`：实际阈值、轮廓筛选、检测耗时、融合计数和安全回退状态。
 - `/vision/debug/stats`：采集时间、空间元数据状态、JPEG 耗时、发布延迟及调试丢帧统计。
-- `/vision/transforms`：`world -> gimbal -> camera_optical` 两级 TF。
+- `/vision/transforms`：控制时刻的 `world -> gimbal -> camera_optical` 两级短时外推 TF。
 - `/vision/camera/calibration`：与当前图像同帧的针孔内参和畸变参数。
 - `/vision/camera/frustum`：位于 `camera_optical` 下、深度 1 米的相机视锥。
 - `/simulation/ground_truth`：机器人中心、朝向及装甲姿态、四角和局部坐标轴真值。
@@ -50,6 +50,12 @@ annotations 话题加入 Image annotations。Plot 面板可直接选择 stats �
 Talos 仿真验收时在 3D 面板将固定坐标系设为 `world`，同时启用 transforms、frustum 和
 ground truth；在 Image 面板额外启用 ground truth annotations。
 `0.0.0.0` 不包含认证和 TLS，只应用于可信机器人局域网。
+
+TF 不再跟随 `image.max_fps` 的图像调试限流，而是由 100 Hz 控制诊断管线发布。
+其平移使用与采集帧同步的底盘体系线速度做最长 100 ms 恒速外推，姿态使用新鲜
+云台反馈及角速度外推。底盘速度不可用时保持采集位置；采集时间或云台反馈超过
+100 ms 时停止发布该周期 TF，不伪造低延迟位姿。图像、标注、PnP、视锥和仿真真值仍保留
+原始采集时间。
 
 Talos 自动开火基线仅在 `camera.backend=talos` 时存在命令输出。F5 关闭、跟踪未确认、
 TEMP_LOST、数据过期、MPC 回退或任一火控门控失败都会保持 `fire=false`。测试期间不要使用
@@ -89,14 +95,17 @@ raw/final 角点误差及最终深度误差；一个 3D 面板以 `world` 为固
 frustum、ground truth 和 `/vision/pnp/estimate`。
 
 内部实现按 `image`、`armor_detector`、`armor_light_detector`、`spatial` 和 `simulation` 分离消息
-编码，由 `pipeline` 统一管理限流、后台线程和频道。各领域仍属于同一调试帧，
-不会因为拆分模块而产生话题间时间差。
+编码。图像调试领域由 `pipeline` 统一限流并保持同帧采集时间；`transforms` 复用
+`spatial` 编码器，但由控制诊断线程按控制时间发布。
 
 运行时不再依赖 Foxglove 类型，而是向传输无关的 `IRuntimeDiagnosticsSink` 分别提交
 `VisionFrameOutput + VisionFrameDiagnostics` 和
 `ControlCycleOutput + ControlCycleDiagnostics`。应用层适配器再将两套数据交给 Foxglove，
 编码边界按既有 Schema 重新组合。当前仍完整创建并保持原有 29 个频道；诊断发布失败不改变
 正式视觉结果、控制命令或退出状态。
+控制话题的 `runtime` 分组和扁平 `tracking` 中提供 `feedback_projection_dt_s`、
+`pose_projection_dt_s`、`chassis_motion_valid` 和 `pose_projection_status`，用于区分完整运动外推、
+缺少底盘速度时的位置保持，以及过期或时间非法降级。
 
 ## 构建与运行
 
@@ -119,6 +128,10 @@ Foxglove 配置无法解析、端口被占用或某个 sink 初始化失败时�
 检测。开启 `recording.enabled` 后，正常退出会排空最后一帧并关闭 MCAP；录制文件写入
 配置的 `recording.output_dir`。WebSocket 订阅、重连和 MCAP 完整性由使用者按需观察，
 不设置独立测试目标或自动验收门槛。
+
+实时 WebSocket 与 MCAP sink 独立维护健康状态，一个失效不会关闭另一个。两者全部不可用时，
+应用层把诊断组件标记为降级，但不改变视觉、预测、控制命令或进程退出原因。该健康快照只在
+C++ 控制面和状态转换日志中使用，其自身不增加频道或额外诊断字段。
 
 ## 使用 Codex 分析 MCAP
 

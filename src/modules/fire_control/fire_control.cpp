@@ -342,9 +342,17 @@ FireControlResult FireControl::Step(const ControlInputSnapshot& input,
   diagnostics.max_pitch_velocity_rad_s = planner_config.max_pitch_velocity_rad_s;
   diagnostics.max_yaw_acceleration_rad_s2 = planner_config.max_yaw_acceleration_rad_s2;
   diagnostics.max_pitch_acceleration_rad_s2 = planner_config.max_pitch_acceleration_rad_s2;
-  output.prediction_age_s = std::max(
-      0.0,
-      std::chrono::duration<double>(now - input.prediction.source_receive_steady_time).count());
+  const auto SOURCE_TIME = input.prediction.source_steady_time
+                               ? input.prediction.source_steady_time
+                               : (!input.prediction.source_capture_timestamp_ns
+                                      ? std::optional(input.prediction.source_receive_steady_time)
+                                      : std::nullopt);
+  if (SOURCE_TIME && *SOURCE_TIME <= now) {
+    output.prediction_age_s =
+        std::max(0.0, std::chrono::duration<double>(now - *SOURCE_TIME).count());
+  } else {
+    output.prediction_age_s = std::numeric_limits<double>::infinity();
+  }
   output.feedback_age_s =
       feedback.valid
           ? std::max(0.0, std::chrono::duration<double>(now - feedback.timestamp).count())

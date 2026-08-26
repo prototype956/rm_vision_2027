@@ -1,6 +1,7 @@
 #include "tool/foxglove/control/control_debug_publisher.hpp"
 
 #include "core/logger.hpp"
+#include "tool/foxglove/spatial/spatial_message_encoder.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -42,6 +43,7 @@ constexpr char K_STATE_TOPIC[] = "/vision/control/state";
 constexpr char K_TRACKING_TOPIC[] = "/vision/control/tracking";
 constexpr char K_TRAJECTORY_TOPIC[] = "/vision/control/trajectory";
 constexpr char K_SCENE_TOPIC[] = "/vision/control/scene";
+constexpr char K_TRANSFORMS_TOPIC[] = "/vision/transforms";
 constexpr char K_STATE_SCHEMA[] = R"json({
   "type":"object",
   "properties":{
@@ -109,6 +111,9 @@ constexpr char K_TRACKING_SCHEMA[] = R"json({
     "runtime_actuator_age_s":{"type":["number","null"]},
     "frame_actuator_age_s":{"type":["number","null"]},
     "feedback_projection_dt_s":{"type":"number"},
+    "pose_projection_dt_s":{"type":"number"},
+    "chassis_motion_valid":{"type":"boolean"},
+    "pose_projection_status":{"type":"string"},
     "feedback_runtime_state_timestamp_ns":{"type":["integer","null"]},
     "yaw_feedback_minus_runtime_actuator":{"type":["number","null"]},
     "pitch_feedback_minus_runtime_actuator":{"type":["number","null"]},
@@ -397,6 +402,8 @@ std::string EncodeState(const ControlDebugView& value, std::uint64_t dropped_sam
       "\"control_period_s\":{},\"deadline_lateness_us\":{},\"sink_send_time_us\":{},"
       "\"runtime_actuator_age_s\":{},\"frame_actuator_age_s\":{},"
       "\"feedback_projection_dt_s\":{},"
+      "\"pose_projection_dt_s\":{},\"chassis_motion_valid\":{},"
+      "\"pose_projection_status\":\"{}\","
       "\"feedback_runtime_state_timestamp_ns\":{},"
       "\"yaw_feedback_minus_runtime_actuator\":{},"
       "\"pitch_feedback_minus_runtime_actuator\":{},"
@@ -472,7 +479,8 @@ std::string EncodeState(const ControlDebugView& value, std::uint64_t dropped_sam
       value.command_publish_succeeded, Number(value.control_period_s),
       Number(value.deadline_lateness_us), Number(value.sink_send_time_us),
       Number(value.runtime_actuator_age_s), Number(value.frame_actuator_age_s),
-      Number(value.feedback_projection_dt_s),
+      Number(value.feedback_projection_dt_s), Number(value.pose_projection_dt_s),
+      value.chassis_motion_valid, value.pose_projection_status,
       value.feedback_runtime_state_timestamp_ns != 0
           ? std::to_string(value.feedback_runtime_state_timestamp_ns)
           : "null",
@@ -600,6 +608,8 @@ std::string EncodeTracking(const ControlDebugView& value) {
       "\"prediction_age_s\":{},\"measurement_age_s\":{},"
       "\"runtime_actuator_age_s\":{},\"frame_actuator_age_s\":{},"
       "\"feedback_projection_dt_s\":{},"
+      "\"pose_projection_dt_s\":{},\"chassis_motion_valid\":{},"
+      "\"pose_projection_status\":\"{}\","
       "\"feedback_runtime_state_timestamp_ns\":{},"
       "\"yaw_feedback_minus_runtime_actuator\":{},"
       "\"pitch_feedback_minus_runtime_actuator\":{},"
@@ -700,7 +710,8 @@ std::string EncodeTracking(const ControlDebugView& value) {
       Number(value.control_period_s), Number(value.deadline_lateness_us),
       Number(value.prediction_age_s), OptionalNumber(MEASURED_VALID, value.measurement_age_s),
       Number(value.runtime_actuator_age_s), Number(value.frame_actuator_age_s),
-      Number(value.feedback_projection_dt_s),
+      Number(value.feedback_projection_dt_s), Number(value.pose_projection_dt_s),
+      value.chassis_motion_valid, value.pose_projection_status,
       value.feedback_runtime_state_timestamp_ns != 0
           ? std::to_string(value.feedback_runtime_state_timestamp_ns)
           : "null",
@@ -1067,7 +1078,7 @@ geometry::Vector3 AimPoint(const geometry::Vector3& muzzle, double yaw, double p
 }  // namespace
 
 struct ControlDebugPublisher::ChannelSet {
-  /** @brief 在指定 Context 中原子式创建三条 JSON 频道和一条 SceneUpdate 频道。 */
+  /** @brief 在指定 Context 中创建控制 JSON、SceneUpdate 和外推 TF 频道。 */
   explicit ChannelSet(const ::foxglove::Context& context) {
     state = CreateChannel(K_STATE_TOPIC, "mv.vision.ControlState", K_STATE_SCHEMA,
                           sizeof(K_STATE_SCHEMA) - 1, context);
@@ -1082,6 +1093,14 @@ struct ControlDebugPublisher::ChannelSet {
     }
     scene =
         std::make_unique<::foxglove::schemas::SceneUpdateChannel>(std::move(scene_result).value());
+    auto transforms_result =
+        ::foxglove::schemas::FrameTransformsChannel::create(K_TRANSFORMS_TOPIC, context);
+    if (!transforms_result.has_value()) {
+      throw std::runtime_error(std::string("create ") + K_TRANSFORMS_TOPIC + ": " +
+                               ::foxglove::strerror(transforms_result.error()));
+    }
+    transforms = std::make_unique<::foxglove::schemas::FrameTransformsChannel>(
+        std::move(transforms_result).value());
   }
   ~ChannelSet() { Close(); }
   /** @brief 幂等关闭当前集合内所有已创建频道。 */
@@ -1097,11 +1116,14 @@ struct ControlDebugPublisher::ChannelSet {
       trajectory->close();
     if (scene)
       scene->close();
+    if (transforms)
+      transforms->close();
   }
   std::unique_ptr<::foxglove::RawChannel> state;       ///< 分组完整控制状态 JSON。
   std::unique_ptr<::foxglove::RawChannel> tracking;    ///< 扁平时序与误差诊断 JSON。
   std::unique_ptr<::foxglove::RawChannel> trajectory;  ///< 完整参考和计划轨迹 JSON。
   std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> scene;  ///< world 系控制场景。
+  std::unique_ptr<::foxglove::schemas::FrameTransformsChannel> transforms;  ///< 控制时刻 TF。
   bool closed{false};  ///< 是否已执行频道关闭流程。
 };
 
@@ -1116,10 +1138,12 @@ ControlDebugPublisher::ControlDebugPublisher(const Config& config,
       live_tracking_id_ = live_->tracking->id();
       live_trajectory_id_ = live_->trajectory->id();
       live_scene_id_ = live_->scene->id();
+      live_transforms_id_ = live_->transforms->id();
       session_.RegisterLiveChannel(live_state_id_);
       session_.RegisterLiveChannel(live_tracking_id_);
       session_.RegisterLiveChannel(live_trajectory_id_);
       session_.RegisterLiveChannel(live_scene_id_);
+      session_.RegisterLiveChannel(live_transforms_id_);
     } catch (const std::exception& error) {
       live_.reset();
       session_.FailLiveSetup(error.what());
@@ -1158,7 +1182,8 @@ void ControlDebugPublisher::Publish(
                            (session_.Subscription(live_state_id_).subscribers > 0 ||
                             session_.Subscription(live_tracking_id_).subscribers > 0 ||
                             session_.Subscription(live_trajectory_id_).subscribers > 0 ||
-                            session_.Subscription(live_scene_id_).subscribers > 0);
+                            session_.Subscription(live_scene_id_).subscribers > 0 ||
+                            session_.Subscription(live_transforms_id_).subscribers > 0);
   if (!accepting_.load(std::memory_order_acquire) || (!live_demand && !session_.RecordingActive()))
     return;
   try {
@@ -1231,6 +1256,14 @@ void ControlDebugPublisher::Process(const modules::FireControlResult& result) no
     const ControlDebugView value(result);
     const auto state_json = EncodeState(value, dropped_.load(std::memory_order_relaxed));
     const auto tracking_json = EncodeTracking(value);
+    std::optional<::foxglove::schemas::FrameTransforms> transforms;
+    if (value.projected_kinematics) {
+      constexpr std::uint64_t NANOSECONDS_PER_SECOND = 1'000'000'000ULL;
+      const ::foxglove::schemas::Timestamp TIMESTAMP{
+          .sec = static_cast<std::uint32_t>(value.command_timestamp_ns / NANOSECONDS_PER_SECOND),
+          .nsec = static_cast<std::uint32_t>(value.command_timestamp_ns % NANOSECONDS_PER_SECOND)};
+      transforms = spatial::EncodeTransforms(*value.projected_kinematics, TIMESTAMP);
+    }
     const bool trajectory_sample =
         value.source_sequence != last_trajectory_sequence_ &&
         (last_trajectory_timestamp_ns_ == 0 ||
@@ -1271,6 +1304,11 @@ void ControlDebugPublisher::Process(const modules::FireControlResult& result) no
           session_.ReportLiveError("publish control scene", error);
         }
       }
+      if (transforms && session_.Subscription(live_transforms_id_).subscribers > 0) {
+        const auto ERROR = live_->transforms->log(*transforms, value.command_timestamp_ns);
+        if (ERROR != ::foxglove::FoxgloveError::Ok)
+          session_.ReportLiveError("publish projected transforms", ERROR);
+      }
     }
     if (recording_ && session_.RecordingActive()) {
       if (const auto error = Log(*recording_->state, state_json, value.command_timestamp_ns);
@@ -1291,6 +1329,11 @@ void ControlDebugPublisher::Process(const modules::FireControlResult& result) no
         if (scene_error != ::foxglove::FoxgloveError::Ok) {
           session_.ReportRecordingError("record control scene", scene_error);
         }
+      }
+      if (transforms) {
+        const auto ERROR = recording_->transforms->log(*transforms, value.command_timestamp_ns);
+        if (ERROR != ::foxglove::FoxgloveError::Ok)
+          session_.ReportRecordingError("record projected transforms", ERROR);
       }
     }
   } catch (const std::exception& error) {

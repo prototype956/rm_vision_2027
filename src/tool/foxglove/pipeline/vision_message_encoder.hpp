@@ -20,7 +20,6 @@ struct TopicDemand {
   bool lightbar_annotations{false};            ///< 是否需要独立灯条二维标注。
   bool lightbar_stats{false};                  ///< 是否需要灯条检测与融合指标。
   bool debug_stats{false};                     ///< 是否需要发布流水线指标。
-  bool transforms{false};                      ///< 是否需要同帧 TF。
   bool calibration{false};                     ///< 是否需要相机标定。
   bool frustum{false};                         ///< 是否需要三维视锥。
   bool ground_truth{false};                    ///< 是否需要仿真三维真值。
@@ -66,7 +65,6 @@ struct PreparedFrame {
   std::optional<::foxglove::schemas::ImageAnnotations> lightbar_annotations;  ///< 灯条标注。
   std::optional<std::string> lightbar_stats_json;  ///< 灯条检测与融合指标。
   std::optional<std::string> debug_stats_json;     ///< 符合固定 Schema 的流水线指标。
-  std::optional<::foxglove::schemas::FrameTransforms> transforms;     ///< 同帧 TF 树。
   std::optional<::foxglove::schemas::CameraCalibration> calibration;  ///< 同帧标定。
   std::optional<::foxglove::schemas::SceneUpdate> frustum;            ///< 三维视锥图元。
   std::optional<::foxglove::schemas::SceneUpdate> ground_truth;       ///< 三维仿真真值。

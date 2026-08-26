@@ -13,6 +13,8 @@
 #include "modules/gimbal_trajectory_planner/gimbal_trajectory_planner_config.hpp"
 #include "runtime/control_runtime.hpp"
 #include "runtime/runtime_diagnostics_sink.hpp"
+#include "runtime/runtime_error_policy.hpp"
+#include "runtime/runtime_supervisor.hpp"
 #include "runtime/vision_pipeline.hpp"
 #include "runtime/vision_runtime.hpp"
 #include "tool/debug/debug_window.hpp"
@@ -67,6 +69,12 @@ class FoxgloveDiagnosticsSink final : public runtime::IRuntimeDiagnosticsSink {
     publisher_.PublishControl(output, diagnostics);
   }
 
+  [[nodiscard]] runtime::RuntimeDiagnosticsHealth SnapshotHealth() const noexcept override {
+    const auto STATS = publisher_.SnapshotStats();
+    return {.available = publisher_.IsRunning(),
+            .error_count = STATS.encoding_errors + STATS.live_errors + STATS.recording_errors};
+  }
+
  private:
   tool::foxglove::VisionDebugPublisher& publisher_;
 };
@@ -99,20 +107,6 @@ CameraSelection LoadCameraSelection(const std::filesystem::path& config_root) {
   return CameraSelection{BACKEND, ConfigLoader::ResolvePath(config_root, CONFIG_FILE)};
 }
 
-int ExitCodeFor(runtime::VisionRunStatus status) noexcept {
-  switch (status) {
-    case runtime::VisionRunStatus::NORMAL:
-      return 0;
-    case runtime::VisionRunStatus::CAMERA_FAILURE:
-      return 4;
-    case runtime::VisionRunStatus::PIPELINE_FAILURE:
-      return 5;
-    case runtime::VisionRunStatus::CONTROL_FAILURE:
-      return 7;
-  }
-  return 1;
-}
-
 }  // namespace
 
 int Run() {
@@ -123,6 +117,10 @@ int Run() {
     std::signal(SIGINT, HandleStopSignal);
     std::signal(SIGTERM, HandleStopSignal);
 
+    const auto ERROR_POLICY_YAML =
+        ConfigLoader::LoadFile(CONFIG_ROOT / "runtime/error_policy.yaml", 1);
+    runtime::RuntimeSupervisor supervisor(runtime::ParseRuntimeErrorPolicy(ERROR_POLICY_YAML));
+
     runtime::VisionPipelineConfig pipeline_config;
     try {
       const auto DETECTOR_YAML =
@@ -130,6 +128,9 @@ int Run() {
       pipeline_config.detector = modules::ParseArmorDetectorConfig(DETECTOR_YAML, PROJECT_ROOT);
     } catch (const std::exception& error) {
       MV_LOG_ERROR("App", "armor detector initialization failed: {}", error.what());
+      return 2;
+    } catch (...) {
+      MV_LOG_ERROR("App", "armor detector initialization failed: unknown exception");
       return 2;
     }
 
@@ -153,6 +154,9 @@ int Run() {
     } catch (const std::exception& error) {
       MV_LOG_ERROR("App", "armor detector initialization failed: {}", error.what());
       return 2;
+    } catch (...) {
+      MV_LOG_ERROR("App", "armor detector initialization failed: unknown exception");
+      return 2;
     }
 
     std::unique_ptr<tool::simulation_evaluation::SimulationEvaluator> simulation_evaluator;
@@ -163,8 +167,14 @@ int Run() {
           tool::simulation_evaluation::ParseSimulationEvaluationConfig(EVALUATION_YAML),
           pipeline_config.pnp);
     } catch (const std::exception& error) {
+      static_cast<void>(
+          supervisor.Report(runtime::RuntimeFaultCode::EVALUATION_INIT_FAILURE, error.what()));
       MV_LOG_WARN("App", "simulation evaluation disabled after initialization failure: {}",
                   error.what());
+    } catch (...) {
+      static_cast<void>(supervisor.Report(runtime::RuntimeFaultCode::EVALUATION_INIT_FAILURE,
+                                          "unknown evaluation initialization exception"));
+      MV_LOG_WARN("App", "simulation evaluation disabled after unknown initialization failure");
     }
 
     const auto CAMERA_SELECTION = LoadCameraSelection(CONFIG_ROOT);
@@ -172,15 +182,34 @@ int Run() {
     auto camera = hal::CreateCamera(CAMERA_SELECTION.backend);
     MV_LOG_INFO("Config", "camera backend={} config={}", CAMERA_SELECTION.backend,
                 CAMERA_SELECTION.config_path.string());
-    if (!camera->Open(CAMERA_CONFIG)) {
+    bool camera_opened = false;
+    try {
+      camera_opened = camera->Open(CAMERA_CONFIG);
+    } catch (const std::exception& error) {
+      MV_LOG_ERROR("App", "{} camera open failed: {}", CAMERA_SELECTION.backend, error.what());
+      return 3;
+    } catch (...) {
+      MV_LOG_ERROR("App", "{} camera open failed: unknown exception", CAMERA_SELECTION.backend);
+      return 3;
+    }
+    if (!camera_opened) {
       MV_LOG_ERROR("App", "{} camera open failed", CAMERA_SELECTION.backend);
       return 3;
     }
 
     const bool PREVIEW_ENABLED = LoadDebugWindowEnabled(CONFIG_ROOT / "tool/debug_window.yaml");
     std::unique_ptr<tool::DebugWindow> window;
-    if (PREVIEW_ENABLED)
-      window = std::make_unique<tool::DebugWindow>(K_WINDOW_NAME);
+    if (PREVIEW_ENABLED) {
+      try {
+        window = std::make_unique<tool::DebugWindow>(K_WINDOW_NAME);
+      } catch (const std::exception& error) {
+        static_cast<void>(
+            supervisor.Report(runtime::RuntimeFaultCode::DEBUG_WINDOW_INIT_FAILURE, error.what()));
+      } catch (...) {
+        static_cast<void>(supervisor.Report(runtime::RuntimeFaultCode::DEBUG_WINDOW_INIT_FAILURE,
+                                            "unknown debug window initialization exception"));
+      }
+    }
 
     std::unique_ptr<tool::foxglove::VisionDebugPublisher> foxglove_publisher;
     try {
@@ -190,11 +219,22 @@ int Run() {
       if (foxglove_config.enabled) {
         foxglove_publisher =
             std::make_unique<tool::foxglove::VisionDebugPublisher>(std::move(foxglove_config));
-        if (!foxglove_publisher->IsRunning())
+        if (!foxglove_publisher->IsRunning()) {
+          static_cast<void>(
+              supervisor.Report(runtime::RuntimeFaultCode::DIAGNOSTICS_INIT_FAILURE,
+                                "Foxglove configured but no live or recording sink started"));
           MV_LOG_WARN("App", "Foxglove configured but no live or recording sink started");
+        }
       }
     } catch (const std::exception& error) {
+      static_cast<void>(
+          supervisor.Report(runtime::RuntimeFaultCode::DIAGNOSTICS_INIT_FAILURE, error.what()));
       MV_LOG_ERROR("App", "Foxglove disabled after initialization failure: {}", error.what());
+      foxglove_publisher.reset();
+    } catch (...) {
+      static_cast<void>(supervisor.Report(runtime::RuntimeFaultCode::DIAGNOSTICS_INIT_FAILURE,
+                                          "unknown Foxglove initialization exception"));
+      MV_LOG_ERROR("App", "Foxglove disabled after unknown initialization failure");
       foxglove_publisher.reset();
     }
 
@@ -207,24 +247,42 @@ int Run() {
       const auto FIRE_YAML = ConfigLoader::LoadFile(CONFIG_ROOT / "modules/fire_control.yaml");
       const auto PLANNER_YAML =
           ConfigLoader::LoadFile(CONFIG_ROOT / "modules/gimbal_trajectory_planner.yaml");
+      const auto FIRE_CONFIG = modules::ParseFireControlConfig(FIRE_YAML);
+      const auto PLANNER_CONFIG = modules::ParseGimbalTrajectoryPlannerConfig(PLANNER_YAML);
       auto command_sink = std::make_unique<hal::TalosGimbalCommandSink>();
       if (!command_sink->Open(CAMERA_CONFIG)) {
         MV_LOG_ERROR("App", "Talos command sink initialization failed");
         return 6;
       }
-      control_runtime = std::make_unique<runtime::ControlRuntime>(
-          modules::ParseFireControlConfig(FIRE_YAML),
-          modules::ParseGimbalTrajectoryPlannerConfig(PLANNER_YAML), std::move(command_sink),
-          diagnostics_sink.get());
-      control_runtime->Start();
+      try {
+        control_runtime = std::make_unique<runtime::ControlRuntime>(
+            FIRE_CONFIG, PLANNER_CONFIG, std::move(command_sink), diagnostics_sink.get(),
+            supervisor);
+        control_runtime->Start();
+      } catch (const std::exception& error) {
+        static_cast<void>(
+            supervisor.Report(runtime::RuntimeFaultCode::CONTROL_THREAD_EXCEPTION, error.what()));
+        MV_LOG_ERROR("App", "Talos control runtime initialization failed: {}", error.what());
+        return 7;
+      } catch (...) {
+        static_cast<void>(supervisor.Report(runtime::RuntimeFaultCode::CONTROL_THREAD_EXCEPTION,
+                                            "unknown control runtime initialization exception"));
+        MV_LOG_ERROR("App", "Talos control runtime initialization failed: unknown exception");
+        return 7;
+      }
       MV_LOG_INFO("Control", "Talos 100 Hz trajectory planning and fire control started");
     }
 
     runtime::VisionRuntime vision_runtime(*camera, *pipeline, control_runtime.get(), window.get(),
-                                          diagnostics_sink.get(), simulation_evaluator.get());
-    return ExitCodeFor(vision_runtime.Run([] { return g_stop_requested != 0; }));
+                                          diagnostics_sink.get(), simulation_evaluator.get(),
+                                          supervisor);
+    return runtime::RuntimeExitCode(
+        vision_runtime.Run([] { return g_stop_requested != 0; }).reason);
   } catch (const std::exception& error) {
     std::fprintf(stderr, "[App] FATAL: %s\n", error.what());
+    return 1;
+  } catch (...) {
+    std::fprintf(stderr, "[App] FATAL: unknown exception\n");
     return 1;
   }
 }

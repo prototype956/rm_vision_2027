@@ -1,5 +1,6 @@
 #pragma once
 
+#include "frame/frame_types.hpp"
 #include "hal/gimbal/gimbal_types.hpp"
 #include "modules/armor_predictor/armor_prediction_output.hpp"
 #include "modules/fire_control/fire_control_config.hpp"
@@ -70,9 +71,11 @@ struct ArmorSelectionSnapshot {
 /** @brief 单次火控计算所需的同一预测快照、坐标变换和控制使能状态。 */
 struct ControlInputSnapshot {
   ArmorPredictionOutput prediction;  ///< 目标跟踪器输出的不可变正式预测快照。
-  geometry::RigidTransform world_t_gimbal;   ///< gimbal 到 world 的同帧变换。
-  geometry::RigidTransform gimbal_t_muzzle;  ///< muzzle 到 gimbal 的同帧变换。
-  std::optional<hal::GimbalActuatorTelemetry> frame_actuator;  ///< 相机帧内同步遥测。
+  geometry::RigidTransform world_t_gimbal;           ///< gimbal 到 world 的同帧变换。
+  geometry::RigidTransform gimbal_t_camera_optical;  ///< camera_optical 到 gimbal 外参。
+  geometry::RigidTransform gimbal_t_muzzle;          ///< muzzle 到 gimbal 的同帧变换。
+  std::optional<frame::ChassisMotionObservation> chassis_motion;  ///< 同帧底盘局部运动。
+  std::optional<hal::GimbalActuatorTelemetry> frame_actuator;     ///< 相机帧内同步遥测。
   bool external_control_enabled{false};  ///< Talos 是否已启用外部云台控制。
 };
 
@@ -97,6 +100,10 @@ struct FireControlDiagnostics {
   double runtime_actuator_age_s{0.0};
   double frame_actuator_age_s{0.0};
   double feedback_projection_dt_s{0.0};
+  double pose_projection_dt_s{0.0};
+  bool chassis_motion_valid{false};
+  std::string pose_projection_status;
+  std::optional<frame::FrameKinematics> projected_kinematics;
   std::uint64_t feedback_runtime_state_timestamp_ns{0};
   bool feedback_runtime_comparison_valid{false};
   double yaw_feedback_minus_runtime_actuator{0.0};

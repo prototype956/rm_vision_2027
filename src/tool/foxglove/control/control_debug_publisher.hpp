@@ -32,7 +32,7 @@ struct FeedbackHistorySample {
  */
 class ControlDebugPublisher final {
  public:
-  /** @brief 按会话中已启用的实时和录制上下文创建四组控制诊断频道。 */
+  /** @brief 按会话中已启用的实时和录制上下文创建控制诊断频道。 */
   ControlDebugPublisher(const Config& config, runtime::FoxgloveSession& session);
   ~ControlDebugPublisher();
 
@@ -50,7 +50,7 @@ class ControlDebugPublisher final {
   [[nodiscard]] std::uint64_t DroppedSamples() const noexcept;
 
  private:
-  struct ChannelSet;  ///< 同一 Foxglove Context 下四个控制诊断频道的 RAII 集合。
+  struct ChannelSet;  ///< 同一 Foxglove Context 下控制诊断频道的 RAII 集合。
   struct QueueSample {
     ::mv::runtime::ControlCycleOutput output;
     ::mv::runtime::ControlCycleDiagnostics diagnostics;
@@ -70,6 +70,7 @@ class ControlDebugPublisher final {
   std::uint64_t live_tracking_id_{0};      ///< 实时 tracking 频道订阅查询 ID。
   std::uint64_t live_trajectory_id_{0};    ///< 实时 trajectory 频道订阅查询 ID。
   std::uint64_t live_scene_id_{0};         ///< 实时 scene 频道订阅查询 ID。
+  std::uint64_t live_transforms_id_{0};    ///< 实时短时外推 TF 频道订阅查询 ID。
   std::mutex mutex_;                       ///< 保护生产者—消费者队列。
   std::condition_variable condition_;      ///< 新样本或停止信号通知。
   std::deque<QueueSample> queue_;  ///< 按到达顺序分别保存正式输出与诊断输出。

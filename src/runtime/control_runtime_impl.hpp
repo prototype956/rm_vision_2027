@@ -4,6 +4,7 @@
 #include "modules/fire_control/fire_control.hpp"
 #include "modules/fire_control/gimbal_feedback_estimator.hpp"
 #include "runtime/control_runtime.hpp"
+#include "runtime/runtime_supervisor.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -25,15 +26,15 @@ class ControlRuntimeImpl final {
   ControlRuntimeImpl(modules::FireControlConfig fire_config,
                      modules::GimbalTrajectoryPlannerConfig planner_config,
                      std::unique_ptr<hal::IGimbalCommandSink> sink,
-                     IRuntimeDiagnosticsSink* diagnostics);
+                     IRuntimeDiagnosticsSink* diagnostics, RuntimeSupervisor& supervisor);
   ~ControlRuntimeImpl();
 
   void Start();
   void Update(const modules::ArmorPredictionOutput& prediction,
               const frame::FrameKinematics& kinematics,
+              const std::optional<frame::ChassisMotionObservation>& chassis_motion,
               const std::optional<hal::GimbalActuatorTelemetry>& gimbal_actuator);
   void Stop() noexcept;
-  [[nodiscard]] bool Failed() const noexcept;
 
  private:
   struct LoopState {
@@ -59,8 +60,10 @@ class ControlRuntimeImpl final {
   void ProcessSnapshot(const std::shared_ptr<const modules::ControlInputSnapshot>& snapshot,
                        LoopState& state, std::chrono::steady_clock::time_point now,
                        const CycleTiming& timing);
+  [[nodiscard]] RuntimeDecision ObserveCommandChannel(
+      bool sink_healthy, bool send_succeeded, std::chrono::steady_clock::time_point now) noexcept;
   void Loop() noexcept;
-  void SendStop() noexcept;
+  bool SendStop() noexcept;
 
   const std::chrono::steady_clock::duration PERIOD;
   const double PLANNER_DT_S;
@@ -68,6 +71,7 @@ class ControlRuntimeImpl final {
   modules::GimbalFeedbackEstimator feedback_estimator_;
   std::unique_ptr<hal::IGimbalCommandSink> sink_;
   IRuntimeDiagnosticsSink* diagnostics_{nullptr};
+  RuntimeSupervisor& supervisor_;
   std::shared_ptr<const modules::ControlInputSnapshot> latest_snapshot_;
   std::deque<hal::GimbalCommand> sent_commands_;
   std::vector<modules::PlannedGimbalPoint> last_successful_trajectory_;
@@ -81,7 +85,6 @@ class ControlRuntimeImpl final {
   std::string output_projection_clear_reason_;
   std::thread thread_;
   std::atomic<bool> running_{false};
-  std::atomic<bool> failed_{false};
 };
 
 }  // namespace mv::runtime

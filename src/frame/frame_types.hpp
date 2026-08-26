@@ -14,6 +14,8 @@ namespace mv::frame {
 /** @brief 一帧图像的采集时间、顺序和数据源健康标识。 */
 struct FrameStamp {
   std::chrono::steady_clock::time_point receive_steady_time{};  ///< HAL 收帧单调时钟。
+  std::optional<std::chrono::steady_clock::time_point>
+      capture_steady_time;  ///< 数据源采集时刻映射到本机单调时钟。
   std::optional<std::uint64_t> capture_timestamp_ns;  ///< 数据源采集 Unix epoch 纳秒时间。
   std::uint64_t sequence{0};               ///< 本次数据源 Open() 后递增的帧序号。
   std::uint64_t source_invalid_frames{0};  ///< 数据源累计拒绝的无效帧数。
@@ -41,6 +43,15 @@ struct FrameKinematics {
   geometry::RigidTransform world_t_gimbal;           ///< gimbal 到 world 的变换。
   geometry::RigidTransform gimbal_t_camera_optical;  ///< camera_optical 到 gimbal 的变换。
   geometry::RigidTransform gimbal_t_muzzle;          ///< muzzle 到 gimbal 的变换。
+};
+
+/** @brief 与图像同帧的底盘局部运动观测，体坐标系为前、左、上。 */
+struct ChassisMotionObservation {
+  double yaw_rad{0.0};  ///< 采集时刻底盘 world 偏航角。
+  Eigen::Vector2d velocity_body_mps{Eigen::Vector2d::Zero()};  ///< 体系前向、左向线速度。
+  double yaw_velocity_rad_s{0.0};                              ///< 底盘绕体系 +Z 角速度。
+  std::uint64_t source_sequence{0};                            ///< 所属图像帧序号。
+  std::uint64_t source_timestamp_ns{0};  ///< 所属采集快照 Unix epoch 纳秒。
 };
 
 /** @brief 算法消费的完整同帧相机模型和平台运动学只读视图。 */

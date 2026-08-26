@@ -16,13 +16,101 @@
 namespace mv::runtime {
 namespace {
 
+struct ProjectedKinematics {
+  std::optional<frame::FrameKinematics> value;
+  double dt_s{0.0};
+  bool chassis_motion_valid{false};
+  const char* status{"not_projected"};
+};
+
 std::uint64_t SystemNowNs() noexcept {
   return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                         std::chrono::system_clock::now().time_since_epoch())
                                         .count());
 }
 
+ProjectedKinematics ProjectKinematics(const modules::ControlInputSnapshot& input,
+                                      const hal::GimbalFeedback& feedback,
+                                      std::chrono::steady_clock::time_point now,
+                                      double max_age_s) noexcept {
+  const auto SOURCE_TIME = input.prediction.source_steady_time
+                               ? input.prediction.source_steady_time
+                               : (!input.prediction.source_capture_timestamp_ns
+                                      ? std::optional(input.prediction.source_receive_steady_time)
+                                      : std::nullopt);
+  if (!SOURCE_TIME || *SOURCE_TIME > now) {
+    ProjectedKinematics result;
+    result.status = "invalid_capture_time";
+    return result;
+  }
+  const double DT_S = std::chrono::duration<double>(now - *SOURCE_TIME).count();
+  if (!std::isfinite(DT_S) || DT_S > max_age_s) {
+    ProjectedKinematics result;
+    result.dt_s = DT_S;
+    result.status = "stale_prediction";
+    return result;
+  }
+  if (!feedback.valid || feedback.timestamp == std::chrono::steady_clock::time_point{} ||
+      feedback.timestamp > now || !std::isfinite(feedback.yaw) || !std::isfinite(feedback.pitch)) {
+    ProjectedKinematics result;
+    result.dt_s = DT_S;
+    result.status = "invalid_feedback";
+    return result;
+  }
+  const double FEEDBACK_AGE_S = std::chrono::duration<double>(now - feedback.timestamp).count();
+  if (!std::isfinite(FEEDBACK_AGE_S) || FEEDBACK_AGE_S > max_age_s) {
+    ProjectedKinematics result;
+    result.dt_s = DT_S;
+    result.status = "stale_feedback";
+    return result;
+  }
+
+  frame::FrameKinematics projected{.world_t_gimbal = input.world_t_gimbal,
+                                   .gimbal_t_camera_optical = input.gimbal_t_camera_optical,
+                                   .gimbal_t_muzzle = input.gimbal_t_muzzle};
+  projected.world_t_gimbal.rotation =
+      Eigen::AngleAxisd(feedback.yaw, geometry::Vector3::UnitZ()) *
+      Eigen::AngleAxisd(-feedback.pitch, geometry::Vector3::UnitY());
+
+  bool chassis_valid = false;
+  if (input.chassis_motion && std::isfinite(input.chassis_motion->yaw_rad) &&
+      input.chassis_motion->velocity_body_mps.allFinite()) {
+    const double COS_YAW = std::cos(input.chassis_motion->yaw_rad);
+    const double SIN_YAW = std::sin(input.chassis_motion->yaw_rad);
+    const double FORWARD = input.chassis_motion->velocity_body_mps.x();
+    const double LEFT = input.chassis_motion->velocity_body_mps.y();
+    projected.world_t_gimbal.translation.x() += (COS_YAW * FORWARD - SIN_YAW * LEFT) * DT_S;
+    projected.world_t_gimbal.translation.y() += (SIN_YAW * FORWARD + COS_YAW * LEFT) * DT_S;
+    chassis_valid = true;
+  }
+  if (!projected.world_t_gimbal.translation.allFinite() ||
+      !projected.world_t_gimbal.rotation.coeffs().allFinite()) {
+    ProjectedKinematics result;
+    result.dt_s = DT_S;
+    result.status = "non_finite_projection";
+    return result;
+  }
+  return {.value = projected,
+          .dt_s = DT_S,
+          .chassis_motion_valid = chassis_valid,
+          .status = chassis_valid ? "projected" : "position_held_no_chassis_motion"};
+}
+
 }  // namespace
+
+RuntimeDecision ControlRuntimeImpl::ObserveCommandChannel(
+    bool sink_healthy, bool send_succeeded, std::chrono::steady_clock::time_point now) noexcept {
+  if (!sink_healthy) {
+    return supervisor_.ReportAt(RuntimeFaultCode::COMMAND_SINK_UNHEALTHY,
+                                "Talos command heartbeat is unhealthy", now);
+  }
+  if (!send_succeeded) {
+    return supervisor_.ReportAt(RuntimeFaultCode::COMMAND_SEND_FAILED,
+                                "Talos command publication failed", now);
+  }
+  supervisor_.RecoverAt(RuntimeComponent::COMMAND_SINK, now);
+  return {};
+}
 
 void ControlRuntimeImpl::ProcessSnapshot(
     const std::shared_ptr<const modules::ControlInputSnapshot>& snapshot, LoopState& state,
@@ -63,11 +151,13 @@ void ControlRuntimeImpl::ProcessSnapshot(
 
   bool measurement_fresh = false;
   if (snapshot->prediction.sequence != state.observed_sequence) {
-    feedback_estimator_.ObserveMeasurement(snapshot->prediction.sequence,
-                                           snapshot->prediction.source_receive_steady_time,
-                                           snapshot->world_t_gimbal, snapshot->frame_actuator);
+    if (snapshot->prediction.source_steady_time) {
+      feedback_estimator_.ObserveMeasurement(snapshot->prediction.sequence,
+                                             *snapshot->prediction.source_steady_time,
+                                             snapshot->world_t_gimbal, snapshot->frame_actuator);
+      measurement_fresh = true;
+    }
     state.observed_sequence = snapshot->prediction.sequence;
-    measurement_fresh = true;
     state.matched_command =
         MatchCommand(snapshot->prediction.source_capture_timestamp_ns, snapshot->frame_actuator);
   }
@@ -79,6 +169,10 @@ void ControlRuntimeImpl::ProcessSnapshot(
   }
   const auto FEEDBACK = feedback_estimator_.Estimate(now);
   const auto FEEDBACK_SOURCE = feedback_estimator_.Source();
+  const auto PROJECTED =
+      ProjectKinematics(input, FEEDBACK, now, fire_control_.Config().max_prediction_age_s);
+  if (PROJECTED.value)
+    input.world_t_gimbal = PROJECTED.value->world_t_gimbal;
   auto result = fire_control_.Step(input, FEEDBACK, now);
   auto& output = result.output;
   auto& diagnostics = result.diagnostics;
@@ -100,6 +194,10 @@ void ControlRuntimeImpl::ProcessSnapshot(
   diagnostics.frame_actuator_telemetry = snapshot->frame_actuator;
   diagnostics.runtime_actuator_age_s = feedback_estimator_.RuntimeActuatorAgeS();
   diagnostics.feedback_projection_dt_s = feedback_estimator_.ProjectionDtS();
+  diagnostics.pose_projection_dt_s = PROJECTED.dt_s;
+  diagnostics.chassis_motion_valid = PROJECTED.chassis_motion_valid;
+  diagnostics.pose_projection_status = PROJECTED.status;
+  diagnostics.projected_kinematics = PROJECTED.value;
   diagnostics.feedback_runtime_state_timestamp_ns = feedback_estimator_.RuntimeStateTimestampNs();
   if (snapshot->frame_actuator && snapshot->frame_actuator->valid &&
       snapshot->frame_actuator->state_timestamp_ns != 0 &&
@@ -241,6 +339,12 @@ void ControlRuntimeImpl::ProcessSnapshot(
   }
   if (diagnostics_)
     diagnostics_->PublishControl({.fire_control = output}, {.fire_control = diagnostics});
+  const auto CHANNEL_DECISION = ObserveCommandChannel(SINK_HEALTHY, SEND_SUCCEEDED, now);
+  if (CHANNEL_DECISION.request_safe_stop)
+    SendStop();
+  if (CHANNEL_DECISION.termination) {
+    running_.store(false, std::memory_order_release);
+  }
 }
 
 void ControlRuntimeImpl::Loop() noexcept {
@@ -260,7 +364,11 @@ void ControlRuntimeImpl::Loop() noexcept {
             snapshot, state, NOW,
             {.period_s = CONTROL_PERIOD_S, .deadline_lateness_us = DEADLINE_LATENESS_US});
       } else {
-        SendStop();
+        const bool SINK_HEALTHY = sink_->IsHealthy();
+        const bool STOP_SENT = SendStop();
+        const auto DECISION = ObserveCommandChannel(SINK_HEALTHY, STOP_SENT, NOW);
+        if (DECISION.termination)
+          running_.store(false, std::memory_order_release);
       }
 
       next += PERIOD;
@@ -270,14 +378,15 @@ void ControlRuntimeImpl::Loop() noexcept {
       std::this_thread::sleep_until(next);
     }
   } catch (const std::exception& error) {
-    failed_.store(true, std::memory_order_release);
     running_.store(false, std::memory_order_release);
     SendStop();
+    static_cast<void>(supervisor_.Report(RuntimeFaultCode::CONTROL_THREAD_EXCEPTION, error.what()));
     MV_LOG_ERROR("Control", "100 Hz control thread stopped after exception: {}", error.what());
   } catch (...) {
-    failed_.store(true, std::memory_order_release);
     running_.store(false, std::memory_order_release);
     SendStop();
+    static_cast<void>(supervisor_.Report(RuntimeFaultCode::CONTROL_THREAD_EXCEPTION,
+                                         "unknown control thread exception"));
     MV_LOG_ERROR("Control", "100 Hz control thread stopped after unknown exception");
   }
 }

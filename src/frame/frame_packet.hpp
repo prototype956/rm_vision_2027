@@ -14,9 +14,10 @@ namespace mv::frame {
  * 所有可选成员只能与 capture 来自同一个采集快照，禁止跨帧组合。
  */
 struct FramePacket {
-  CapturedFrame capture;                      ///< 必需的图像和采集标识。
-  std::optional<CameraModel> camera_model;    ///< 同帧相机模型。
-  std::optional<FrameKinematics> kinematics;  ///< 同帧平台运动学。
+  CapturedFrame capture;                                   ///< 必需的图像和采集标识。
+  std::optional<CameraModel> camera_model;                 ///< 同帧相机模型。
+  std::optional<FrameKinematics> kinematics;               ///< 同帧平台运动学。
+  std::optional<ChassisMotionObservation> chassis_motion;  ///< 同帧底盘局部运动。
   std::optional<hal::GimbalActuatorTelemetry> gimbal_actuator;  ///< 同帧执行器状态。
   std::optional<simulation::SimulationFrameData> simulation;    ///< 同帧仿真数据。
 };

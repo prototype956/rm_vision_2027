@@ -13,7 +13,6 @@ constexpr char K_ARMOR_STATS_TOPIC[] = "/vision/armor/stats";
 constexpr char K_LIGHTBAR_ANNOTATIONS_TOPIC[] = "/vision/lightbars/annotations";
 constexpr char K_LIGHTBAR_STATS_TOPIC[] = "/vision/lightbars/stats";
 constexpr char K_DEBUG_STATS_TOPIC[] = "/vision/debug/stats";
-constexpr char K_TRANSFORMS_TOPIC[] = "/vision/transforms";
 constexpr char K_CALIBRATION_TOPIC[] = "/vision/camera/calibration";
 constexpr char K_FRUSTUM_TOPIC[] = "/vision/camera/frustum";
 constexpr char K_GROUND_TRUTH_TOPIC[] = "/simulation/ground_truth";
@@ -240,8 +239,6 @@ VisionChannelSet::VisionChannelSet(const ::foxglove::Context& context) {
                        K_LIGHTBAR_STATS_SCHEMA, sizeof(K_LIGHTBAR_STATS_SCHEMA) - 1, context);
   debug_stats_ = CreateRawChannel(K_DEBUG_STATS_TOPIC, "mv.vision.DebugPipelineStats",
                                   K_DEBUG_STATS_SCHEMA, sizeof(K_DEBUG_STATS_SCHEMA) - 1, context);
-  transforms_ = CreateSchemaChannel<::foxglove::schemas::FrameTransformsChannel>(
-      K_TRANSFORMS_TOPIC, context, "create transforms channel");
   calibration_ = CreateSchemaChannel<::foxglove::schemas::CameraCalibrationChannel>(
       K_CALIBRATION_TOPIC, context, "create calibration channel");
   frustum_ = CreateSchemaChannel<::foxglove::schemas::SceneUpdateChannel>(K_FRUSTUM_TOPIC, context,
@@ -297,7 +294,6 @@ ChannelIds VisionChannelSet::Ids() const noexcept {
           .lightbar_annotations = lightbar_annotations_->id(),
           .lightbar_stats = lightbar_stats_->id(),
           .debug_stats = debug_stats_->id(),
-          .transforms = transforms_->id(),
           .calibration = calibration_->id(),
           .frustum = frustum_->id(),
           .ground_truth = ground_truth_->id(),
@@ -352,11 +348,6 @@ ChannelPublishResult VisionChannelSet::Publish(const PreparedFrame& frame,
     const auto* data = reinterpret_cast<const std::byte*>(frame.debug_stats_json->data());
     AddError(result, VisionTopic::DEBUG_STATS,
              debug_stats_->log(data, frame.debug_stats_json->size(), frame.epoch_nanos));
-  }
-  if (demand.transforms && frame.transforms.has_value()) {
-    result.attempted = true;
-    AddError(result, VisionTopic::TRANSFORMS,
-             transforms_->log(*frame.transforms, frame.epoch_nanos));
   }
   if (demand.calibration && frame.calibration.has_value()) {
     result.attempted = true;
@@ -473,8 +464,6 @@ void VisionChannelSet::Close() noexcept {
     lightbar_stats_->close();
   if (debug_stats_)
     debug_stats_->close();
-  if (transforms_)
-    transforms_->close();
   if (calibration_)
     calibration_->close();
   if (frustum_)
@@ -527,8 +516,6 @@ const char* TopicName(VisionTopic topic) noexcept {
       return "lightbar_stats";
     case VisionTopic::DEBUG_STATS:
       return "debug_stats";
-    case VisionTopic::TRANSFORMS:
-      return "transforms";
     case VisionTopic::CALIBRATION:
       return "calibration";
     case VisionTopic::FRUSTUM:

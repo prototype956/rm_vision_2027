@@ -16,6 +16,7 @@ namespace mv::runtime {
 
 class ControlRuntimeImpl;
 class IRuntimeDiagnosticsSink;
+class RuntimeSupervisor;
 
 /** @brief 以固定周期消费最新视觉快照并向云台命令后端发布控制结果。 */
 class ControlRuntime final {
@@ -23,7 +24,7 @@ class ControlRuntime final {
   ControlRuntime(modules::FireControlConfig fire_config,
                  modules::GimbalTrajectoryPlannerConfig planner_config,
                  std::unique_ptr<hal::IGimbalCommandSink> sink,
-                 IRuntimeDiagnosticsSink* diagnostics);
+                 IRuntimeDiagnosticsSink* diagnostics, RuntimeSupervisor& supervisor);
   ~ControlRuntime();
 
   ControlRuntime(const ControlRuntime&) = delete;
@@ -36,11 +37,10 @@ class ControlRuntime final {
   /** @brief 原子替换控制线程下一周期读取的同帧预测与空间快照。 */
   void Update(const modules::ArmorPredictionOutput& prediction,
               const frame::FrameKinematics& kinematics,
+              const std::optional<frame::ChassisMotionObservation>& chassis_motion,
               const std::optional<hal::GimbalActuatorTelemetry>& gimbal_actuator);
   /** @brief 停止并等待控制线程，随后向命令后端发送停止命令。 */
   void Stop() noexcept;
-  /** @brief 查询控制线程是否因未处理异常安全退出。 */
-  [[nodiscard]] bool Failed() const noexcept;
 
  private:
   std::unique_ptr<ControlRuntimeImpl> impl_;

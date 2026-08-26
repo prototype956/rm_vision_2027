@@ -79,11 +79,21 @@ struct alignas(64) CameraCalibrationMeta {
   std::uint8_t pad[24];        ///< ABI 填充，禁止复用。
 };
 
-// 当前 HAL 尚未消费的协议区域仍必须完整占位，以保持与发布端
-// #[repr(C, align(...))] 结构的偏移和总尺寸一致。
-/** @brief 预留的底盘观测协议区。 */
+/** @brief 与单帧图像严格同步的底盘局部运动观测。 */
 struct alignas(64) ChassisObservationMeta {
-  std::uint8_t bytes[128];
+  std::uint64_t frame_sequence;     ///< 所属图像帧序号。
+  std::uint64_t timestamp_ns;       ///< 所属采集快照 Unix epoch 纳秒。
+  float dt_s;                       ///< 发布端运动学更新周期。
+  float velocity_body_mps[2];       ///< 体系前向、左向线速度。
+  float yaw_velocity_rad_s;         ///< 绕体系 +Z 角速度。
+  float wheel_linear_mps[4];        ///< 四轮线速度。
+  float wheel_angular_rad_s[4];     ///< 四轮角速度。
+  float acceleration_body_mps2[2];  ///< 体系前向、左向线加速度。
+  float yaw_acceleration_rad_s2;    ///< 绕体系 +Z 角加速度。
+  float rpy_rad[3];                 ///< 底盘体系相对 world 的滚转、俯仰、偏航角。
+  float gyro_xyz_rad_s[3];          ///< 体系三轴角速度。
+  float accel_xyz_mps2[3];          ///< 体系三轴线加速度。
+  std::uint8_t pad[16];             ///< ABI 填充，禁止复用。
 };
 
 /** @brief 仿真器在 world 坐标系中给出的单个机器人真值。 */
@@ -158,7 +168,7 @@ struct alignas(64) CapturedFrameMeta {
   RigidTransformF32 gimbal_t_camera_optical;       ///< camera_optical 到 gimbal 的变换。
   RigidTransformF32 gimbal_t_muzzle;               ///< muzzle 到 gimbal 的变换。
   ProjectileStatisticsMeta projectile_statistics;  ///< 同帧弹丸累计统计。
-  ChassisObservationMeta chassis_observation;      ///< 同帧底盘观测；当前 HAL 不消费。
+  ChassisObservationMeta chassis_observation;      ///< 同帧底盘局部运动观测。
   GroundTruthBatchMeta ground_truth;               ///< 同帧仿真真值。
 };
 
@@ -215,6 +225,7 @@ static_assert(sizeof(RigidTransformF32) == 32);
 static_assert(sizeof(ProjectileStatisticsMeta) == 32);
 static_assert(sizeof(GimbalCmd) == 32);
 static_assert(sizeof(CameraCalibrationMeta) == 128);
+static_assert(sizeof(ChassisObservationMeta) == 128);
 static_assert(sizeof(GroundTruthTargetMeta) == 64);
 static_assert(sizeof(GroundTruthArmorMeta) == 128);
 static_assert(sizeof(GroundTruthBatchMeta) == 5696);

@@ -736,6 +736,12 @@ ArmorPredictionResult ArmorPredictor::Impl::Snapshot(const frame::FrameStamp& st
   output.sequence = stamp.sequence;
   output.source_capture_timestamp_ns = stamp.capture_timestamp_ns;
   output.source_receive_steady_time = stamp.receive_steady_time;
+  if (stamp.capture_steady_time) {
+    output.source_steady_time = stamp.capture_steady_time;
+  } else if (!stamp.capture_timestamp_ns) {
+    // 没有源端 epoch 时间的普通相机以 HAL 收帧时刻作为采集时刻。
+    output.source_steady_time = stamp.receive_steady_time;
+  }
   output.state = tracker_state;
   output.label = label;
   output.type = type;

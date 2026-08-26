@@ -1,5 +1,7 @@
 #pragma once
 
+#include "runtime/runtime_supervisor.hpp"
+
 #include <functional>
 
 namespace mv::hal {
@@ -20,27 +22,20 @@ class ControlRuntime;
 class IRuntimeDiagnosticsSink;
 class VisionPipeline;
 
-/** @brief 视觉抓帧循环的终止原因，由应用层映射为稳定进程退出码。 */
-enum class VisionRunStatus {
-  NORMAL,
-  CAMERA_FAILURE,
-  PIPELINE_FAILURE,
-  CONTROL_FAILURE,
-};
-
 /** @brief 驱动相机、单帧感知流水线、调试输出和控制快照交接。 */
 class VisionRuntime final {
  public:
   VisionRuntime(hal::ICamera& camera, VisionPipeline& pipeline, ControlRuntime* control,
                 tool::DebugWindow* window, IRuntimeDiagnosticsSink* diagnostics,
-                tool::simulation_evaluation::SimulationEvaluator* evaluator) noexcept;
+                tool::simulation_evaluation::SimulationEvaluator* evaluator,
+                RuntimeSupervisor& supervisor) noexcept;
 
   /**
    * @brief 持续处理相机帧，直到收到停止请求、窗口退出或运行时故障。
    * @param stop_requested 每轮抓帧前查询的进程停止条件。
    * @return 供应用层映射退出码的终止原因。
    */
-  [[nodiscard]] VisionRunStatus Run(const std::function<bool()>& stop_requested);
+  [[nodiscard]] RuntimeRunResult Run(const std::function<bool()>& stop_requested);
 
  private:
   hal::ICamera& camera_;
@@ -49,6 +44,7 @@ class VisionRuntime final {
   tool::DebugWindow* window_{nullptr};
   IRuntimeDiagnosticsSink* diagnostics_{nullptr};
   tool::simulation_evaluation::SimulationEvaluator* evaluator_{nullptr};
+  RuntimeSupervisor& supervisor_;
 };
 
 }  // namespace mv::runtime

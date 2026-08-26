@@ -46,9 +46,8 @@ class GimbalFeedbackEstimator final {
   void ObservePublishedCommand(const hal::GimbalCommand& command,
                                std::chrono::steady_clock::time_point timestamp,
                                bool held_command) noexcept;
-  /** @brief 返回当前反馈快照；now 为预留的外推时刻，当前实现不继续外推。 */
-  [[nodiscard]] hal::GimbalFeedback Estimate(
-      std::chrono::steady_clock::time_point now) const noexcept;
+  /** @brief 按最近角速度将反馈短时外推到 now，但保留原始反馈时间戳。 */
+  [[nodiscard]] hal::GimbalFeedback Estimate(std::chrono::steady_clock::time_point now) noexcept;
   /** @brief 返回最近一份相机位姿直接量测，不受命令投影和运行时遥测覆盖。 */
   [[nodiscard]] const hal::GimbalFeedback& LastMeasurement() const noexcept { return measurement_; }
   /** @brief 返回当前反馈来源。 */
@@ -61,8 +60,8 @@ class GimbalFeedbackEstimator final {
   [[nodiscard]] std::uint64_t RuntimeStateTimestampNs() const noexcept {
     return runtime_state_timestamp_ns_;
   }
-  /** @brief 返回命令投影时间；当前估计器不执行连续外推，恒为 0。 */
-  [[nodiscard]] double ProjectionDtS() const noexcept { return 0.0; }
+  /** @brief 返回最近一次 Estimate() 实际使用的短时外推量。 */
+  [[nodiscard]] double ProjectionDtS() const noexcept { return projection_dt_s_; }
   /** @brief 停止使用已发布命令投影，并回退到运行时遥测或相机量测。 */
   void ClearCommandProjection() noexcept;
   /** @brief 丢弃运行时执行器状态，并回退到最近相机量测。 */
@@ -83,6 +82,7 @@ class GimbalFeedbackEstimator final {
   bool runtime_actuator_active_{false};          ///< state_ 是否由物理执行器遥测主导。
   std::uint64_t runtime_state_timestamp_ns_{0};  ///< 最近采用的执行器状态时间戳。
   double runtime_actuator_age_s_{std::numeric_limits<double>::infinity()};  ///< 遥测年龄。
+  double projection_dt_s_{0.0};  ///< 最近一次反馈角度外推时长。
 };
 
 }  // namespace mv::modules

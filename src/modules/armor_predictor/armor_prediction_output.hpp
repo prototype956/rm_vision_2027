@@ -35,6 +35,7 @@ struct ArmorPredictionOutput {
   std::uint64_t sequence{0};
   std::optional<std::uint64_t> source_capture_timestamp_ns;
   std::chrono::steady_clock::time_point source_receive_steady_time{};
+  std::optional<std::chrono::steady_clock::time_point> source_steady_time;
   TrackerState state{TrackerState::LOST};
   std::optional<ArmorLabel> label;
   std::optional<geometry::ArmorType> type;

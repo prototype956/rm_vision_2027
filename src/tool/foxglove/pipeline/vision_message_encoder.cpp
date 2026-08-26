@@ -44,7 +44,7 @@ std::string EncodeDebugStats(const VisionDebugFrame& frame,
 
 bool TopicDemand::Any() const noexcept {
   return image || armor_annotations || armor_stats || lightbar_annotations || lightbar_stats ||
-         debug_stats || transforms || calibration || frustum || ground_truth || projectile_stats ||
+         debug_stats || calibration || frustum || ground_truth || projectile_stats ||
          projection_annotations || pnp_estimates || pnp_corners || pnp_reprojection ||
          pnp_error_vectors || corner_refiner_axes || corner_refiner_candidates || pnp_stats ||
          prediction_scene || prediction_state || prediction_truth_overlay ||
@@ -60,7 +60,6 @@ TopicDemand Merge(TopicDemand left, TopicDemand right) noexcept {
       .lightbar_annotations = left.lightbar_annotations || right.lightbar_annotations,
       .lightbar_stats = left.lightbar_stats || right.lightbar_stats,
       .debug_stats = left.debug_stats || right.debug_stats,
-      .transforms = left.transforms || right.transforms,
       .calibration = left.calibration || right.calibration,
       .frustum = left.frustum || right.frustum,
       .ground_truth = left.ground_truth || right.ground_truth,
@@ -137,8 +136,6 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
     result.lightbar_stats_json = armor_light_detector::EncodeStats(
         frame.diagnostics.lightbars, frame.diagnostics.prediction, stamp.sequence, TIMESTAMP);
   }
-  if (packet.kinematics && demand.transforms)
-    result.transforms = spatial::EncodeTransforms(*packet.kinematics, TIMESTAMP);
   if (packet.camera_model && demand.calibration)
     result.calibration = spatial::EncodeCalibration(*packet.camera_model, TIMESTAMP);
   if (packet.camera_model && demand.frustum)

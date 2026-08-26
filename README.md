@@ -15,6 +15,7 @@ MindVision 实机验收程序，以及基于 OpenVINO 的深圳大学 RobotDetec
 - `mv-armor-detector-test`：MindVision、GPU 检测器与可选 Foxglove 输出的长时实机
   验收程序。
 - `mv-armor-detector-video-test`：离线视频检测、可视化、逐帧耗时和性能验收程序。
+- `mv-runtime-policy-test`：使用假时钟和假命令后端验收运行时故障门限与安全停止。
 
 模型权重是本地文件，不提交到 Git，由使用者手工管理。来源、固定提交和放置方法见
 [`src/modules/armor_detector/models/README.md`](src/modules/armor_detector/models/README.md)。
@@ -105,6 +106,8 @@ taskset -c 0-7 ./build-openvino/bin/mv-vision-main
 [`docs/test/ARMOR_DETECTOR_TEST.md`](docs/test/ARMOR_DETECTOR_TEST.md)。
 Foxglove 连接、话题与 MCAP 使用方法见
 [`docs/tool/FOXGLOVE.md`](docs/tool/FOXGLOVE.md)。
+运行时错误分类、降级矩阵和退出码见
+[`docs/runtime/ERROR_POLICY.md`](docs/runtime/ERROR_POLICY.md)。
 坐标轴、变换方向和 Talos 同帧契约见
 [`docs/modules/COORDINATE_SYSTEMS.md`](docs/modules/COORDINATE_SYSTEMS.md)。
 相机内参标定流程见
@@ -120,6 +123,7 @@ Foxglove 连接、话题与 MCAP 使用方法见
 src/config/
 ├── app/main.yaml
 ├── core/logger.yaml
+├── runtime/error_policy.yaml
 ├── hal/camera/
 │   ├── mindvision.yaml
 │   ├── opencv.yaml
@@ -178,6 +182,8 @@ src/config/
 - 没有串口或通信实现。
 - 没有 PnP、目标选择、连续帧锁定、预测或异步推理。
 - 不做相机后端自动切换或故障自动恢复。
+- 相机与 Talos 命令通道只允许策略文件规定的有限瞬态降级；持续故障会先安全停止控制，
+  再使用稳定退出码终止进程。
 
 ## License
 

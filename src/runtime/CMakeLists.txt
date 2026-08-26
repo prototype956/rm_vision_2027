@@ -1,6 +1,8 @@
 add_library(mv-runtime STATIC
     control_runtime.cpp
     control_runtime_loop.cpp
+    runtime_error_policy.cpp
+    runtime_supervisor.cpp
     vision_pipeline.cpp
     vision_runtime.cpp
 )
