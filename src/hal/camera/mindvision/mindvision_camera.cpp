@@ -17,7 +17,8 @@ MindVisionCamera::MindVisionCamera() : impl_(std::make_unique<Impl>()) {}
 
 MindVisionCamera::~MindVisionCamera() = default;
 
-MindVisionCamera::MindVisionCamera(MindVisionCamera&& other) noexcept : impl_(std::make_unique<Impl>()) {
+MindVisionCamera::MindVisionCamera(MindVisionCamera&& other) noexcept
+    : impl_(std::make_unique<Impl>()) {
   impl_.swap(other.impl_);
 }
 
@@ -44,8 +45,8 @@ void MindVisionCamera::Close() {
   impl_->device.Close();
 }
 
-GrabStatus MindVisionCamera::Grab(CameraFrame& frame) {
-  return impl_->device.Grab(frame);
+GrabStatus MindVisionCamera::Grab(frame::FramePacket& packet) {
+  return impl_->device.Grab(packet);
 }
 
 CameraInfo MindVisionCamera::Info() const {

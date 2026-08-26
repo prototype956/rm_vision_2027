@@ -307,9 +307,9 @@ void MindVisionDevice::Close() noexcept {
   impl_->Reset(true);
 }
 
-GrabStatus MindVisionDevice::Grab(CameraFrame& frame) {
+GrabStatus MindVisionDevice::Grab(frame::FramePacket& packet) {
 #ifndef MV_HAS_MVSDK
-  (void)frame;
+  (void)packet;
   return GrabStatus::FATAL;
 #else
   if (!impl_->streaming) {
@@ -365,9 +365,10 @@ GrabStatus MindVisionDevice::Grab(CameraFrame& frame) {
     return GrabStatus::INVALID_FRAME;
   }
 
-  frame.image = std::move(image);
-  frame.receive_steady_time = std::chrono::steady_clock::now();
-  frame.sequence = impl_->sequence++;
+  packet = {};
+  packet.capture.image = std::move(image);
+  packet.capture.stamp.receive_steady_time = std::chrono::steady_clock::now();
+  packet.capture.stamp.sequence = impl_->sequence++;
   return GrabStatus::OK;
 #endif
 }

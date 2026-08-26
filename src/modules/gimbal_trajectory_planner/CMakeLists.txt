@@ -11,7 +11,7 @@ target_include_directories(mv-modules-gimbal-trajectory-planner PUBLIC
 
 target_link_libraries(mv-modules-gimbal-trajectory-planner
     PUBLIC mv-core mv-hal-gimbal Eigen3::Eigen
-    PRIVATE mv-3rdparty-tinympc mv-modules-armor-predictor yaml-cpp
+    PRIVATE mv-3rdparty-tinympc yaml-cpp
 )
 
 message(STATUS "    + mv-modules-gimbal-trajectory-planner (TinyMPC state feedback)")

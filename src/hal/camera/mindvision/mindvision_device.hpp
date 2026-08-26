@@ -22,7 +22,7 @@ class MindVisionDevice final {
 
   bool Open(const MindVisionConfig& config);
   void Close() noexcept;
-  GrabStatus Grab(CameraFrame& frame);
+  GrabStatus Grab(frame::FramePacket& packet);
 
   [[nodiscard]] CameraInfo Info() const;
   [[nodiscard]] bool IsOpen() const noexcept;

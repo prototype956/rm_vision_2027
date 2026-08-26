@@ -1,0 +1,17 @@
+schema_version: 1
+enabled: true
+threshold:
+  fixed: 120
+  network_reference_offset: 50
+  minimum: 60
+  maximum: 240
+geometry:
+  minimum_contour_points: 6
+  minimum_contour_area_px2: 2.0
+  minimum_length_px: 3.0
+  minimum_width_length_ratio: 0.02
+  maximum_width_length_ratio: 0.40
+  maximum_tilt_rad: 0.70
+color:
+  minimum_channel_difference: 20.0
+maximum_candidates: 64

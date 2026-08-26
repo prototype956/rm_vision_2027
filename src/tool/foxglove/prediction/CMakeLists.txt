@@ -6,7 +6,12 @@ target_include_directories(mv-tool-foxglove-prediction PUBLIC
 )
 
 target_link_libraries(mv-tool-foxglove-prediction
-    PUBLIC foxglove_sdk mv-hal-camera mv-modules-armor-predictor
+    PUBLIC
+        foxglove_sdk
+        mv-frame-data
+        mv-modules-armor-predictor
+        mv-modules-fire-control
+        mv-tool-simulation-evaluation
     PRIVATE fmt::fmt
 )
 

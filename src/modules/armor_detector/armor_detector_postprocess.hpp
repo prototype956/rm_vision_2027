@@ -1,6 +1,6 @@
 #pragma once
 
-#include "modules/armor_detector/armor_detector.hpp"
+#include "modules/armor_detector/armor_detector_output.hpp"
 
 #include <cstddef>
 #include <vector>

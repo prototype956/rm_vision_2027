@@ -1,5 +1,7 @@
 #pragma once
 
+#include "modules/armor_corner_refiner/armor_corner_refiner_output.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -72,7 +74,7 @@ struct LightbarRefinementDiagnostic {
 };
 
 /** @brief 单块装甲四角的原子精修结果及完整诊断。 */
-struct CornerRefinementResult {
+struct CornerRefinementDiagnostics {
   std::array<cv::Point2f, 4> original_corners{};  ///< TL、TR、BR、BL 顺序的网络角点。
   std::array<cv::Point2f, 4> refined_corners{};  ///< 成功时的精修角点，失败时等于原始角点。
   std::array<cv::Point2f, 4> corner_displacements{};  ///< 最终角点相对原始角点的位移。
@@ -83,6 +85,12 @@ struct CornerRefinementResult {
   bool success{false};          ///< 是否成功提交全部四个精修角点。
   bool fallback{true};          ///< 是否整体回退到原始网络角点。
   double elapsed_ms{0.0};  ///< 本次 Refine() 调用耗时，单位为毫秒。
+};
+
+/** @brief 单块装甲角点精修的正式输出和诊断输出。 */
+struct CornerRefinementResult {
+  CornerRefinementOutput output;
+  CornerRefinementDiagnostics diagnostics;
 };
 
 /**

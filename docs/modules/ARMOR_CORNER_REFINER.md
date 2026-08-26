@@ -24,9 +24,17 @@ ROI 无效、过暗、矩退化或端点未找到都会让整块装甲回退网�
 
 参数位于 `src/config/modules/armor_corner_refiner.yaml`，与 JLU 的默认参数保持一致。
 
+## 输出契约
+
+`CornerRefinementOutput` 只保存最终四角和是否采用精修，下游灯条检测、PnP 与预测只能读取
+这一正式输出。扫描候选、灯条轴、状态、回退原因和耗时放在
+`CornerRefinementDiagnostics`；`CornerRefinementResult` 仅负责具名聚合二者。
+
 ## Foxglove
 
-- `/vision/pnp/corners`：青色网络原框；精修成功时增加洋红色正式输入框。
+- `/vision/pnp/raw_corners`：青色 1.5 px 实线网络原始输入框。
+- `/vision/pnp/final_corners`：洋红色 2.5 px 实线 `REFINED` 正式输入框；失败时以黄色
+  2.5 px 实线 `FALLBACK:<status>` 显示实际提交给 PnP 的原始回退框。
 - `/vision/corner_refiner/axes`：浅蓝 PCA 轴和灰度质心。
 - `/vision/corner_refiner/candidates`：橙色搜索区间、黄色逐扫描线候选，以及绿色已提交或
   红色被原子回退的平均端点。

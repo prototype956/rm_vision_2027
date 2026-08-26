@@ -1,6 +1,7 @@
 add_subdirectory(runtime)
 add_subdirectory(image)
 add_subdirectory(armor_detector)
+add_subdirectory(armor_light_detector)
 add_subdirectory(spatial)
 add_subdirectory(simulation)
 add_subdirectory(pnp)
@@ -22,11 +23,13 @@ target_include_directories(mv-tool-foxglove
 target_link_libraries(mv-tool-foxglove
     PUBLIC
         mv-core
-        mv-hal-camera
+        mv-frame-data
         mv-modules-armor-detector
+        mv-modules-armor-light-detector
         mv-modules-armor-pnp
         mv-modules-armor-predictor
         mv-modules-fire-control
+        mv-tool-simulation-evaluation
     PRIVATE
         mv-tool-foxglove-pipeline
         mv-tool-foxglove-runtime

@@ -12,39 +12,32 @@ LatestFrameQueue::LatestFrameQueue(double max_fps)
           std::min(std::chrono::duration_cast<SteadyClock::duration>(std::chrono::milliseconds(2)),
                    PERIOD / 10)) {}
 
-QueuePushResult LatestFrameQueue::Push(const hal::CameraFrame& frame,
-                                       std::span<const modules::ArmorDetection> detections,
-                                       const modules::DetectorStats& detector_stats,
-                                       const modules::ArmorPnpFrameResult& pnp_result,
-                                       const modules::ArmorPredictionResult& prediction_result,
-                                       std::optional<modules::ArmorSelectionSnapshot> selection) {
+QueuePushResult LatestFrameQueue::Push(
+    const frame::FramePacket& packet, const ::mv::runtime::VisionFrameOutput& output,
+    const ::mv::runtime::VisionFrameDiagnostics& diagnostics,
+    const std::optional<simulation_evaluation::SimulationEvaluationResult>& simulation_evaluation,
+    std::optional<modules::ArmorSelectionSnapshot> selection) {
   std::lock_guard lock(mutex_);
   if (stopped_) {
     return {};
   }
   if (next_publish_timestamp_ != SteadyClock::time_point{} &&
-      frame.receive_steady_time + JITTER_TOLERANCE < next_publish_timestamp_) {
+      packet.capture.stamp.receive_steady_time + JITTER_TOLERANCE < next_publish_timestamp_) {
     return {.rate_limited = true};
   }
   if (next_publish_timestamp_ == SteadyClock::time_point{} ||
-      frame.receive_steady_time > next_publish_timestamp_ + PERIOD) {
-    next_publish_timestamp_ = frame.receive_steady_time + PERIOD;
+      packet.capture.stamp.receive_steady_time > next_publish_timestamp_ + PERIOD) {
+    next_publish_timestamp_ = packet.capture.stamp.receive_steady_time + PERIOD;
   } else {
     next_publish_timestamp_ += PERIOD;
   }
 
   VisionDebugFrame item;
-  item.image = frame.image;
-  item.receive_steady_time = frame.receive_steady_time;
-  item.capture_timestamp_ns = frame.capture_timestamp_ns;
-  item.geometry = frame.geometry;
-  item.sequence = frame.sequence;
-  item.source_invalid_frames = frame.source_invalid_frames;
-  item.detections.assign(detections.begin(), detections.end());
-  item.detector_stats = detector_stats;
-  item.pnp_result = pnp_result;
-  item.prediction_result = prediction_result;
-  item.armor_selection = std::move(selection);
+  item.packet = packet;
+  item.output = output;
+  item.diagnostics = diagnostics;
+  item.simulation_evaluation = simulation_evaluation;
+  item.armor_selection = selection;
 
   const bool OVERWRITTEN = queued_frame_.has_value();
   queued_frame_ = std::move(item);

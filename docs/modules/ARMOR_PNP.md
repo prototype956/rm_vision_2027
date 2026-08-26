@@ -6,11 +6,16 @@
 
 候选必须依次满足四点深度为正、装甲正面朝向相机和距离范围约束，最终选择重投影 RMSE
 最小者。`ONE` 与 `BASE_BIG` 使用大装甲，其余检测标签使用小装甲。模块不使用历史帧，
-不包含滤波或跟踪；角点精修由独立 `armor_corner_refiner` 在 PnP 之前完成。
+不包含滤波或跟踪；角点精修由独立 `armor_corner_refiner` 在 PnP 之前完成。13维 ESEKF 中，
+PnP 只用于 LOST 初始化、仅匹配一块装甲时的左右灯条深度差及本模块诊断；常规更新不消费
+PnP 世界位姿，IPPE 失败也不会阻断已跟踪目标的图像观测更新。
 
-## 同帧单链路
+## 正式解算与评估边界
 
-Talos 帧存在装甲真值时，每帧同时运行：
+正式 `ArmorPnpOutput` 只保存成功位姿并用 `input_index` 关联检测；失败状态、候选选择、
+重投影数据和累计健康统计位于 `ArmorPnpDiagnostics`。PnP 不再复制逐目标角点精修诊断，
+只通过独立观察接口累计精修健康。模块不依赖仿真数据、平台运动学或真值类型。Talos 帧存在装甲真值时，独立的
+`simulation_evaluation` 工具在正式结果生成并提交控制后运行：
 
 ```text
 真值世界四角 -> 同帧投影 -> IPPE -> 与 T_world_armor 比较
@@ -19,21 +24,25 @@ Talos 帧存在装甲真值时，每帧同时运行：
 
 检测—真值匹配使用全局一对一分配。候选首先要求队伍和标签一致，并通过 IoU、归一化
 中心距离和同索引角点距离硬门槛；随后对所有检测和真值联合最小化匹配代价。无可靠匹配的
-检测结果仍发布三维估计，但真值误差保持为空。门槛位于 `armor_pnp.yaml`，不能通过放宽
-门槛把明显错误的关联计入精度统计。
+检测结果仍发布三维估计，但真值误差保持为空。门槛位于
+`src/config/tool/simulation_evaluation.yaml`，不能通过放宽门槛把明显错误的关联计入精度
+统计。真值缺失或评估失败不会阻断正式 PnP、预测或控制。
 
 ## 仿真验收
 
 使用 `scripts/run_simulation_vision.sh` 启动完整链路。在 Foxglove 中叠加原图、
-`/simulation/ground_truth/annotations`、`/vision/pnp/corners` 和
+`/simulation/ground_truth/annotations`、`/vision/pnp/raw_corners`、
+`/vision/pnp/final_corners` 和
 `/vision/pnp/reprojection`，并在 3D 面板以
 `world` 为固定坐标系同时观察真值与估计装甲。
 
-输入角点、PnP 重投影和真值误差线分别由 `/vision/pnp/corners`、
-`/vision/pnp/reprojection` 和 `/vision/pnp/error_vectors` 独立显示。真值基准链继续写入
+原始输入角点、正式输入角点、PnP 重投影和真值误差线分别由
+`/vision/pnp/raw_corners`、`/vision/pnp/final_corners`、`/vision/pnp/reprojection` 和
+`/vision/pnp/error_vectors` 独立显示。`final_corners` 在精修失败时以黄色框和状态文字显示
+实际提交的原始回退角点，不额外运行第二次 PnP。真值基准链继续写入
 `/vision/pnp/stats`，其输入四角由黄色
 `/simulation/ground_truth/annotations` 单独显示。真值二维投影只保留正面朝向相机且与
-图像相交的装甲；原始和最终框不绘制角点身份文字，详细角点数据保留在统计消息中。
+图像相交的装甲；详细角点数据保留在统计消息中。
 严格遮挡仍需仿真渲染端提供深度或可见性 ID。
 
 按 2/4/6/8/10 m 和 0/15/30/45° 采集 MCAP。`/vision/pnp/stats.summary` 每 100 帧原子更新

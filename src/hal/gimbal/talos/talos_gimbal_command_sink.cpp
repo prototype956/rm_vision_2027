@@ -79,7 +79,7 @@ std::optional<RuntimeStateMeta> ReadRuntimeState(const RuntimeStateMeta* source)
 struct TalosGimbalCommandSink::Impl {
   int fd{-1};                             ///< Talos 元数据文件描述符。
   void* mapping{nullptr};                 ///< 可读写 mmap 起始地址。
-  ShmMetaRegion* meta{nullptr};           ///< 带类型的 Talos v5 协议视图。
+  ShmMetaRegion* meta{nullptr};           ///< 带类型的 Talos v6 协议视图。
   std::uint64_t heartbeat_timeout_ns{0};  ///< 允许的发布端最大心跳间隔。
   mutable std::mutex mutex;  ///< 串行化映射生命周期、命令发布和遥测读取。
 

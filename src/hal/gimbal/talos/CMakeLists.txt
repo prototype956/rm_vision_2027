@@ -9,4 +9,4 @@ target_include_directories(mv-hal-gimbal-talos PUBLIC
 
 target_link_libraries(mv-hal-gimbal-talos PUBLIC mv-hal-gimbal PRIVATE mv-core yaml-cpp)
 
-message(STATUS "    + mv-hal-gimbal-talos (Talos v5 command triple buffer)")
+message(STATUS "    + mv-hal-gimbal-talos (Talos v6 command triple buffer)")

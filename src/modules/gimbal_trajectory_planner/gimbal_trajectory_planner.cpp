@@ -1,6 +1,5 @@
 #include "modules/gimbal_trajectory_planner/gimbal_trajectory_planner.hpp"
 
-#include "modules/armor_predictor/detail/four_armor_model.hpp"
 #include "modules/gimbal_trajectory_planner/detail/tinympc_workspace.hpp"
 #include "tinympc/tiny_api.hpp"
 
@@ -14,6 +13,10 @@
 
 namespace mv::modules {
 namespace {
+
+double WrapAngle(double angle) noexcept {
+  return std::remainder(angle, 2.0 * std::numbers::pi);
+}
 
 // TinyMPC C 接口分别分配顶层对象及其四个子对象，需要按所有权逐项释放。
 void DestroySolver(TinySolver* solver) noexcept {
@@ -172,7 +175,7 @@ std::string_view GimbalWarmStartActionName(GimbalWarmStartAction action) noexcep
 
 struct GimbalTrajectoryPlanner::Impl {
   explicit Impl(GimbalTrajectoryPlannerConfig value)
-      : config(std::move(value)),
+      : config(value),
         yaw_normalization(MakeNormalization(config, config.max_yaw_velocity_rad_s,
                                             config.max_yaw_acceleration_rad_s2)),
         pitch_normalization(MakeNormalization(config, config.max_pitch_velocity_rad_s,
@@ -194,7 +197,7 @@ struct GimbalTrajectoryPlanner::Impl {
 };
 
 GimbalTrajectoryPlanner::GimbalTrajectoryPlanner(GimbalTrajectoryPlannerConfig config)
-    : impl_(std::make_unique<Impl>(std::move(config))) {}
+    : impl_(std::make_unique<Impl>(config)) {}
 
 GimbalTrajectoryPlanner::~GimbalTrajectoryPlanner() = default;
 GimbalTrajectoryPlanner::GimbalTrajectoryPlanner(GimbalTrajectoryPlanner&&) noexcept = default;
@@ -205,25 +208,28 @@ void GimbalTrajectoryPlanner::RequestWarmStartRebase() noexcept {
   impl_->rebase_requested = true;
 }
 
-GimbalTrajectoryPlan GimbalTrajectoryPlanner::Plan(const hal::GimbalFeedback& feedback,
-                                                   std::span<const AimReferencePoint> reference) {
-  GimbalTrajectoryPlan result;
+GimbalTrajectoryResult GimbalTrajectoryPlanner::Plan(const hal::GimbalFeedback& feedback,
+                                                     std::span<const AimReferencePoint> reference) {
+  GimbalTrajectoryResult result;
+  auto& output = result.output;
+  auto& diagnostics = result.diagnostics;
   if (!feedback.valid) {
-    result.failure_reason = GimbalTrajectoryFailureReason::INVALID_FEEDBACK;
-    result.failure_axis = GimbalTrajectoryAxis::BOTH;
+    diagnostics.failure_reason = GimbalTrajectoryFailureReason::INVALID_FEEDBACK;
+    diagnostics.failure_axis = GimbalTrajectoryAxis::BOTH;
     return result;
   }
   if (reference.size() != static_cast<std::size_t>(impl_->config.horizon_steps)) {
-    result.failure_reason = GimbalTrajectoryFailureReason::INVALID_REFERENCE_SIZE;
-    result.failure_axis = GimbalTrajectoryAxis::BOTH;
+    diagnostics.failure_reason = GimbalTrajectoryFailureReason::INVALID_REFERENCE_SIZE;
+    diagnostics.failure_axis = GimbalTrajectoryAxis::BOTH;
     return result;
   }
-  result.reference.assign(reference.begin(), reference.end());
-  result.normalization_angle_scale_rad = impl_->yaw_normalization.angle;
-  result.normalization_yaw_velocity_scale_rad_s = impl_->yaw_normalization.velocity;
-  result.normalization_pitch_velocity_scale_rad_s = impl_->pitch_normalization.velocity;
-  result.normalization_yaw_acceleration_scale_rad_s2 = impl_->yaw_normalization.acceleration;
-  result.normalization_pitch_acceleration_scale_rad_s2 = impl_->pitch_normalization.acceleration;
+  diagnostics.reference.assign(reference.begin(), reference.end());
+  diagnostics.normalization_angle_scale_rad = impl_->yaw_normalization.angle;
+  diagnostics.normalization_yaw_velocity_scale_rad_s = impl_->yaw_normalization.velocity;
+  diagnostics.normalization_pitch_velocity_scale_rad_s = impl_->pitch_normalization.velocity;
+  diagnostics.normalization_yaw_acceleration_scale_rad_s2 = impl_->yaw_normalization.acceleration;
+  diagnostics.normalization_pitch_acceleration_scale_rad_s2 =
+      impl_->pitch_normalization.acceleration;
   // 以当前反馈作为局部原点可保持归一化角度较小，并避免连续偏航跨越 ±pi 时跳变。
   if (impl_->rebase_requested || !impl_->origins_initialized) {
     impl_->yaw_origin = feedback.yaw;
@@ -243,9 +249,9 @@ GimbalTrajectoryPlan GimbalTrajectoryPlanner::Plan(const hal::GimbalFeedback& fe
     const auto& point = reference[static_cast<std::size_t>(index)];
     if (!std::isfinite(point.yaw) || !std::isfinite(point.yaw_velocity) ||
         !std::isfinite(point.pitch) || !std::isfinite(point.pitch_velocity)) {
-      result.failure_reason = GimbalTrajectoryFailureReason::NONFINITE_REFERENCE;
-      result.failure_axis = GimbalTrajectoryAxis::BOTH;
-      result.failure_index = index;
+      diagnostics.failure_reason = GimbalTrajectoryFailureReason::NONFINITE_REFERENCE;
+      diagnostics.failure_axis = GimbalTrajectoryAxis::BOTH;
+      diagnostics.failure_index = index;
       return result;
     }
     yaw_ref.col(index) << (point.yaw - impl_->yaw_origin) / impl_->yaw_normalization.angle,
@@ -255,14 +261,14 @@ GimbalTrajectoryPlan GimbalTrajectoryPlanner::Plan(const hal::GimbalFeedback& fe
   }
   if (impl_->previous_reference.size() == reference.size()) {
     // 对齐比较整段时域，而非只比较首点，以发现远端参考突然跳变。
-    result.reference_horizon_delta_valid = true;
+    diagnostics.reference_horizon_delta_valid = true;
     for (std::size_t index = 0; index < reference.size(); ++index) {
-      result.max_reference_horizon_delta_yaw = std::max(
-          result.max_reference_horizon_delta_yaw,
+      diagnostics.max_reference_horizon_delta_yaw = std::max(
+          diagnostics.max_reference_horizon_delta_yaw,
           std::abs(std::remainder(reference[index].yaw - impl_->previous_reference[index].yaw,
                                   2.0 * std::numbers::pi)));
-      result.max_reference_horizon_delta_pitch =
-          std::max(result.max_reference_horizon_delta_pitch,
+      diagnostics.max_reference_horizon_delta_pitch =
+          std::max(diagnostics.max_reference_horizon_delta_pitch,
                    std::abs(reference[index].pitch - impl_->previous_reference[index].pitch));
     }
   }
@@ -280,8 +286,8 @@ GimbalTrajectoryPlan GimbalTrajectoryPlanner::Plan(const hal::GimbalFeedback& fe
     tiny_set_u_ref(impl_->pitch_solver.get(), pitch_u_ref);
     detail::RebaseTinyMpcWarmStart(*impl_->yaw_solver, yaw_x0);
     detail::RebaseTinyMpcWarmStart(*impl_->pitch_solver, pitch_x0);
-    result.warm_start_action = GimbalWarmStartAction::REBASE;
-    result.warm_start_rebase_axes = GimbalTrajectoryAxis::BOTH;
+    diagnostics.warm_start_action = GimbalWarmStartAction::REBASE;
+    diagnostics.warm_start_rebase_axes = GimbalTrajectoryAxis::BOTH;
     impl_->rebase_requested = false;
   } else {
     // 正常滚动时域将上一解左移一个采样点，为本周期提供相邻 warm start。
@@ -293,53 +299,55 @@ GimbalTrajectoryPlan GimbalTrajectoryPlanner::Plan(const hal::GimbalFeedback& fe
     tiny_set_x0(impl_->pitch_solver.get(), pitch_x0);
     tiny_set_x_ref(impl_->pitch_solver.get(), pitch_ref);
     tiny_set_u_ref(impl_->pitch_solver.get(), pitch_u_ref);
-    result.warm_start_action = impl_->previous_plan_failed
-                                   ? GimbalWarmStartAction::SHIFT_AFTER_FAILURE
-                                   : GimbalWarmStartAction::SHIFT;
+    diagnostics.warm_start_action = impl_->previous_plan_failed
+                                        ? GimbalWarmStartAction::SHIFT_AFTER_FAILURE
+                                        : GimbalWarmStartAction::SHIFT;
   }
 
   int yaw_status = detail::SolveTinyMpcWithFreshReference(*impl_->yaw_solver);
   int pitch_status = detail::SolveTinyMpcWithFreshReference(*impl_->pitch_solver);
-  result.primary_yaw_solver = Diagnostics(*impl_->yaw_solver);
-  result.primary_pitch_solver = Diagnostics(*impl_->pitch_solver);
-  bool yaw_solved = Solved(yaw_status, result.primary_yaw_solver);
-  bool pitch_solved = Solved(pitch_status, result.primary_pitch_solver);
-  result.solver_retry_axes = FailedAxes(yaw_solved, pitch_solved);
-  result.solver_retry_attempted = result.solver_retry_axes != GimbalTrajectoryAxis::NONE;
+  diagnostics.primary_yaw_solver = Diagnostics(*impl_->yaw_solver);
+  diagnostics.primary_pitch_solver = Diagnostics(*impl_->pitch_solver);
+  bool yaw_solved = Solved(yaw_status, diagnostics.primary_yaw_solver);
+  bool pitch_solved = Solved(pitch_status, diagnostics.primary_pitch_solver);
+  diagnostics.solver_retry_axes = FailedAxes(yaw_solved, pitch_solved);
+  diagnostics.solver_retry_attempted = diagnostics.solver_retry_axes != GimbalTrajectoryAxis::NONE;
   // 首次未收敛只重建失败轴，保留已收敛轴的结果和诊断。
   if (!yaw_solved) {
     detail::RebaseTinyMpcWarmStart(*impl_->yaw_solver, yaw_x0);
     yaw_status = detail::SolveTinyMpcWithFreshReference(*impl_->yaw_solver);
-    result.retry_yaw_solver = Diagnostics(*impl_->yaw_solver);
-    yaw_solved = Solved(yaw_status, result.retry_yaw_solver);
+    diagnostics.retry_yaw_solver = Diagnostics(*impl_->yaw_solver);
+    yaw_solved = Solved(yaw_status, diagnostics.retry_yaw_solver);
   }
   if (!pitch_solved) {
     detail::RebaseTinyMpcWarmStart(*impl_->pitch_solver, pitch_x0);
     pitch_status = detail::SolveTinyMpcWithFreshReference(*impl_->pitch_solver);
-    result.retry_pitch_solver = Diagnostics(*impl_->pitch_solver);
-    pitch_solved = Solved(pitch_status, result.retry_pitch_solver);
+    diagnostics.retry_pitch_solver = Diagnostics(*impl_->pitch_solver);
+    pitch_solved = Solved(pitch_status, diagnostics.retry_pitch_solver);
   }
-  result.solver_retry_succeeded = result.solver_retry_attempted && yaw_solved && pitch_solved;
-  result.solve_time_us =
+  diagnostics.solver_retry_succeeded =
+      diagnostics.solver_retry_attempted && yaw_solved && pitch_solved;
+  diagnostics.solve_time_us =
       std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - START).count();
-  result.yaw_solver = Diagnostics(*impl_->yaw_solver);
-  result.pitch_solver = Diagnostics(*impl_->pitch_solver);
-  result.yaw_iterations = result.primary_yaw_solver.iterations + result.retry_yaw_solver.iterations;
-  result.pitch_iterations =
-      result.primary_pitch_solver.iterations + result.retry_pitch_solver.iterations;
+  diagnostics.yaw_solver = Diagnostics(*impl_->yaw_solver);
+  diagnostics.pitch_solver = Diagnostics(*impl_->pitch_solver);
+  diagnostics.yaw_iterations =
+      diagnostics.primary_yaw_solver.iterations + diagnostics.retry_yaw_solver.iterations;
+  diagnostics.pitch_iterations =
+      diagnostics.primary_pitch_solver.iterations + diagnostics.retry_pitch_solver.iterations;
   if (!yaw_solved || !pitch_solved) {
-    result.failure_reason = !yaw_solved && !pitch_solved
-                                ? GimbalTrajectoryFailureReason::BOTH_SOLVERS_FAILED
-                            : !yaw_solved ? GimbalTrajectoryFailureReason::YAW_SOLVER_FAILED
-                                          : GimbalTrajectoryFailureReason::PITCH_SOLVER_FAILED;
-    result.failure_axis = FailedAxes(yaw_solved, pitch_solved);
+    diagnostics.failure_reason = !yaw_solved && !pitch_solved
+                                     ? GimbalTrajectoryFailureReason::BOTH_SOLVERS_FAILED
+                                 : !yaw_solved ? GimbalTrajectoryFailureReason::YAW_SOLVER_FAILED
+                                               : GimbalTrajectoryFailureReason::PITCH_SOLVER_FAILED;
+    diagnostics.failure_axis = FailedAxes(yaw_solved, pitch_solved);
   }
 
-  result.trajectory.resize(reference.size());
+  output.trajectory.resize(reference.size());
   bool solution_finite = true;
   // 将归一化解恢复到物理单位，并再次检查硬约束，防止容差内越界进入控制链。
   for (int index = 0; index < impl_->config.horizon_steps; ++index) {
-    auto& point = result.trajectory[static_cast<std::size_t>(index)];
+    auto& point = output.trajectory[static_cast<std::size_t>(index)];
     point.yaw = impl_->yaw_origin +
                 impl_->yaw_solver->solution->x(0, index) * impl_->yaw_normalization.angle;
     point.yaw_velocity =
@@ -355,16 +363,16 @@ GimbalTrajectoryPlan GimbalTrajectoryPlanner::Plan(const hal::GimbalFeedback& fe
           impl_->pitch_solver->solution->u(0, index) * impl_->pitch_normalization.acceleration;
     } else if (index > 0) {
       point.yaw_acceleration =
-          result.trajectory[static_cast<std::size_t>(index - 1)].yaw_acceleration;
+          output.trajectory[static_cast<std::size_t>(index - 1)].yaw_acceleration;
       point.pitch_acceleration =
-          result.trajectory[static_cast<std::size_t>(index - 1)].pitch_acceleration;
+          output.trajectory[static_cast<std::size_t>(index - 1)].pitch_acceleration;
     }
     if (!Finite(point)) {
       solution_finite = false;
-      if (result.failure_reason == GimbalTrajectoryFailureReason::NONE) {
-        result.failure_reason = GimbalTrajectoryFailureReason::NONFINITE_SOLUTION;
-        result.failure_axis = GimbalTrajectoryAxis::BOTH;
-        result.failure_index = index;
+      if (diagnostics.failure_reason == GimbalTrajectoryFailureReason::NONE) {
+        diagnostics.failure_reason = GimbalTrajectoryFailureReason::NONFINITE_SOLUTION;
+        diagnostics.failure_axis = GimbalTrajectoryAxis::BOTH;
+        diagnostics.failure_index = index;
       }
       continue;
     }
@@ -376,33 +384,34 @@ GimbalTrajectoryPlan GimbalTrajectoryPlanner::Plan(const hal::GimbalFeedback& fe
         std::abs(point.yaw_acceleration) > impl_->config.max_yaw_acceleration_rad_s2 + 1.0e-6;
     const bool PITCH_ACCELERATION_VIOLATION =
         std::abs(point.pitch_acceleration) > impl_->config.max_pitch_acceleration_rad_s2 + 1.0e-6;
-    if (result.failure_reason == GimbalTrajectoryFailureReason::NONE &&
+    if (diagnostics.failure_reason == GimbalTrajectoryFailureReason::NONE &&
         (YAW_VELOCITY_VIOLATION || PITCH_VELOCITY_VIOLATION || YAW_ACCELERATION_VIOLATION ||
          PITCH_ACCELERATION_VIOLATION)) {
       const bool YAW_VIOLATION = YAW_VELOCITY_VIOLATION || YAW_ACCELERATION_VIOLATION;
       const bool PITCH_VIOLATION = PITCH_VELOCITY_VIOLATION || PITCH_ACCELERATION_VIOLATION;
-      result.failure_reason = YAW_VELOCITY_VIOLATION || PITCH_VELOCITY_VIOLATION
-                                  ? GimbalTrajectoryFailureReason::VELOCITY_LIMIT_VIOLATION
-                                  : GimbalTrajectoryFailureReason::ACCELERATION_LIMIT_VIOLATION;
-      result.failure_axis = YAW_VIOLATION && PITCH_VIOLATION ? GimbalTrajectoryAxis::BOTH
-                            : YAW_VIOLATION                  ? GimbalTrajectoryAxis::YAW
-                                                             : GimbalTrajectoryAxis::PITCH;
-      result.failure_index = index;
+      diagnostics.failure_reason =
+          YAW_VELOCITY_VIOLATION || PITCH_VELOCITY_VIOLATION
+              ? GimbalTrajectoryFailureReason::VELOCITY_LIMIT_VIOLATION
+              : GimbalTrajectoryFailureReason::ACCELERATION_LIMIT_VIOLATION;
+      diagnostics.failure_axis = YAW_VIOLATION && PITCH_VIOLATION ? GimbalTrajectoryAxis::BOTH
+                                 : YAW_VIOLATION                  ? GimbalTrajectoryAxis::YAW
+                                                                  : GimbalTrajectoryAxis::PITCH;
+      diagnostics.failure_index = index;
     }
   }
   if (!yaw_solved || !pitch_solved || !solution_finite ||
-      result.failure_reason != GimbalTrajectoryFailureReason::NONE) {
+      diagnostics.failure_reason != GimbalTrajectoryFailureReason::NONE) {
     impl_->previous_plan_failed = true;
     return result;
   }
-  result.command_index = std::clamp(
+  output.command_index = std::clamp(
       static_cast<int>(std::llround(impl_->config.command_lookahead_s / impl_->config.dt_s)), 1,
       impl_->config.horizon_steps - 1);
   // 配置前视时间量化到最近离散点，且至少选择 index=1，避免重复发送当前状态。
-  result.command_lookahead_s = static_cast<double>(result.command_index) * impl_->config.dt_s;
-  result.command = result.trajectory[static_cast<std::size_t>(result.command_index)];
-  result.command.yaw = detail::WrapAngle(result.command.yaw);
-  result.valid = true;
+  output.command_lookahead_s = static_cast<double>(output.command_index) * impl_->config.dt_s;
+  output.command = output.trajectory[static_cast<std::size_t>(output.command_index)];
+  output.command.yaw = WrapAngle(output.command.yaw);
+  output.valid = true;
   impl_->previous_plan_failed = false;
   return result;
 }

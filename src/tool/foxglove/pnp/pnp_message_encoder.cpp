@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include <fmt/format.h>
@@ -17,30 +18,30 @@ namespace {
 }
 
 void AddEstimateEntity(::foxglove::schemas::SceneUpdate& update,
-                       const modules::ArmorPoseEstimate& estimate,
-                       const geometry::RigidTransform& frame_t_armor, std::string frame_id,
-                       std::string suffix, const ::foxglove::schemas::Timestamp& timestamp) {
-  const double width = estimate.width_m;
-  const double height = estimate.height_m;
-  const std::array<geometry::Vector3, 4> local{geometry::Vector3(-width * 0.5, height * 0.5, 0),
-                                               geometry::Vector3(width * 0.5, height * 0.5, 0),
-                                               geometry::Vector3(width * 0.5, -height * 0.5, 0),
-                                               geometry::Vector3(-width * 0.5, -height * 0.5, 0)};
+                       const simulation_evaluation::EvaluatedArmorPose& estimate,
+                       const geometry::RigidTransform& frame_t_armor, std::string_view frame_id,
+                       const char* suffix, const ::foxglove::schemas::Timestamp& timestamp) {
+  const double WIDTH = estimate.width_m;
+  const double HEIGHT = estimate.height_m;
+  const std::array<geometry::Vector3, 4> LOCAL{geometry::Vector3(-WIDTH * 0.5, HEIGHT * 0.5, 0),
+                                               geometry::Vector3(WIDTH * 0.5, HEIGHT * 0.5, 0),
+                                               geometry::Vector3(WIDTH * 0.5, -HEIGHT * 0.5, 0),
+                                               geometry::Vector3(-WIDTH * 0.5, -HEIGHT * 0.5, 0)};
   ::foxglove::schemas::SceneEntity entity;
   entity.timestamp = timestamp;
-  entity.frame_id = std::move(frame_id);
+  entity.frame_id = std::string(frame_id);
   // source、input_index 和坐标系后缀组成稳定 ID，使 Foxglove 原位更新而不留下拖影。
   entity.id =
       fmt::format("pnp_{}_{}_{}", static_cast<int>(estimate.source), estimate.input_index, suffix);
   entity.lifetime = {.sec = 0, .nsec = 200'000'000};
   entity.metadata = {
-      {.key = "source", .value = modules::PnpInputSourceName(estimate.source)},
+      {.key = "source", .value = simulation_evaluation::PnpEvaluationSourceName(estimate.source)},
       {.key = "rmse_px", .value = fmt::format("{:.4f}", estimate.reprojection_rmse_px)}};
   ::foxglove::schemas::LinePrimitive outline;
   outline.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LOOP;
   outline.thickness = 0.01;
   outline.color = {.g = 1.0, .a = 1.0};
-  for (const auto& corner : local) {
+  for (const auto& corner : LOCAL) {
     outline.points.push_back(Point(geometry::TransformPoint(frame_t_armor, corner)));
   }
   entity.lines.push_back(std::move(outline));
@@ -51,12 +52,12 @@ std::string OptionalNumber(const std::optional<double>& value) {
   return value ? fmt::format("{:.9g}", *value) : "null";
 }
 
-std::string PercentilesJson(const modules::PnpPercentiles& value) {
+std::string PercentilesJson(const simulation_evaluation::EvaluationPercentiles& value) {
   return fmt::format("{{\"samples\":{},\"p50\":{:.9g},\"p95\":{:.9g}}}", value.samples, value.p50,
                      value.p95);
 }
 
-std::string DetailedSummaryJson(const modules::PnpSourceSummary& value) {
+std::string DetailedSummaryJson(const simulation_evaluation::PnpSourceSummary& value) {
   return fmt::format(
       "{{\"reprojection_rmse_px\":{},\"mean_corner_error_px\":{},"
       "\"position_error_m\":{},\"depth_error_m\":{},\"rotation_error_deg\":{},"
@@ -66,7 +67,8 @@ std::string DetailedSummaryJson(const modules::PnpSourceSummary& value) {
       PercentilesJson(value.rotation_error_deg), PercentilesJson(value.position_jitter_m));
 }
 
-std::string GroupJson(const std::map<std::string, modules::PnpSourceSummary>& groups) {
+std::string GroupJson(
+    const std::map<std::string, simulation_evaluation::PnpSourceSummary>& groups) {
   std::string value = "{";
   bool first = true;
   for (const auto& [name, summary] : groups) {
@@ -92,7 +94,7 @@ std::string FailureReasonsJson(const std::map<std::string, std::size_t>& reasons
   return value;
 }
 
-std::string SolveSummaryJson(const modules::PnpSolveSummary& value) {
+std::string SolveSummaryJson(const simulation_evaluation::PnpSolveSummary& value) {
   return fmt::format(
       "{{\"attempted\":{},\"succeeded\":{},\"candidate_switches\":{},"
       "\"rejection_reasons\":{}}}",
@@ -130,7 +132,7 @@ std::string LightbarJson(const modules::LightbarRefinementDiagnostic& lightbar) 
       lightbar.axis_valid ? "true" : "false", lightbar.success ? "true" : "false");
 }
 
-std::string RefinementJson(const modules::CornerRefinementResult& refinement) {
+std::string RefinementJson(const modules::CornerRefinementDiagnostics& refinement) {
   return fmt::format(
       "{{\"mode\":\"jlu_pca_gradient\",\"success\":{},\"fallback\":{},\"status\":\"{}\","
       "\"failure_light_index\":{},\"elapsed_ms\":{:.9g},\"lightbars\":[{},{}],"
@@ -146,26 +148,68 @@ std::string RefinementJson(const modules::CornerRefinementResult& refinement) {
       PointJson(refinement.corner_displacements[3]));
 }
 
-bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
+bool HasAppliedRefinement(const simulation_evaluation::PnpEvaluationAttempt& attempt) {
   return attempt.refinement && attempt.refinement->success && !attempt.refinement->fallback;
+}
+
+void AddTimestampCarrier(::foxglove::schemas::ImageAnnotations& annotations,
+                         const ::foxglove::schemas::Timestamp& timestamp) {
+  // ImageAnnotations 没有顶层时间戳，用不可见点集承载帧时间并清除上一帧角点。
+  ::foxglove::schemas::PointsAnnotation carrier;
+  carrier.timestamp = timestamp;
+  carrier.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::POINTS;
+  carrier.thickness = 0.0;
+  annotations.points.push_back(std::move(carrier));
+}
+
+void AddCornerOutline(::foxglove::schemas::ImageAnnotations& annotations,
+                      const std::array<cv::Point2f, 4>& corners,
+                      const ::foxglove::schemas::Color& color, double thickness,
+                      std::string_view label, const ::foxglove::schemas::Timestamp& timestamp) {
+  ::foxglove::schemas::PointsAnnotation outline;
+  outline.timestamp = timestamp;
+  outline.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
+  outline.outline_color = color;
+  outline.thickness = thickness;
+  float min_u = corners.front().x;
+  float min_v = corners.front().y;
+  for (const auto& point : corners) {
+    outline.points.push_back({.x = point.x, .y = point.y});
+    min_u = std::min(min_u, point.x);
+    min_v = std::min(min_v, point.y);
+  }
+  annotations.points.push_back(std::move(outline));
+  if (label.empty())
+    return;
+
+  ::foxglove::schemas::TextAnnotation text;
+  text.timestamp = timestamp;
+  text.position = {.x = std::max(0.0, static_cast<double>(min_u)),
+                   .y = std::max(0.0, static_cast<double>(min_v) - 3.0)};
+  text.text = std::string(label);
+  text.font_size = 12.0;
+  text.text_color = color;
+  text.background_color = {.a = 0.65};
+  annotations.texts.push_back(std::move(text));
 }
 
 }  // namespace
 
-::foxglove::schemas::SceneUpdate EncodeEstimates(const modules::ArmorPnpFrameResult& result,
-                                                 const hal::CameraFrame::FrameGeometry& geometry,
-                                                 const ::foxglove::schemas::Timestamp& timestamp) {
+::foxglove::schemas::SceneUpdate EncodeEstimates(
+    const simulation_evaluation::PnpEvaluationResult& result,
+    const frame::FrameKinematics& kinematics, const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::SceneUpdate update;
-  const auto world_t_camera =
-      geometry::Compose(geometry.world_t_gimbal, geometry.gimbal_t_camera_optical);
+  const auto WORLD_T_CAMERA =
+      geometry::Compose(kinematics.world_t_gimbal, kinematics.gimbal_t_camera_optical);
   // 真值链只用于数值基准，不叠加到绿色正式估计图层，避免与仿真真值频道重复。
   for (const auto& attempt : result.attempts) {
-    if (!attempt.estimate || attempt.source == modules::PnpInputSource::GROUND_TRUTH)
+    if (!attempt.estimate ||
+        attempt.source == simulation_evaluation::PnpEvaluationSource::GROUND_TRUTH)
       continue;
     const auto& estimate = *attempt.estimate;
     AddEstimateEntity(update, estimate, estimate.camera_t_armor, "camera_optical", "camera",
                       timestamp);
-    AddEstimateEntity(update, estimate, geometry::Compose(world_t_camera, estimate.camera_t_armor),
+    AddEstimateEntity(update, estimate, geometry::Compose(WORLD_T_CAMERA, estimate.camera_t_armor),
                       "world", "world", timestamp);
     ::foxglove::schemas::SceneEntity ray_entity;
     ray_entity.timestamp = timestamp;
@@ -184,41 +228,51 @@ bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
   return update;
 }
 
-::foxglove::schemas::ImageAnnotations EncodeCorners(
-    const modules::ArmorPnpFrameResult& result, const ::foxglove::schemas::Timestamp& timestamp) {
+::foxglove::schemas::ImageAnnotations EncodeRawCorners(
+    const simulation_evaluation::PnpEvaluationResult& result,
+    const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::ImageAnnotations annotations;
+  AddTimestampCarrier(annotations, timestamp);
   for (const auto& attempt : result.attempts) {
-    if (attempt.source != modules::PnpInputSource::DETECTION || !attempt.refinement)
+    if (attempt.source != simulation_evaluation::PnpEvaluationSource::DETECTION ||
+        !attempt.refinement)
+      continue;
+    AddCornerOutline(annotations, attempt.refinement->original_corners,
+                     {.g = 1.0, .b = 1.0, .a = 1.0}, 1.5, {}, timestamp);
+  }
+  return annotations;
+}
+
+::foxglove::schemas::ImageAnnotations EncodeFinalCorners(
+    const simulation_evaluation::PnpEvaluationResult& result,
+    const ::foxglove::schemas::Timestamp& timestamp) {
+  ::foxglove::schemas::ImageAnnotations annotations;
+  AddTimestampCarrier(annotations, timestamp);
+  for (const auto& attempt : result.attempts) {
+    if (attempt.source != simulation_evaluation::PnpEvaluationSource::DETECTION ||
+        !attempt.refinement)
       continue;
     const auto& refinement = *attempt.refinement;
-    // 青色始终表示原始网络输入；洋红色仅表示实际提交给 PnP 的成功精修结果。
-    ::foxglove::schemas::PointsAnnotation raw;
-    raw.timestamp = timestamp;
-    raw.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
-    raw.outline_color = {.g = 1.0, .b = 1.0, .a = 1.0};
-    raw.thickness = 1.5;
-    for (const auto& point : refinement.original_corners)
-      raw.points.push_back({.x = point.x, .y = point.y});
-    annotations.points.push_back(std::move(raw));
     if (HasAppliedRefinement(attempt)) {
-      ::foxglove::schemas::PointsAnnotation refined;
-      refined.timestamp = timestamp;
-      refined.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
-      refined.outline_color = {.r = 1.0, .b = 1.0, .a = 1.0};
-      refined.thickness = 1.5;
-      for (const auto& point : refinement.refined_corners)
-        refined.points.push_back({.x = point.x, .y = point.y});
-      annotations.points.push_back(std::move(refined));
+      AddCornerOutline(annotations, refinement.refined_corners, {.r = 1.0, .b = 1.0, .a = 1.0}, 2.5,
+                       "REFINED", timestamp);
+      continue;
     }
+    const auto LABEL =
+        fmt::format("FALLBACK:{}", modules::CornerRefinementStatusName(refinement.status));
+    AddCornerOutline(annotations, refinement.refined_corners, {.r = 1.0, .g = 0.85, .a = 1.0}, 2.5,
+                     LABEL, timestamp);
   }
   return annotations;
 }
 
 ::foxglove::schemas::ImageAnnotations EncodeReprojection(
-    const modules::ArmorPnpFrameResult& result, const ::foxglove::schemas::Timestamp& timestamp) {
+    const simulation_evaluation::PnpEvaluationResult& result,
+    const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::ImageAnnotations annotations;
   for (const auto& attempt : result.attempts) {
-    if (!attempt.estimate || attempt.source == modules::PnpInputSource::GROUND_TRUTH)
+    if (!attempt.estimate ||
+        attempt.source == simulation_evaluation::PnpEvaluationSource::GROUND_TRUTH)
       continue;
     // 重投影与输入角点分属不同频道，便于独立开关并直接观察模型残差。
     ::foxglove::schemas::PointsAnnotation polygon;
@@ -235,24 +289,27 @@ bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
 }
 
 ::foxglove::schemas::ImageAnnotations EncodeErrorVectors(
-    const modules::ArmorPnpFrameResult& result, const ::foxglove::schemas::Timestamp& timestamp) {
+    const simulation_evaluation::PnpEvaluationResult& result,
+    const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::ImageAnnotations annotations;
   for (const auto& attempt : result.attempts) {
-    if (!attempt.estimate || attempt.source != modules::PnpInputSource::DETECTION ||
+    if (!attempt.estimate ||
+        attempt.source != simulation_evaluation::PnpEvaluationSource::DETECTION ||
         !attempt.estimate->mean_corner_error_px || !attempt.refinement)
       continue;
     for (std::size_t index = 0; index < 4; ++index) {
       // truth = formal input - 已记录的有符号偏差；无需在消息结果中重复保存真值角点。
-      const cv::Point2f truth(
-          attempt.estimate->image_corners[index].x - attempt.estimate->corner_delta_u_px[index],
-          attempt.estimate->image_corners[index].y - attempt.estimate->corner_delta_v_px[index]);
+      const cv::Point2f TRUTH(static_cast<float>(attempt.estimate->image_corners[index].x -
+                                                 attempt.estimate->corner_delta_u_px[index]),
+                              static_cast<float>(attempt.estimate->image_corners[index].y -
+                                                 attempt.estimate->corner_delta_v_px[index]));
       ::foxglove::schemas::PointsAnnotation raw_error;
       raw_error.timestamp = timestamp;
       raw_error.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LIST;
       raw_error.outline_color = {.r = 0.6, .g = 0.6, .b = 0.6, .a = 0.9};
       raw_error.thickness = 1.0;
       const auto& raw = attempt.refinement->original_corners[index];
-      raw_error.points = {{.x = raw.x, .y = raw.y}, {.x = truth.x, .y = truth.y}};
+      raw_error.points = {{.x = raw.x, .y = raw.y}, {.x = TRUTH.x, .y = TRUTH.y}};
       annotations.points.push_back(std::move(raw_error));
       if (HasAppliedRefinement(attempt)) {
         ::foxglove::schemas::PointsAnnotation final_error;
@@ -261,7 +318,7 @@ bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
         final_error.outline_color = {.r = 1.0, .b = 1.0, .a = 0.9};
         final_error.thickness = 1.0;
         const auto& final = attempt.refinement->refined_corners[index];
-        final_error.points = {{.x = final.x, .y = final.y}, {.x = truth.x, .y = truth.y}};
+        final_error.points = {{.x = final.x, .y = final.y}, {.x = TRUTH.x, .y = TRUTH.y}};
         annotations.points.push_back(std::move(final_error));
       }
     }
@@ -270,10 +327,12 @@ bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
 }
 
 ::foxglove::schemas::ImageAnnotations EncodeCornerRefinerAxes(
-    const modules::ArmorPnpFrameResult& result, const ::foxglove::schemas::Timestamp& timestamp) {
+    const simulation_evaluation::PnpEvaluationResult& result,
+    const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::ImageAnnotations annotations;
   for (const auto& attempt : result.attempts) {
-    if (attempt.source != modules::PnpInputSource::DETECTION || !attempt.refinement)
+    if (attempt.source != simulation_evaluation::PnpEvaluationSource::DETECTION ||
+        !attempt.refinement)
       continue;
     const auto& refinement = *attempt.refinement;
     for (const auto& lightbar : refinement.lightbars) {
@@ -284,9 +343,9 @@ bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
       axis.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LIST;
       axis.outline_color = {.r = 0.2, .g = 0.7, .b = 1.0, .a = 0.9};
       axis.thickness = 1.0;
-      const auto extent = lightbar.axis * static_cast<float>(0.65 * lightbar.length_px);
-      axis.points = {{.x = lightbar.center.x - extent.x, .y = lightbar.center.y - extent.y},
-                     {.x = lightbar.center.x + extent.x, .y = lightbar.center.y + extent.y}};
+      const auto EXTENT = lightbar.axis * static_cast<float>(0.65 * lightbar.length_px);
+      axis.points = {{.x = lightbar.center.x - EXTENT.x, .y = lightbar.center.y - EXTENT.y},
+                     {.x = lightbar.center.x + EXTENT.x, .y = lightbar.center.y + EXTENT.y}};
       annotations.points.push_back(std::move(axis));
       ::foxglove::schemas::PointsAnnotation center;
       center.timestamp = timestamp;
@@ -301,10 +360,12 @@ bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
 }
 
 ::foxglove::schemas::ImageAnnotations EncodeCornerRefinerCandidates(
-    const modules::ArmorPnpFrameResult& result, const ::foxglove::schemas::Timestamp& timestamp) {
+    const simulation_evaluation::PnpEvaluationResult& result,
+    const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::ImageAnnotations annotations;
   for (const auto& attempt : result.attempts) {
-    if (attempt.source != modules::PnpInputSource::DETECTION || !attempt.refinement)
+    if (attempt.source != simulation_evaluation::PnpEvaluationSource::DETECTION ||
+        !attempt.refinement)
       continue;
     const auto& refinement = *attempt.refinement;
     for (const auto& endpoint : refinement.endpoints) {
@@ -344,7 +405,8 @@ bool HasAppliedRefinement(const modules::ArmorPnpAttempt& attempt) {
   return annotations;
 }
 
-std::string EncodeStats(const modules::ArmorPnpFrameResult& result, std::uint64_t sequence,
+std::string EncodeStats(const simulation_evaluation::PnpEvaluationResult& result,
+                        std::string_view pnp_state, std::uint64_t sequence,
                         const ::foxglove::schemas::Timestamp& timestamp) {
   // attempts 是当前帧明细；summary、groups、solve 和 refinement 是最近原子统计快照。
   std::string attempts;
@@ -366,7 +428,7 @@ std::string EncodeStats(const modules::ArmorPnpFrameResult& result, std::uint64_
         "\"position_error_m\":{},\"position_error_camera_m\":{},\"depth_error_m\":{},"
         "\"signed_depth_error_m\":{},\"rotation_error_deg\":{},\"position_jitter_m\":{},"
         "\"refinement\":{}}}",
-        modules::PnpInputSourceName(attempt.source), attempt.input_index,
+        simulation_evaluation::PnpEvaluationSourceName(attempt.source), attempt.input_index,
         modules::PnpStatusName(attempt.status),
         estimate && estimate->truth_id ? std::to_string(*estimate->truth_id) : "null",
         estimate ? std::to_string(estimate->candidate_index) : "null",
@@ -377,9 +439,8 @@ std::string EncodeStats(const modules::ArmorPnpFrameResult& result, std::uint64_
         estimate ? OptionalNumber(estimate->truth_distance_m) : "null",
         estimate ? OptionalNumber(estimate->truth_viewing_angle_deg) : "null",
         estimate && estimate->truth_type
-            ? fmt::format("\"{}\"", *estimate->truth_type == hal::CameraFrame::ArmorType::LARGE
-                                        ? "large"
-                                        : "small")
+            ? fmt::format("\"{}\"",
+                          *estimate->truth_type == geometry::ArmorType::LARGE ? "large" : "small")
             : "null",
         estimate ? fmt::format("{:.9g}", estimate->image_width_px) : "null",
         estimate ? fmt::format("{:.9g}", estimate->image_height_px) : "null",
@@ -410,7 +471,8 @@ std::string EncodeStats(const modules::ArmorPnpFrameResult& result, std::uint64_
   }
   return fmt::format(
       "{{\"timestamp\":{{\"sec\":{},\"nsec\":{}}},\"sequence\":{},\"summary_sequence\":{},"
-      "\"attempted\":{},\"successful\":{},\"summary\":{{\"ground_truth\":{},"
+      "\"pnp_state\":\"{}\",\"attempted\":{},\"successful\":{},"
+      "\"summary\":{{\"ground_truth\":{},"
       "\"detection\":{}}},"
       "\"groups\":{{\"distance\":{},\"viewing_angle\":{},\"armor_size\":{}}},"
       "\"solve\":{},"
@@ -418,8 +480,8 @@ std::string EncodeStats(const modules::ArmorPnpFrameResult& result, std::uint64_
       "\"failure_reasons\":{},\"elapsed_ms\":{},"
       "\"raw_mean_corner_error_px\":{},\"final_mean_corner_error_px\":{}}},"
       "\"attempts\":[{}]}}",
-      timestamp.sec, timestamp.nsec, sequence, result.summary_sequence, result.attempts.size(),
-      successes, DetailedSummaryJson(result.ground_truth_summary),
+      timestamp.sec, timestamp.nsec, sequence, result.summary_sequence, pnp_state,
+      result.attempts.size(), successes, DetailedSummaryJson(result.ground_truth_summary),
       DetailedSummaryJson(result.detection_summary), GroupJson(result.distance_groups),
       GroupJson(result.angle_groups), GroupJson(result.size_groups),
       SolveSummaryJson(result.solve_summary), result.refinement_summary.attempted,

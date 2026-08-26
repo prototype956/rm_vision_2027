@@ -121,8 +121,8 @@ int CalibrationApplication::Run() {
 
   tool::DebugWindow window(K_WINDOW_NAME, tool::WindowMode::NORMAL);
   while (g_stop_requested == 0) {
-    hal::CameraFrame frame;
-    const auto GRAB_STATUS = camera.Grab(frame);
+    frame::FramePacket packet;
+    const auto GRAB_STATUS = camera.Grab(packet);
     if (GRAB_STATUS == hal::GrabStatus::TIMEOUT || GRAB_STATUS == hal::GrabStatus::INVALID_FRAME) {
       continue;
     }
@@ -134,9 +134,9 @@ int CalibrationApplication::Run() {
       return 4;
     }
 
-    const FrameObservation OBSERVATION = calibrator.Observe(frame.image);
+    const FrameObservation OBSERVATION = calibrator.Observe(packet.capture.image);
     const bool LIKELY_DUPLICATE = calibrator.IsLikelyDuplicate(OBSERVATION);
-    cv::Mat preview = frame.image.clone();
+    cv::Mat preview = packet.capture.image.clone();
     if (OBSERVATION.found) {
       cv::drawChessboardCorners(preview, {settings_.board_columns, settings_.board_rows},
                                 OBSERVATION.corners, true);
@@ -175,7 +175,7 @@ int CalibrationApplication::Run() {
       const auto RELATIVE_IMAGE_PATH =
           std::filesystem::path("images") / fmt::format("sample_{:04d}.png", FILE_INDEX);
       const auto ABSOLUTE_IMAGE_PATH = SESSION_DIR / RELATIVE_IMAGE_PATH;
-      if (!cv::imwrite(ABSOLUTE_IMAGE_PATH.string(), frame.image,
+      if (!cv::imwrite(ABSOLUTE_IMAGE_PATH.string(), packet.capture.image,
                        {cv::IMWRITE_PNG_COMPRESSION, 3})) {
         last_message = "capture failed: cannot save PNG";
         MV_LOG_ERROR("Calibration", "cannot save image: {}", ABSOLUTE_IMAGE_PATH.string());

@@ -1,0 +1,8 @@
+schema_version: 1
+camera:
+  no_valid_frame_timeout_ms: 2000
+control:
+  command_sink_unhealthy_timeout_ms: 1000
+optional_components:
+  evaluation_disable_after_consecutive_errors: 1
+  debug_window_disable_after_consecutive_errors: 1

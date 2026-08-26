@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <thread>
 
@@ -99,19 +100,60 @@ bool ValidCalibration(const CameraCalibrationMeta& calibration, uint32_t width,
   return true;
 }
 
+bool ValidChassisObservation(const ChassisObservationMeta& observation,
+                             const CapturedFrameMeta& frame) noexcept {
+  if (observation.frame_sequence != frame.frame_sequence ||
+      observation.timestamp_ns != frame.capture_timestamp_ns || !Finite(observation.dt_s) ||
+      observation.dt_s <= 0.0F || observation.dt_s > 1.0F ||
+      !Finite(observation.yaw_velocity_rad_s) ||
+      std::abs(observation.yaw_velocity_rad_s) > 100.0F ||
+      !Finite(observation.yaw_acceleration_rad_s2)) {
+    return false;
+  }
+  for (const float VALUE : observation.velocity_body_mps) {
+    if (!Finite(VALUE) || std::abs(VALUE) > 20.0F)
+      return false;
+  }
+  for (const float VALUE : observation.wheel_linear_mps) {
+    if (!Finite(VALUE))
+      return false;
+  }
+  for (const float VALUE : observation.wheel_angular_rad_s) {
+    if (!Finite(VALUE))
+      return false;
+  }
+  for (const float VALUE : observation.acceleration_body_mps2) {
+    if (!Finite(VALUE))
+      return false;
+  }
+  for (const float VALUE : observation.rpy_rad) {
+    if (!Finite(VALUE))
+      return false;
+  }
+  for (const float VALUE : observation.gyro_xyz_rad_s) {
+    if (!Finite(VALUE))
+      return false;
+  }
+  for (const float VALUE : observation.accel_xyz_mps2) {
+    if (!Finite(VALUE))
+      return false;
+  }
+  return true;
+}
+
 mv::geometry::RigidTransform ConvertTransform(const RigidTransformF32& value) noexcept {
   return {.translation = mv::geometry::Vector3(value.translation[0], value.translation[1],
                                                value.translation[2]),
-          // Eigen 四元数构造顺序为 w/x/y/z；Talos v5 协议字段为 x/y/z/w。
+          // Eigen 四元数构造顺序为 w/x/y/z；Talos v6 协议字段为 x/y/z/w。
           .rotation = mv::geometry::Quaternion(value.rotation.w, value.rotation.x, value.rotation.y,
                                                value.rotation.z)};
 }
 
-CameraFrame::FrameGeometry ConvertGeometry(const CapturedFrameMeta& metadata) {
-  // Grab() 已完整验证数量、时间戳和数值范围，这里只负责从 ABI 类型提升到 HAL 类型。
-  CameraFrame::FrameGeometry geometry;
+void PopulateFrameContext(const CapturedFrameMeta& metadata, bool chassis_valid, bool truth_valid,
+                          bool projectile_valid, frame::FramePacket& packet) {
+  // Grab() 已分别验证正式数据和可选仿真附件，这里只负责从 ABI 类型提升。
   const auto& camera = metadata.camera_info;
-  geometry.calibration = {
+  packet.camera_model = frame::CameraModel{
       .width = camera.width,
       .height = camera.height,
       .fx = camera.fx,
@@ -120,12 +162,26 @@ CameraFrame::FrameGeometry ConvertGeometry(const CapturedFrameMeta& metadata) {
       .cy = camera.cy,
       .distortion = {camera.distortion[0], camera.distortion[1], camera.distortion[2],
                      camera.distortion[3], camera.distortion[4]}};
-  geometry.world_t_gimbal = ConvertTransform(metadata.world_t_gimbal);
-  geometry.gimbal_t_camera_optical = ConvertTransform(metadata.gimbal_t_camera_optical);
-  geometry.gimbal_t_muzzle = ConvertTransform(metadata.gimbal_t_muzzle);
+  packet.kinematics = frame::FrameKinematics{
+      .world_t_gimbal = ConvertTransform(metadata.world_t_gimbal),
+      .gimbal_t_camera_optical = ConvertTransform(metadata.gimbal_t_camera_optical),
+      .gimbal_t_muzzle = ConvertTransform(metadata.gimbal_t_muzzle)};
+
+  if (chassis_valid) {
+    const auto& chassis = metadata.chassis_observation;
+    packet.chassis_motion = frame::ChassisMotionObservation{
+        .yaw_rad = chassis.rpy_rad[2],
+        .velocity_body_mps =
+            Eigen::Vector2d(chassis.velocity_body_mps[0], chassis.velocity_body_mps[1]),
+        .yaw_velocity_rad_s = chassis.yaw_velocity_rad_s,
+        .source_sequence = chassis.frame_sequence,
+        .source_timestamp_ns = chassis.timestamp_ns};
+  }
+
   if (metadata.gimbal_telemetry_valid != 0) {
-    const auto FORWARD = geometry.world_t_gimbal.rotation * mv::geometry::Vector3::UnitX();
-    geometry.gimbal_actuator = GimbalActuatorTelemetry{
+    const auto FORWARD =
+        packet.kinematics->world_t_gimbal.rotation * mv::geometry::Vector3::UnitX();
+    packet.gimbal_actuator = GimbalActuatorTelemetry{
         .valid = true,
         .state_timestamp_ns = metadata.capture_timestamp_ns,
         .consumed_command_timestamp_ns = metadata.gimbal_consumed_command_timestamp_ns,
@@ -140,27 +196,38 @@ CameraFrame::FrameGeometry ConvertGeometry(const CapturedFrameMeta& metadata) {
         .pitch_acceleration = metadata.gimbal_pitch_acceleration_rad_s2};
   }
 
+  if (!truth_valid)
+    return;
+  simulation::SimulationFrameData simulation;
+  if (projectile_valid) {
+    const auto& projectiles = metadata.projectile_statistics;
+    simulation.projectile_statistics =
+        simulation::ProjectileStatistics{.bullet_launch_count = projectiles.bullet_launch_count,
+                                         .armor_hit_count = projectiles.armor_hit_count,
+                                         .rune_hit_count = projectiles.rune_hit_count,
+                                         .dart_launch_count = projectiles.dart_launch_count};
+  }
   const auto& truth = metadata.ground_truth;
-  geometry.targets.reserve(truth.target_count);
+  simulation.targets.reserve(truth.target_count);
   for (std::size_t index = 0; index < truth.target_count; ++index) {
     const auto& target = truth.targets[index];
-    geometry.targets.push_back({.id = target.id,
-                                .team = target.team,
-                                .armor_label = target.armor_label,
-                                .is_outpost = target.is_outpost != 0,
-                                .position_world = mv::geometry::Vector3(
-                                    target.position[0], target.position[1], target.position[2]),
-                                .yaw = target.yaw,
-                                .yaw_velocity = target.yaw_velocity});
+    simulation.targets.push_back({.id = target.id,
+                                  .team = target.team,
+                                  .armor_label = target.armor_label,
+                                  .is_outpost = target.is_outpost != 0,
+                                  .position_world = mv::geometry::Vector3(
+                                      target.position[0], target.position[1], target.position[2]),
+                                  .yaw = target.yaw,
+                                  .yaw_velocity = target.yaw_velocity});
   }
-  geometry.armors.reserve(truth.armor_count);
+  simulation.armors.reserve(truth.armor_count);
   for (std::size_t index = 0; index < truth.armor_count; ++index) {
     const auto& armor = truth.armors[index];
-    CameraFrame::GroundTruthArmor converted{
+    simulation::GroundTruthArmor converted{
         .id = armor.id,
         .team = armor.team,
         .label = armor.label,
-        .type = static_cast<CameraFrame::ArmorType>(armor.armor_type),
+        .type = static_cast<geometry::ArmorType>(armor.armor_type),
         .width_m = armor.width_m,
         .height_m = armor.height_m,
         .world_t_armor = ConvertTransform(armor.world_t_armor)};
@@ -169,9 +236,9 @@ CameraFrame::FrameGeometry ConvertGeometry(const CapturedFrameMeta& metadata) {
           mv::geometry::Vector3(armor.corners_world[corner][0], armor.corners_world[corner][1],
                                 armor.corners_world[corner][2]);
     }
-    geometry.armors.push_back(std::move(converted));
+    simulation.armors.push_back(std::move(converted));
   }
-  return geometry;
+  packet.simulation = std::move(simulation);
 }
 
 }  // namespace
@@ -189,6 +256,10 @@ struct TalosDevice::Impl {
   std::optional<uint64_t> last_frame_sequence;  ///< 最近接收帧序号，用于拒绝重复或回退帧。
   std::optional<uint64_t> last_capture_timestamp_ns;  ///< 最近采集时间，用于检查严格单调性。
   uint64_t invalid_frames{0};  ///< 本次连接以来被完整性校验拒绝的帧数。
+  uint64_t invalid_simulation_frames{0};    ///< 未影响正式抓帧的非法仿真附件数。
+  std::uint64_t invalid_chassis_frames{0};  ///< 已降级忽略的非法底盘观测数。
+  std::chrono::steady_clock::time_point steady_anchor{};  ///< system/steady 映射锚点。
+  std::chrono::system_clock::time_point system_anchor{};  ///< 与 steady_anchor 同次采样。
 
   /** 按映射、文件描述符的逆依赖顺序释放资源，并恢复关闭状态。 */
   void ResetMappings() noexcept {
@@ -214,6 +285,31 @@ struct TalosDevice::Impl {
     last_frame_sequence.reset();
     last_capture_timestamp_ns.reset();
     invalid_frames = 0;
+    invalid_simulation_frames = 0;
+    invalid_chassis_frames = 0;
+    steady_anchor = {};
+    system_anchor = {};
+  }
+
+  /** 将同主机 Unix 采集时间映射到 steady_clock；未来时刻不会被钳制伪装。 */
+  [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> CaptureSteadyTime(
+      std::uint64_t capture_timestamp_ns,
+      std::chrono::steady_clock::time_point receive_time) const noexcept {
+    if (capture_timestamp_ns == 0 ||
+        capture_timestamp_ns >
+            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+        steady_anchor == std::chrono::steady_clock::time_point{} ||
+        system_anchor == std::chrono::system_clock::time_point{}) {
+      return std::nullopt;
+    }
+    const auto CAPTURE_SYSTEM = std::chrono::system_clock::time_point(
+        std::chrono::nanoseconds(static_cast<std::int64_t>(capture_timestamp_ns)));
+    const auto MAPPED =
+        steady_anchor + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                            CAPTURE_SYSTEM - system_anchor);
+    if (MAPPED > receive_time)
+      return std::nullopt;
+    return MAPPED;
   }
 
   bool HeartbeatFresh() const noexcept {
@@ -304,6 +400,11 @@ struct TalosDevice::Impl {
       return false;
     }
 
+    const auto STEADY_BEFORE = std::chrono::steady_clock::now();
+    system_anchor = std::chrono::system_clock::now();
+    const auto STEADY_AFTER = std::chrono::steady_clock::now();
+    steady_anchor = STEADY_BEFORE + (STEADY_AFTER - STEADY_BEFORE) / 2;
+
     info.device_name = "talos:" + config.meta_path;
     info.sensor_width = config.expected_width;
     info.sensor_height = config.expected_height;
@@ -358,7 +459,7 @@ void TalosDevice::Close() noexcept {
   }
 }
 
-GrabStatus TalosDevice::Grab(CameraFrame& frame) {
+GrabStatus TalosDevice::Grab(frame::FramePacket& packet) {
   if (!impl_->is_open || impl_->meta == nullptr) {
     return GrabStatus::DISCONNECTED;
   }
@@ -381,15 +482,17 @@ GrabStatus TalosDevice::Grab(CameraFrame& frame) {
     const auto INVALID = [&]() {
       const uint64_t COUNT = ++impl_->invalid_frames;
       if (COUNT == 1 || COUNT % 100 == 0) {
-        MV_LOG_WARN("HAL.Camera.Talos", "rejected invalid Talos v5 frame #{} (seq={})", COUNT,
+        MV_LOG_WARN("HAL.Camera.Talos", "rejected invalid Talos v6 frame #{} (seq={})", COUNT,
                     metadata.frame_sequence);
       }
       return GrabStatus::INVALID_FRAME;
     };
 
-    // 图像、标定、TF 和真值必须来自同一个原子发布的采集快照。任一子结构不同步，
-    // 整帧都不能交给上层，否则 Foxglove 的三维实体和二维重投影将产生假误差。
+    // 底盘观测和仿真附件仅在与正式帧严格同步时交给上层；附件失效不拒绝图像。
+    const bool CHASSIS_VALID = ValidChassisObservation(metadata.chassis_observation, metadata);
     const auto& truth = metadata.ground_truth;
+    const auto& projectiles = metadata.projectile_statistics;
+    const bool PROJECTILE_VALID = projectiles.timestamp_ns == metadata.capture_timestamp_ns;
     bool truth_valid = truth.frame_sequence == metadata.frame_sequence &&
                        truth.timestamp_ns == metadata.capture_timestamp_ns &&
                        truth.target_count <= K_GROUND_TRUTH_MAX_TARGETS &&
@@ -437,7 +540,7 @@ GrabStatus TalosDevice::Grab(CameraFrame& frame) {
         !ValidCalibration(metadata.camera_info, metadata.width, metadata.height) ||
         !ValidTransform(metadata.world_t_gimbal) ||
         !ValidTransform(metadata.gimbal_t_camera_optical) ||
-        !ValidTransform(metadata.gimbal_t_muzzle) || !truth_valid ||
+        !ValidTransform(metadata.gimbal_t_muzzle) ||
         (metadata.gimbal_telemetry_valid != 0 &&
          (metadata.gimbal_telemetry_valid != 1 || metadata.gimbal_actuator_mode > 2 ||
           metadata.gimbal_command_valid > 1 || !Finite(metadata.gimbal_yaw_velocity_rad_s) ||
@@ -451,6 +554,22 @@ GrabStatus TalosDevice::Grab(CameraFrame& frame) {
       return INVALID();
     }
 
+    if (!truth_valid || !PROJECTILE_VALID) {
+      const std::uint64_t COUNT = ++impl_->invalid_simulation_frames;
+      if (COUNT == 1 || COUNT % 100 == 0) {
+        MV_LOG_WARN("HAL.Camera.Talos",
+                    "ignored invalid simulation attachment #{} (seq={} truth={} projectiles={})",
+                    COUNT, metadata.frame_sequence, truth_valid, PROJECTILE_VALID);
+      }
+    }
+    if (!CHASSIS_VALID) {
+      const std::uint64_t COUNT = ++impl_->invalid_chassis_frames;
+      if (COUNT == 1 || COUNT % 100 == 0) {
+        MV_LOG_WARN("HAL.Camera.Talos", "ignored invalid chassis observation #{} (seq={})", COUNT,
+                    metadata.frame_sequence);
+      }
+    }
+
     const std::size_t FRAME_SIZE =
         static_cast<std::size_t>(metadata.width) * static_cast<std::size_t>(metadata.height) * 3;
     const std::size_t OFFSET = static_cast<std::size_t>(metadata.buffer_id) * FRAME_SIZE;
@@ -458,25 +577,28 @@ GrabStatus TalosDevice::Grab(CameraFrame& frame) {
       return INVALID();
     }
 
+    packet = {};
     const auto* source = static_cast<const uint8_t*>(impl_->image_pool_mapping) + OFFSET;
     const cv::Mat SHARED_IMAGE(static_cast<int>(metadata.height), static_cast<int>(metadata.width),
                                CV_8UC3, const_cast<uint8_t*>(source));
     // 发布端会复用共享三缓冲槽位，返回前必须复制或转换到独立拥有的 cv::Mat。
     if (metadata.format == K_FORMAT_BGR8) {
-      frame.image = SHARED_IMAGE.clone();
+      packet.capture.image = SHARED_IMAGE.clone();
     } else {
-      cv::cvtColor(SHARED_IMAGE, frame.image, cv::COLOR_RGB2BGR);
+      cv::cvtColor(SHARED_IMAGE, packet.capture.image, cv::COLOR_RGB2BGR);
     }
-    if (frame.image.empty()) {
+    if (packet.capture.image.empty()) {
       return GrabStatus::FATAL;
     }
     impl_->last_frame_sequence = metadata.frame_sequence;
     impl_->last_capture_timestamp_ns = metadata.capture_timestamp_ns;
-    frame.receive_steady_time = std::chrono::steady_clock::now();
-    frame.capture_timestamp_ns = metadata.capture_timestamp_ns;
-    frame.geometry = ConvertGeometry(metadata);
-    frame.sequence = metadata.frame_sequence;
-    frame.source_invalid_frames = impl_->invalid_frames;
+    packet.capture.stamp.receive_steady_time = std::chrono::steady_clock::now();
+    packet.capture.stamp.capture_steady_time = impl_->CaptureSteadyTime(
+        metadata.capture_timestamp_ns, packet.capture.stamp.receive_steady_time);
+    packet.capture.stamp.capture_timestamp_ns = metadata.capture_timestamp_ns;
+    packet.capture.stamp.sequence = metadata.frame_sequence;
+    packet.capture.stamp.source_invalid_frames = impl_->invalid_frames;
+    PopulateFrameContext(metadata, CHASSIS_VALID, truth_valid, PROJECTILE_VALID, packet);
     return GrabStatus::OK;
   }
   return GrabStatus::TIMEOUT;

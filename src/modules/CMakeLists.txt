@@ -1,5 +1,6 @@
 add_subdirectory(armor_detector)
 add_subdirectory(armor_corner_refiner)
+add_subdirectory(armor_light_detector)
 add_subdirectory(armor_pnp)
 add_subdirectory(armor_predictor)
 add_subdirectory(gimbal_trajectory_planner)

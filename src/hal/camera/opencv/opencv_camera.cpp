@@ -137,7 +137,7 @@ void OpenCvCamera::Close() {
     MV_LOG_INFO("HAL.Camera.OpenCV", "closed");
 }
 
-GrabStatus OpenCvCamera::Grab(CameraFrame& frame) {
+GrabStatus OpenCvCamera::Grab(frame::FramePacket& packet) {
   if (!impl_->is_open) {
     MV_LOG_WARN("HAL.Camera.OpenCV", "Grab called on closed camera");
     return GrabStatus::DISCONNECTED;
@@ -157,9 +157,10 @@ GrabStatus OpenCvCamera::Grab(CameraFrame& frame) {
       image.rows != impl_->info.output_height || image.type() != CV_8UC3) {
     return GrabStatus::INVALID_FRAME;
   }
-  frame.image = std::move(image);
-  frame.receive_steady_time = std::chrono::steady_clock::now();
-  frame.sequence = impl_->sequence++;
+  packet = {};
+  packet.capture.image = std::move(image);
+  packet.capture.stamp.receive_steady_time = std::chrono::steady_clock::now();
+  packet.capture.stamp.sequence = impl_->sequence++;
   return GrabStatus::OK;
 }
 

@@ -6,7 +6,6 @@
 #include <mutex>
 
 #include <optional>
-#include <span>
 
 namespace mv::tool::foxglove::pipeline {
 
@@ -32,12 +31,11 @@ class LatestFrameQueue final {
    * @brief 尝试限流并用当前同帧数据更新队列。
    * @throws std::bad_alloc 复制检测结果或空间元数据失败。
    */
-  [[nodiscard]] QueuePushResult Push(const hal::CameraFrame& frame,
-                                     std::span<const modules::ArmorDetection> detections,
-                                     const modules::DetectorStats& detector_stats,
-                                     const modules::ArmorPnpFrameResult& pnp_result,
-                                     const modules::ArmorPredictionResult& prediction_result,
-                                     std::optional<modules::ArmorSelectionSnapshot> selection);
+  [[nodiscard]] QueuePushResult Push(
+      const frame::FramePacket& packet, const ::mv::runtime::VisionFrameOutput& output,
+      const ::mv::runtime::VisionFrameDiagnostics& diagnostics,
+      const std::optional<simulation_evaluation::SimulationEvaluationResult>& simulation_evaluation,
+      std::optional<modules::ArmorSelectionSnapshot> selection);
   /** @brief 阻塞等待下一帧；停止且队列排空后返回空值。 */
   [[nodiscard]] std::optional<VisionDebugFrame> WaitPop() noexcept;
   /** @brief 幂等停止生产者并唤醒等待中的唯一消费者。 */

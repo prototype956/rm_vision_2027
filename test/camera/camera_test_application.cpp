@@ -108,7 +108,7 @@ std::string TimeStampForFile() {
 }
 
 // 在最后一帧有效图像上叠加中心标记和实时抓帧状态。
-void DrawPreview(cv::Mat& image, const hal::CameraFrame& frame, const hal::CameraInfo& info,
+void DrawPreview(cv::Mat& image, const frame::FramePacket& packet, const hal::CameraInfo& info,
                  hal::GrabStatus status, double fps, double elapsed_sec) {
   const cv::Scalar GREEN(0, 255, 0);
   const cv::Point CENTER(image.cols / 2, image.rows / 2);
@@ -116,7 +116,7 @@ void DrawPreview(cv::Mat& image, const hal::CameraFrame& frame, const hal::Camer
   cv::line(image, {CENTER.x, CENTER.y - 25}, {CENTER.x, CENTER.y + 25}, GREEN, 1);
 
   const std::vector<std::string> LINES = {
-      "seq: " + std::to_string(frame.sequence),
+      "seq: " + std::to_string(packet.capture.stamp.sequence),
       "fps: " + cv::format("%.2f", fps),
       "size: " + std::to_string(image.cols) + "x" + std::to_string(image.rows),
       "exposure: " + std::to_string(info.exposure_us) + " us",
@@ -192,10 +192,10 @@ int CameraTestApplication::Run() {
         restart_pass = false;
       }
       for (int index = 0; restart_pass && index < settings_.frames_per_restart_cycle; ++index) {
-        hal::CameraFrame frame;
-        const auto STATUS = camera_->Grab(frame);
-        if (STATUS != hal::GrabStatus::OK || frame.image.cols != 1280 || frame.image.rows != 720 ||
-            frame.image.type() != CV_8UC3) {
+        frame::FramePacket packet;
+        const auto STATUS = camera_->Grab(packet);
+        if (STATUS != hal::GrabStatus::OK || packet.capture.image.cols != 1280 ||
+            packet.capture.image.rows != 720 || packet.capture.image.type() != CV_8UC3) {
           MV_LOG_ERROR("CameraTest", "restart cycle {}/{} frame {} failed: {}", cycle,
                        settings_.restart_cycles, index, hal::GrabStatusName(STATUS));
           restart_pass = false;
@@ -281,7 +281,7 @@ int CameraTestApplication::Run() {
   double baseline_fps = 0.0;
   const auto INITIAL_RSS = RssBytes();
   const auto INITIAL_CPU = std::clock();
-  hal::CameraFrame last_good_frame;
+  frame::FramePacket last_good_frame;
   hal::GrabStatus last_status = hal::GrabStatus::OK;
 
   // 主循环持续抓帧，直到达到配置时长、用户关闭预览或遇到不可恢复错误。
@@ -290,19 +290,19 @@ int CameraTestApplication::Run() {
     if (Seconds(BEFORE_GRAB - START) >= settings_.duration_sec)
       break;
 
-    hal::CameraFrame frame;
-    last_status = camera_->Grab(frame);
+    frame::FramePacket packet;
+    last_status = camera_->Grab(packet);
     const auto NOW = Clock::now();
     ++metrics.total;
 
     if (last_status == hal::GrabStatus::OK) {
       // SDK 返回成功后仍需检查图像尺寸和类型，异常帧按 INVALID_FRAME 统计。
       bool valid = true;
-      if (frame.image.cols != 1280 || frame.image.rows != 720) {
+      if (packet.capture.image.cols != 1280 || packet.capture.image.rows != 720) {
         ++metrics.resolution_errors;
         valid = false;
       }
-      if (frame.image.type() != CV_8UC3) {
+      if (packet.capture.image.type() != CV_8UC3) {
         ++metrics.type_errors;
         valid = false;
       }
@@ -320,15 +320,16 @@ int CameraTestApplication::Run() {
         }
 
         if (last_success_time != Clock::time_point{}) {
-          const double INTERVAL = Seconds(frame.receive_steady_time - last_success_time);
+          const double INTERVAL =
+              Seconds(packet.capture.stamp.receive_steady_time - last_success_time);
           if (INTERVAL > 0.0)
             metrics.intervals_sec.push_back(INTERVAL);
           metrics.max_no_valid_frame_sec = std::max(metrics.max_no_valid_frame_sec, INTERVAL);
         }
-        last_success_time = frame.receive_steady_time;
+        last_success_time = packet.capture.stamp.receive_steady_time;
 
         // 指纹只用于诊断重复帧，不直接作为本次验收的失败条件。
-        const uint64_t FINGERPRINT = FrameFingerprint(frame.image);
+        const uint64_t FINGERPRINT = FrameFingerprint(packet.capture.image);
         if (have_fingerprint && FINGERPRINT == last_fingerprint) {
           ++metrics.duplicate_frames;
           ++metrics.consecutive_duplicates;
@@ -339,13 +340,14 @@ int CameraTestApplication::Run() {
         }
         last_fingerprint = FINGERPRINT;
         have_fingerprint = true;
-        last_good_frame = frame;
+        last_good_frame = packet;
 
         // 样本按成功帧保存；间隔为 0 时 next_sample 被设为无穷远。
         if (NOW >= next_sample) {
-          const auto PATH = settings_.output_dir /
-                            ("sample_" + RUN_ID + "_" + std::to_string(frame.sequence) + ".jpg");
-          if (!cv::imwrite(PATH.string(), frame.image)) {
+          const auto PATH =
+              settings_.output_dir /
+              ("sample_" + RUN_ID + "_" + std::to_string(packet.capture.stamp.sequence) + ".jpg");
+          if (!cv::imwrite(PATH.string(), packet.capture.image)) {
             MV_LOG_WARN("CameraTest", "failed to save sample {}", PATH.string());
           }
           next_sample += std::chrono::seconds(settings_.save_sample_interval_sec);
@@ -359,15 +361,16 @@ int CameraTestApplication::Run() {
       }
       events << "{\"elapsed_sec\":" << Seconds(NOW - START) << ",\"event\":\"grab_failure\","
              << "\"status\":\"" << hal::GrabStatusName(last_status)
-             << "\",\"last_sequence\":" << last_good_frame.sequence << "}\n";
+             << "\",\"last_sequence\":" << last_good_frame.capture.stamp.sequence << "}\n";
       MV_LOG_WARN("CameraTest", "grab {} at total={} last_sequence={}",
-                  hal::GrabStatusName(last_status), metrics.total, last_good_frame.sequence);
+                  hal::GrabStatusName(last_status), metrics.total,
+                  last_good_frame.capture.stamp.sequence);
     }
 
     // 抓帧失败时继续显示最后一帧有效图像，并在 HUD 上呈现最新状态。
     if (preview_window) {
-      if (!last_good_frame.image.empty()) {
-        cv::Mat preview = last_good_frame.image.clone();
+      if (!last_good_frame.capture.image.empty()) {
+        cv::Mat preview = last_good_frame.capture.image.clone();
         const double REPORT_ELAPSED = std::max(Seconds(NOW - report_start), 1e-6);
         DrawPreview(preview, last_good_frame, INFO, last_status,
                     static_cast<double>(report_success) / REPORT_ELAPSED, Seconds(NOW - START));
@@ -421,7 +424,7 @@ int CameraTestApplication::Run() {
     // TIMEOUT 和 INVALID_FRAME 可继续统计；断开或致命错误立即结束主循环。
     if (last_status == hal::GrabStatus::DISCONNECTED || last_status == hal::GrabStatus::FATAL) {
       MV_LOG_ERROR("CameraTest", "stopping after {} (last successful sequence={})",
-                   hal::GrabStatusName(last_status), last_good_frame.sequence);
+                   hal::GrabStatusName(last_status), last_good_frame.capture.stamp.sequence);
       break;
     }
   }

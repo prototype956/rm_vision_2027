@@ -111,13 +111,14 @@ void DrawOutlinedText(cv::Mat& image, const std::string& text, const cv::Point& 
 }
 
 // 在相机帧上叠加装甲四边形、分类结果以及检测链路的实时性能指标。
-void DrawOverlay(cv::Mat& image, const hal::CameraFrame& frame,
+void DrawOverlay(cv::Mat& image, const frame::FramePacket& packet,
                  const std::vector<modules::ArmorDetection>& detections,
-                 const modules::DetectorStats& stats, double loop_fps, double elapsed_sec) {
+                 const modules::ArmorDetectorDiagnostics& stats, double loop_fps,
+                 double elapsed_sec) {
   tool::DrawArmorDetections(image, detections);
 
   const std::vector<std::string> LINES = {
-      fmt::format("seq: {}", frame.sequence),
+      fmt::format("seq: {}", packet.capture.stamp.sequence),
       fmt::format("loop fps: {:.2f}", loop_fps),
       fmt::format("detections: {}  candidates: {}", detections.size(), stats.threshold_candidates),
       fmt::format("pre/infer/post: {:.2f}/{:.2f}/{:.2f} ms", stats.preprocess_ms,
@@ -159,11 +160,11 @@ void CountGrabFailure(Metrics& metrics, hal::GrabStatus status) {
 
 ArmorDetectorTestApplication::ArmorDetectorTestApplication(
     std::unique_ptr<hal::ICamera> camera, std::unique_ptr<modules::YoloArmorDetector> detector,
-    YAML::Node camera_config, ArmorDetectorTestSettings settings,
+    const YAML::Node& camera_config, ArmorDetectorTestSettings settings,
     std::optional<tool::foxglove::Config> foxglove_config)
     : camera_(std::move(camera)),
       detector_(std::move(detector)),
-      camera_config_(std::move(camera_config)),
+      camera_config_(camera_config),
       settings_(std::move(settings)),
       foxglove_config_(std::move(foxglove_config)) {}
 
@@ -254,19 +255,19 @@ int ArmorDetectorTestApplication::Run() {
       break;
     }
 
-    hal::CameraFrame frame;
-    auto status = camera_->Grab(frame);
+    frame::FramePacket packet;
+    auto status = camera_->Grab(packet);
     const auto NOW = Clock::now();
     ++metrics.grab_total;
 
     if (status == hal::GrabStatus::OK) {
       // SDK 返回成功后仍需检查图像尺寸和类型，避免非法输入进入检测器。
       bool valid = true;
-      if (frame.image.cols != 1280 || frame.image.rows != 720) {
+      if (packet.capture.image.cols != 1280 || packet.capture.image.rows != 720) {
         ++metrics.resolution_errors;
         valid = false;
       }
-      if (frame.image.type() != CV_8UC3) {
+      if (packet.capture.image.type() != CV_8UC3) {
         ++metrics.type_errors;
         valid = false;
       }
@@ -283,18 +284,21 @@ int ArmorDetectorTestApplication::Run() {
         last_valid_time = NOW;
 
         try {
-          // LastStats() 对应刚完成的 Detect()，因此二者必须在同一同步调用链中读取。
-          const auto DETECTIONS = detector_->Detect(frame.image);
-          const auto STATS = detector_->LastStats();
+          const auto DETECTION_RESULT = detector_->Detect(packet.capture.image);
+          const auto& detections = DETECTION_RESULT.output.detections;
+          const auto& stats = DETECTION_RESULT.diagnostics;
           if (foxglove_publisher) {
-            foxglove_publisher->Publish(frame, DETECTIONS, STATS, modules::ArmorPnpFrameResult{},
-                                        modules::ArmorPredictionResult{});
+            runtime::VisionFrameOutput output;
+            output.detections = detections;
+            runtime::VisionFrameDiagnostics diagnostics;
+            diagnostics.detector = stats;
+            foxglove_publisher->Publish(packet, output, diagnostics);
           }
           ++metrics.detection_success;
           ++report_detection_success;
-          metrics.total_detections += DETECTIONS.size();
-          metrics.total_candidates += STATS.threshold_candidates;
-          if (!DETECTIONS.empty()) {
+          metrics.total_detections += detections.size();
+          metrics.total_candidates += stats.threshold_candidates;
+          if (!detections.empty()) {
             ++metrics.target_frames;
           }
 
@@ -304,10 +308,10 @@ int ArmorDetectorTestApplication::Run() {
             ++warmup_detection_success;
           } else {
             post_warmup_success_times.push_back(NOW);
-            metrics.preprocess_ms.push_back(STATS.preprocess_ms);
-            metrics.inference_ms.push_back(STATS.inference_ms);
-            metrics.postprocess_ms.push_back(STATS.postprocess_ms);
-            metrics.total_ms.push_back(STATS.total_ms);
+            metrics.preprocess_ms.push_back(stats.preprocess_ms);
+            metrics.inference_ms.push_back(stats.inference_ms);
+            metrics.postprocess_ms.push_back(stats.postprocess_ms);
+            metrics.total_ms.push_back(stats.total_ms);
           }
 
           const double REPORT_ELAPSED = std::max(Seconds(NOW - report_start), 1.0e-6);
@@ -315,13 +319,13 @@ int ArmorDetectorTestApplication::Run() {
           const bool SAVE_SAMPLE = NOW >= next_sample;
           // 仅在需要预览或保存样本时克隆图像，避免绘制开销污染常规检测路径。
           if (preview_window || SAVE_SAMPLE) {
-            last_preview = frame.image.clone();
-            DrawOverlay(last_preview, frame, DETECTIONS, STATS, LOOP_FPS, ELAPSED);
+            last_preview = packet.capture.image.clone();
+            DrawOverlay(last_preview, packet, detections, stats, LOOP_FPS, ELAPSED);
           }
           if (SAVE_SAMPLE) {
             const auto SAMPLE_PATH =
                 settings_.output_dir /
-                ("sample_" + RUN_ID + "_" + std::to_string(frame.sequence) + ".jpg");
+                ("sample_" + RUN_ID + "_" + std::to_string(packet.capture.stamp.sequence) + ".jpg");
             if (!cv::imwrite(SAMPLE_PATH.string(), last_preview)) {
               MV_LOG_WARN("ArmorDetectorTest", "failed to save sample {}", SAMPLE_PATH.string());
             }
@@ -330,9 +334,10 @@ int ArmorDetectorTestApplication::Run() {
         } catch (const std::exception& error) {
           ++metrics.detection_errors;
           events << "{\"elapsed_sec\":" << Seconds(NOW - START)
-                 << ",\"event\":\"detection_failure\",\"sequence\":" << frame.sequence << "}\n";
-          MV_LOG_ERROR("ArmorDetectorTest", "detection failed at sequence {}: {}", frame.sequence,
-                       error.what());
+                 << ",\"event\":\"detection_failure\",\"sequence\":"
+                 << packet.capture.stamp.sequence << "}\n";
+          MV_LOG_ERROR("ArmorDetectorTest", "detection failed at sequence {}: {}",
+                       packet.capture.stamp.sequence, error.what());
           runtime_stopped = true;
         }
       }
@@ -427,11 +432,13 @@ int ArmorDetectorTestApplication::Run() {
   const bool COMPLETED_DURATION =
       !user_aborted && ELAPSED >= static_cast<double>(settings_.duration_sec);
   const double VALID_FRAME_RATIO =
-      metrics.grab_total > 0 ? static_cast<double>(metrics.valid_frames) / metrics.grab_total : 0.0;
-  const double DETECTION_SUCCESS_RATIO =
-      metrics.valid_frames > 0
-          ? static_cast<double>(metrics.detection_success) / metrics.valid_frames
+      metrics.grab_total > 0
+          ? static_cast<double>(metrics.valid_frames) / static_cast<double>(metrics.grab_total)
           : 0.0;
+  const double DETECTION_SUCCESS_RATIO = metrics.valid_frames > 0
+                                             ? static_cast<double>(metrics.detection_success) /
+                                                   static_cast<double>(metrics.valid_frames)
+                                             : 0.0;
   const double TOTAL_P50 = Percentile(metrics.total_ms, 0.50);
   const double TOTAL_P95 = Percentile(metrics.total_ms, 0.95);
   const double TOTAL_P99 = Percentile(metrics.total_ms, 0.99);

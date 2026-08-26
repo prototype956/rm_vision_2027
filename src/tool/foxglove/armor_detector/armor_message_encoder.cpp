@@ -55,15 +55,19 @@ namespace {
   return annotations;
 }
 
-std::string EncodeDetectorStats(const modules::DetectorStats& stats, std::uint64_t sequence,
+std::string EncodeDetectorStats(const modules::ArmorDetectorDiagnostics& stats,
+                                std::uint64_t sequence,
                                 const ::foxglove::schemas::Timestamp& timestamp) {
+  const char* const DETECTION_STATE = stats.kept_detections == 0 ? "not_detected" : "detected";
   return fmt::format(
       "{{\"timestamp\":{{\"sec\":{},\"nsec\":{}}},\"sequence\":{},"
+      "\"detection_state\":\"{}\","
       "\"preprocess_ms\":{:.3f},\"inference_ms\":{:.3f},"
       "\"postprocess_ms\":{:.3f},\"total_ms\":{:.3f},"
       "\"threshold_candidates\":{},\"kept_detections\":{}}}",
-      timestamp.sec, timestamp.nsec, sequence, stats.preprocess_ms, stats.inference_ms,
-      stats.postprocess_ms, stats.total_ms, stats.threshold_candidates, stats.kept_detections);
+      timestamp.sec, timestamp.nsec, sequence, DETECTION_STATE, stats.preprocess_ms,
+      stats.inference_ms, stats.postprocess_ms, stats.total_ms, stats.threshold_candidates,
+      stats.kept_detections);
 }
 
 }  // namespace mv::tool::foxglove::armor_detector

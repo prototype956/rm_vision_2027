@@ -8,6 +8,6 @@ target_include_directories(mv-tool-foxglove-spatial
         $<INSTALL_INTERFACE:include>
 )
 
-target_link_libraries(mv-tool-foxglove-spatial PUBLIC foxglove_sdk mv-hal-camera mv-geometry)
+target_link_libraries(mv-tool-foxglove-spatial PUBLIC foxglove_sdk mv-frame-data mv-geometry)
 
 message(STATUS "    + mv-tool-foxglove-spatial (TF + calibration + frustum)")

@@ -1,6 +1,10 @@
 #pragma once
 
-#include "hal/camera/i_camera.hpp"
+#include "frame/frame_types.hpp"
+#include "simulation/simulation_frame_data.hpp"
+
+#include <cstdint>
+#include <string>
 
 #include <foxglove/schemas.hpp>
 
@@ -12,7 +16,12 @@ namespace mv::tool::foxglove::simulation {
  * 图元带有限生命周期；仿真器删除目标后，即使没有显式删除消息也会自动消失。
  */
 [[nodiscard]] ::foxglove::schemas::SceneUpdate EncodeGroundTruth(
-    const hal::CameraFrame::FrameGeometry& geometry,
+    const mv::simulation::SimulationFrameData& simulation_data,
+    const ::foxglove::schemas::Timestamp& timestamp);
+
+/** @brief 将同帧累计弹丸统计编码为固定 JSON Schema。 */
+[[nodiscard]] std::string EncodeProjectileStats(
+    const mv::simulation::ProjectileStatistics& statistics, std::uint64_t sequence,
     const ::foxglove::schemas::Timestamp& timestamp);
 
 /**
@@ -22,7 +31,8 @@ namespace mv::tool::foxglove::simulation {
  * 标注，以便 Foxglove 清除上一帧黄色点。
  */
 [[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeProjectionAnnotations(
-    const hal::CameraFrame::FrameGeometry& geometry,
+    const mv::simulation::SimulationFrameData& simulation_data,
+    const frame::CameraModel& camera_model, const frame::FrameKinematics& kinematics,
     const ::foxglove::schemas::Timestamp& timestamp);
 
 }  // namespace mv::tool::foxglove::simulation

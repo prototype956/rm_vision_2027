@@ -40,7 +40,7 @@ struct GimbalActuatorTelemetry {
 /** @brief 提供给火控和轨迹规划器的本机单调时钟云台反馈。 */
 struct GimbalFeedback {
   bool valid{false};                 ///< 当前估计是否可用于控制计算。
-  std::uint64_t source_sequence{0};  ///< 反馈来源对应的 CameraFrame 帧序号。
+  std::uint64_t source_sequence{0};  ///< 反馈来源对应的采集帧序号。
   std::chrono::steady_clock::time_point timestamp{};  ///< 状态对应的本机单调时刻。
   double yaw{0.0};                                    ///< 偏航角，单位为弧度。
   double yaw_velocity{0.0};    ///< 偏航角速度，单位为弧度每秒。

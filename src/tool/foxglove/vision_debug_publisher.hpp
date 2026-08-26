@@ -1,17 +1,17 @@
 #pragma once
 
-#include "hal/camera/i_camera.hpp"
-#include "modules/armor_detector/armor_detector.hpp"
-#include "modules/armor_pnp/armor_pnp_types.hpp"
-#include "modules/armor_predictor/armor_prediction_types.hpp"
+#include "frame/frame_packet.hpp"
 #include "modules/fire_control/fire_control.hpp"
+#include "runtime/runtime_diagnostics_sink.hpp"
+#include "runtime/vision_frame_diagnostics.hpp"
+#include "runtime/vision_frame_output.hpp"
 #include "tool/foxglove/foxglove_config.hpp"
+#include "tool/simulation_evaluation/simulation_evaluation_types.hpp"
 
 #include <cstdint>
 #include <memory>
 
 #include <filesystem>
-#include <span>
 
 namespace mv::tool::foxglove {
 
@@ -66,7 +66,7 @@ class VisionDebugPublisher final {
    *
    * 单个 sink 初始化失败只会停用该 sink 并记录诊断，不向视觉主程序传播异常。
    */
-  explicit VisionDebugPublisher(Config config);
+  explicit VisionDebugPublisher(const Config& config);
   /** @brief 幂等停止后台流水线并关闭实时与录制资源。 */
   ~VisionDebugPublisher();
 
@@ -77,17 +77,21 @@ class VisionDebugPublisher final {
 
   /**
    * @brief 非阻塞提交一帧完整视觉调试数据。
-   * @param frame 原始相机帧；入队后调用方不得并发改写其像素。
+   * @param packet 原始同帧数据包；入队后调用方不得并发改写其像素。
    * @param detections 与该图像对应的检测结果，调用期间复制。
    * @param detector_stats 与该图像对应的检测性能统计。
-   * @param pnp_result 与该图像对应的 PnP 解算、基准及角点精修结果。
+   * @param lightbar_result 与该图像对应的独立灯条和检测统计。
+   * @param pnp_result 与该图像对应的正式 PnP 解算及角点精修健康结果。
+   * @param prediction_result 与该图像对应的正式跟踪预测及诊断结果。
+   * @param simulation_evaluation 可选的同帧仿真评估结果。
    */
-  void Publish(const hal::CameraFrame& frame, std::span<const modules::ArmorDetection> detections,
-               const modules::DetectorStats& detector_stats,
-               const modules::ArmorPnpFrameResult& pnp_result,
-               const modules::ArmorPredictionResult& prediction_result) noexcept;
+  void Publish(const frame::FramePacket& packet, const ::mv::runtime::VisionFrameOutput& output,
+               const ::mv::runtime::VisionFrameDiagnostics& diagnostics,
+               const std::optional<simulation_evaluation::SimulationEvaluationResult>&
+                   simulation_evaluation = std::nullopt) noexcept;
   /** @brief 非阻塞提交一个 100 Hz 控制诊断样本。 */
-  void PublishControl(const modules::FireControlResult& result) noexcept;
+  void PublishControl(const ::mv::runtime::ControlCycleOutput& output,
+                      const ::mv::runtime::ControlCycleDiagnostics& diagnostics) noexcept;
   /** @brief 获取自启动以来的线程安全累计统计。 */
   [[nodiscard]] VisionPublisherStats SnapshotStats() const noexcept;
   /** @brief 查询至少一个 sink 可用且流水线仍接受帧。 */

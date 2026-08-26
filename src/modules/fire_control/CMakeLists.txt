@@ -10,7 +10,7 @@ target_include_directories(mv-modules-fire-control PUBLIC
 )
 
 target_link_libraries(mv-modules-fire-control
-    PUBLIC mv-core mv-hal-camera mv-hal-gimbal mv-modules-armor-predictor
+    PUBLIC mv-core mv-hal-gimbal mv-modules-armor-predictor
            mv-modules-gimbal-trajectory-planner Eigen3::Eigen
     PRIVATE yaml-cpp
 )

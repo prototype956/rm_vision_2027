@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hal/gimbal/gimbal_types.hpp"
+#include "modules/gimbal_trajectory_planner/gimbal_trajectory_output.hpp"
 #include "modules/gimbal_trajectory_planner/gimbal_trajectory_planner_config.hpp"
 
 #include <memory>
@@ -17,16 +18,6 @@ struct AimReferencePoint {
   double yaw_velocity{0.0};  ///< 期望偏航角速度，单位为弧度每秒。
   double pitch{0.0};         ///< 期望俯仰角，单位为弧度。
   double pitch_velocity{0.0};  ///< 期望俯仰角速度，单位为弧度每秒。
-};
-
-/** @brief 单个 MPC 离散时刻求得的双轴角度、角速度和控制输入。 */
-struct PlannedGimbalPoint {
-  double yaw{0.0};                 ///< 计划偏航角，单位为弧度。
-  double yaw_velocity{0.0};        ///< 计划偏航角速度，单位为弧度每秒。
-  double yaw_acceleration{0.0};    ///< 计划偏航角加速度，单位为 rad/s^2。
-  double pitch{0.0};               ///< 计划俯仰角，单位为弧度。
-  double pitch_velocity{0.0};      ///< 计划俯仰角速度，单位为弧度每秒。
-  double pitch_acceleration{0.0};  ///< 计划俯仰角加速度，单位为 rad/s^2。
 };
 
 /** @brief 轨迹规划未产生可发布命令的首要原因。 */
@@ -78,12 +69,9 @@ struct MpcAxisDiagnostics {
   double dual_residual_input{0.0};    ///< 控制输入的对偶残差。
 };
 
-/** @brief 双轴 MPC 轨迹、正式命令以及主求解和重试的完整诊断。 */
-struct GimbalTrajectoryPlan {
-  bool valid{false};  ///< 两轴均收敛且整条轨迹通过有限性和硬约束复核。
+/** @brief 双轴 MPC 主求解、重试、参考和性能诊断。 */
+struct GimbalTrajectoryDiagnostics {
   bool residuals_normalized{true};  ///< 所有 MpcAxisDiagnostics 残差是否位于归一化空间。
-  int command_index{1};             ///< 正式命令在 trajectory 中的前视索引。
-  double command_lookahead_s{0.01};  ///< command_index 对应的实际离散前视时间。
   double normalization_angle_scale_rad{0.1};             ///< 两轴角度状态归一化尺度。
   double normalization_yaw_velocity_scale_rad_s{1.0};    ///< 偏航速度归一化尺度。
   double normalization_pitch_velocity_scale_rad_s{1.0};  ///< 俯仰速度归一化尺度。
@@ -110,9 +98,13 @@ struct GimbalTrajectoryPlan {
       GimbalTrajectoryFailureReason::NONE};                       ///< 失败原因。
   GimbalTrajectoryAxis failure_axis{GimbalTrajectoryAxis::NONE};  ///< 失败涉及的轴。
   int failure_index{-1};  ///< 首个非法参考或轨迹点索引；不适用时为 -1。
-  PlannedGimbalPoint command;  ///< 从前视索引选出的正式命令，偏航已归一到 [-pi, pi]。
-  std::vector<AimReferencePoint> reference;    ///< 本周期复制保存的输入参考时域。
-  std::vector<PlannedGimbalPoint> trajectory;  ///< 反归一化后的完整求解轨迹。
+  std::vector<AimReferencePoint> reference;  ///< 本周期复制保存的输入参考时域。
+};
+
+/** @brief 单周期轨迹规划的正式输出与诊断输出。 */
+struct GimbalTrajectoryResult {
+  GimbalTrajectoryOutput output;
+  GimbalTrajectoryDiagnostics diagnostics;
 };
 
 /**
@@ -137,8 +129,8 @@ class GimbalTrajectoryPlanner final {
    * @param reference 点数必须等于 horizon_steps，时间间隔固定为 config.dt_s。
    * @return 完整轨迹、正式命令和求解诊断；失败时 valid=false。
    */
-  [[nodiscard]] GimbalTrajectoryPlan Plan(const hal::GimbalFeedback& feedback,
-                                          std::span<const AimReferencePoint> reference);
+  [[nodiscard]] GimbalTrajectoryResult Plan(const hal::GimbalFeedback& feedback,
+                                            std::span<const AimReferencePoint> reference);
   /** @brief 请求下一周期以当前反馈为原点重建两轴 warm start。 */
   void RequestWarmStartRebase() noexcept;
   /** @brief 返回构造时保存的只读规划器配置。 */

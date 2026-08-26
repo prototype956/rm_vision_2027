@@ -230,7 +230,7 @@ void DrawOutlinedText(cv::Mat& image, const std::string& text, const cv::Point& 
 
 // 绘制装甲检测结果以及与实机长测一致的核心实时指标。
 void Draw(cv::Mat& image, const std::vector<modules::ArmorDetection>& detections,
-          const modules::DetectorStats& stats, std::int64_t frame_index, double loop_fps,
+          const modules::ArmorDetectorDiagnostics& stats, std::int64_t frame_index, double loop_fps,
           double elapsed_sec) {
   tool::DrawArmorDetections(image, detections);
 
@@ -280,7 +280,7 @@ void WriteDetections(std::ofstream& output, std::int64_t frame_index,
  * @brief 对指定视频区间执行检测、保存样本并汇总性能指标。
  *
  * benchmark 模式先跳过 100 个预热帧，再固定统计 1000 帧；普通模式处理指定
- * 区间内的全部可读帧。视频解码和结果绘制耗时不计入 DetectorStats。
+ * 区间内的全部可读帧。视频解码和结果绘制耗时不计入 ArmorDetectorDiagnostics。
  *
  * @return 0 表示完成，7 表示 benchmark 的总耗时 P95 未达到 16.7 ms 门槛。
  */
@@ -335,9 +335,9 @@ int Run(int argc, char** argv) {
   cv::Mat frame;
   while ((OPTIONS.end_frame < 0 || frame_index < OPTIONS.end_frame) && capture.read(frame)) {
     const auto FRAME_START = Clock::now();
-    // DetectorStats 必须在下一次 Detect() 前读取，否则会被后续帧覆盖。
-    const auto DETECTIONS = detector.Detect(frame);
-    const auto STATS = detector.LastStats();
+    const auto DETECTION_RESULT = detector.Detect(frame);
+    const auto& detections = DETECTION_RESULT.output.detections;
+    const auto& stats = DETECTION_RESULT.diagnostics;
     ++loop_frames;
 
     if (OPTIONS.benchmark && warmed < K_BENCHMARK_WARMUP_FRAMES) {
@@ -347,14 +347,14 @@ int Run(int argc, char** argv) {
       continue;
     }
 
-    WriteDetections(detections_file, frame_index, DETECTIONS);
-    timings_file << frame_index << ',' << STATS.preprocess_ms << ',' << STATS.inference_ms << ','
-                 << STATS.postprocess_ms << ',' << STATS.total_ms << ','
-                 << STATS.threshold_candidates << ',' << STATS.kept_detections << '\n';
-    preprocess_times.push_back(STATS.preprocess_ms);
-    inference_times.push_back(STATS.inference_ms);
-    postprocess_times.push_back(STATS.postprocess_ms);
-    total_times.push_back(STATS.total_ms);
+    WriteDetections(detections_file, frame_index, detections);
+    timings_file << frame_index << ',' << stats.preprocess_ms << ',' << stats.inference_ms << ','
+                 << stats.postprocess_ms << ',' << stats.total_ms << ','
+                 << stats.threshold_candidates << ',' << stats.kept_detections << '\n';
+    preprocess_times.push_back(stats.preprocess_ms);
+    inference_times.push_back(stats.inference_ms);
+    postprocess_times.push_back(stats.postprocess_ms);
+    total_times.push_back(stats.total_ms);
 
     // 保存样本与窗口预览共享同一张叠加图，避免同一帧重复绘制。
     const bool SAVE_SAMPLE = processed % static_cast<std::size_t>(OPTIONS.sample_stride) == 0;
@@ -362,7 +362,7 @@ int Run(int argc, char** argv) {
       const double ELAPSED_SEC = Seconds(Clock::now() - START);
       const double LOOP_FPS = static_cast<double>(loop_frames) / std::max(ELAPSED_SEC, 1.0e-6);
       cv::Mat overlay = frame.clone();
-      Draw(overlay, DETECTIONS, STATS, frame_index, LOOP_FPS, ELAPSED_SEC);
+      Draw(overlay, detections, stats, frame_index, LOOP_FPS, ELAPSED_SEC);
       if (SAVE_SAMPLE) {
         const auto FILENAME = fmt::format("frame_{:08d}.jpg", frame_index);
         if (!cv::imwrite((OPTIONS.output_dir / FILENAME).string(), overlay)) {

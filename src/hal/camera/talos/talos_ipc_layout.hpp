@@ -5,10 +5,10 @@
 
 namespace mv::hal::detail::talos_ipc {
 
-// 本文件声明的常量、字段顺序、显式填充和对齐必须与 Daedalus 的 Talos v5
+// 本文件声明的常量、字段顺序、显式填充和对齐必须与 Daedalus 的 Talos v6
 // 共享内存 ABI 完全一致。元数据位于可读写映射，图像像素位于独立的只读三缓冲池。
-constexpr std::uint32_t K_SHM_MAGIC = 0x54414C05;  ///< Talos v5 元数据文件标识。
-constexpr std::uint32_t K_SHM_VERSION = 5;         ///< 当前支持的共享内存协议版本。
+constexpr std::uint32_t K_SHM_MAGIC = 0x54414C06;  ///< Talos v6 元数据文件标识。
+constexpr std::uint32_t K_SHM_VERSION = 6;         ///< 当前支持的共享内存协议版本。
 constexpr std::uint8_t K_FLAG_NEW = 0x80;  ///< state 中“存在未消费数据”的标志位。
 constexpr std::uint8_t K_INDEX_MASK = 0x03;  ///< state 中可读槽位索引的掩码。
 constexpr std::uint8_t K_FORMAT_RGB8 = 0;    ///< 三通道 RGB 字节顺序。
@@ -47,6 +47,15 @@ struct alignas(32) RigidTransformF32 {
   std::uint8_t pad[4];     ///< ABI 填充，禁止复用。
 };
 
+/** @brief 与图像同帧采样的仿真弹丸累计统计。 */
+struct alignas(32) ProjectileStatisticsMeta {
+  std::uint64_t timestamp_ns;         ///< 所属采集快照的 Unix epoch 纳秒时间。
+  std::uint64_t bullet_launch_count;  ///< 自动或手动生成的 17 mm 弹丸累计数。
+  std::uint64_t armor_hit_count;      ///< 弹丸与装甲发生有效碰撞的累计数。
+  std::uint32_t rune_hit_count;       ///< 能量机关有效命中累计数。
+  std::uint32_t dart_launch_count;    ///< 飞镖发射累计数。
+};
+
 /** @brief 视觉端写给 Talos 云台控制器的单条目标命令。 */
 struct alignas(32) GimbalCmd {
   std::uint64_t timestamp_ns;  ///< 命令生成的 Unix epoch 纳秒时间。
@@ -70,11 +79,21 @@ struct alignas(64) CameraCalibrationMeta {
   std::uint8_t pad[24];        ///< ABI 填充，禁止复用。
 };
 
-// 当前 HAL 尚未消费的协议区域仍必须完整占位，以保持与发布端
-// #[repr(C, align(...))] 结构的偏移和总尺寸一致。
-/** @brief 预留的底盘观测协议区。 */
+/** @brief 与单帧图像严格同步的底盘局部运动观测。 */
 struct alignas(64) ChassisObservationMeta {
-  std::uint8_t bytes[128];
+  std::uint64_t frame_sequence;     ///< 所属图像帧序号。
+  std::uint64_t timestamp_ns;       ///< 所属采集快照 Unix epoch 纳秒。
+  float dt_s;                       ///< 发布端运动学更新周期。
+  float velocity_body_mps[2];       ///< 体系前向、左向线速度。
+  float yaw_velocity_rad_s;         ///< 绕体系 +Z 角速度。
+  float wheel_linear_mps[4];        ///< 四轮线速度。
+  float wheel_angular_rad_s[4];     ///< 四轮角速度。
+  float acceleration_body_mps2[2];  ///< 体系前向、左向线加速度。
+  float yaw_acceleration_rad_s2;    ///< 绕体系 +Z 角加速度。
+  float rpy_rad[3];                 ///< 底盘体系相对 world 的滚转、俯仰、偏航角。
+  float gyro_xyz_rad_s[3];          ///< 体系三轴角速度。
+  float accel_xyz_mps2[3];          ///< 体系三轴线加速度。
+  std::uint8_t pad[16];             ///< ABI 填充，禁止复用。
 };
 
 /** @brief 仿真器在 world 坐标系中给出的单个机器人真值。 */
@@ -139,18 +158,18 @@ struct alignas(64) CapturedFrameMeta {
   float gimbal_pitch_velocity_rad_s;  ///< 实际俯仰角速度，单位为弧度每秒。
   float gimbal_yaw_acceleration_rad_s2;  ///< 实际偏航角加速度，单位为弧度每二次方秒。
   float gimbal_pitch_acceleration_rad_s2;  ///< 实际俯仰角加速度，单位为弧度每二次方秒。
-  std::uint8_t gimbal_actuator_mode;           ///< GimbalActuatorMode 的数值编码。
-  std::uint8_t gimbal_saturation_flags;        ///< 执行器限位或限速状态位。
-  std::uint8_t gimbal_telemetry_valid;         ///< 1 表示本帧云台遥测有效。
-  std::uint8_t gimbal_command_valid;           ///< 1 表示最近消费的云台命令有效。
-  std::uint8_t pad1_tail[4];                   ///< ABI 填充，禁止复用。
-  CameraCalibrationMeta camera_info;           ///< 当前帧对应的相机内参与畸变。
-  RigidTransformF32 world_t_gimbal;            ///< gimbal 到 world 的变换。
-  RigidTransformF32 gimbal_t_camera_optical;   ///< camera_optical 到 gimbal 的变换。
-  RigidTransformF32 gimbal_t_muzzle;           ///< muzzle 到 gimbal 的变换。
-  std::uint8_t pad2[32];                       ///< ABI 填充，禁止复用。
-  ChassisObservationMeta chassis_observation;  ///< 同帧底盘观测；当前 HAL 不消费。
-  GroundTruthBatchMeta ground_truth;           ///< 同帧仿真真值。
+  std::uint8_t gimbal_actuator_mode;               ///< GimbalActuatorMode 的数值编码。
+  std::uint8_t gimbal_saturation_flags;            ///< 执行器限位或限速状态位。
+  std::uint8_t gimbal_telemetry_valid;             ///< 1 表示本帧云台遥测有效。
+  std::uint8_t gimbal_command_valid;               ///< 1 表示最近消费的云台命令有效。
+  std::uint8_t pad1_tail[4];                       ///< ABI 填充，禁止复用。
+  CameraCalibrationMeta camera_info;               ///< 当前帧对应的相机内参与畸变。
+  RigidTransformF32 world_t_gimbal;                ///< gimbal 到 world 的变换。
+  RigidTransformF32 gimbal_t_camera_optical;       ///< camera_optical 到 gimbal 的变换。
+  RigidTransformF32 gimbal_t_muzzle;               ///< muzzle 到 gimbal 的变换。
+  ProjectileStatisticsMeta projectile_statistics;  ///< 同帧弹丸累计统计。
+  ChassisObservationMeta chassis_observation;      ///< 同帧底盘局部运动观测。
+  GroundTruthBatchMeta ground_truth;               ///< 同帧仿真真值。
 };
 
 /** @brief 发布端写、相机端消费的帧元数据三缓冲。 */
@@ -191,7 +210,7 @@ struct alignas(64) RuntimeStateMeta {
   std::uint8_t pad[4];              ///< ABI 填充，禁止复用。
 };
 
-/** @brief Talos v5 元数据文件的完整顶层布局。 */
+/** @brief Talos v6 元数据文件的完整顶层布局。 */
 struct alignas(64) ShmMetaRegion {
   ShmHeader header;                ///< 协议头和发布端心跳。
   FrameTripleBuffer frame;         ///< Talos 发布给视觉端的帧快照。
@@ -203,12 +222,17 @@ struct alignas(64) ShmMetaRegion {
 static_assert(sizeof(ShmHeader) == 64);
 static_assert(sizeof(QuaternionF32) == 16);
 static_assert(sizeof(RigidTransformF32) == 32);
+static_assert(sizeof(ProjectileStatisticsMeta) == 32);
 static_assert(sizeof(GimbalCmd) == 32);
 static_assert(sizeof(CameraCalibrationMeta) == 128);
+static_assert(sizeof(ChassisObservationMeta) == 128);
 static_assert(sizeof(GroundTruthTargetMeta) == 64);
 static_assert(sizeof(GroundTruthArmorMeta) == 128);
 static_assert(sizeof(GroundTruthBatchMeta) == 5696);
 static_assert(sizeof(CapturedFrameMeta) == 6144);
+static_assert(offsetof(CapturedFrameMeta, projectile_statistics) == 288);
+static_assert(offsetof(CapturedFrameMeta, chassis_observation) == 320);
+static_assert(offsetof(CapturedFrameMeta, ground_truth) == 448);
 static_assert(sizeof(FrameTripleBuffer) == 18496);
 static_assert(sizeof(GimbalTripleBuffer) == 192);
 static_assert(offsetof(ShmMetaRegion, frame) == 64);

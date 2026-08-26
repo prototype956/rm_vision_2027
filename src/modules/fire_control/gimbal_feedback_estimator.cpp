@@ -195,12 +195,23 @@ void GimbalFeedbackEstimator::ObservePublishedCommand(
 }
 
 hal::GimbalFeedback GimbalFeedbackEstimator::Estimate(
-    std::chrono::steady_clock::time_point now) const noexcept {
-  static_cast<void>(now);
-  return state_;
+    std::chrono::steady_clock::time_point now) noexcept {
+  projection_dt_s_ = 0.0;
+  if (!state_.valid || now <= state_.timestamp)
+    return state_;
+  constexpr double MAX_PROJECTION_S = 0.100;
+  const double AGE_S = std::chrono::duration<double>(now - state_.timestamp).count();
+  if (!std::isfinite(AGE_S) || AGE_S <= 0.0)
+    return state_;
+  projection_dt_s_ = std::min(AGE_S, MAX_PROJECTION_S);
+  auto projected = state_;
+  projected.yaw += projected.yaw_velocity * projection_dt_s_;
+  projected.pitch += projected.pitch_velocity * projection_dt_s_;
+  return projected;
 }
 
 void GimbalFeedbackEstimator::ClearCommandProjection() noexcept {
+  projection_dt_s_ = 0.0;
   command_projection_active_ = false;
   if (runtime_actuator_active_) {
     source_ = GimbalFeedbackSource::ACTUATOR_RUNTIME_HOLD;
@@ -216,6 +227,7 @@ void GimbalFeedbackEstimator::ClearCommandProjection() noexcept {
 }
 
 void GimbalFeedbackEstimator::ClearRuntimeActuator() noexcept {
+  projection_dt_s_ = 0.0;
   runtime_actuator_active_ = false;
   runtime_state_timestamp_ns_ = 0;
   runtime_actuator_age_s_ = std::numeric_limits<double>::infinity();
@@ -239,6 +251,7 @@ void GimbalFeedbackEstimator::Reset() noexcept {
   runtime_actuator_active_ = false;
   runtime_state_timestamp_ns_ = 0;
   runtime_actuator_age_s_ = std::numeric_limits<double>::infinity();
+  projection_dt_s_ = 0.0;
 }
 
 }  // namespace mv::modules
