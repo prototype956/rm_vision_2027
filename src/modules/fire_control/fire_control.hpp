@@ -68,6 +68,13 @@ struct ArmorSelectionSnapshot {
   double switch_confirmation_s{0.0};                ///< 配置的切换确认时间。
 };
 
+/** @brief 供相机同帧命中预测标注使用的轻量火控快照。 */
+struct ArmorImpactSnapshot {
+  std::uint64_t source_sequence{0};  ///< 对应输入预测和相机采集帧序号。
+  int selected_slot{-1};             ///< 最终参与弹道求解的装甲槽位。
+  BallisticSolution ballistic;       ///< 弹道目标、飞行时间及其准确预测时域。
+};
+
 /** @brief 单次火控计算所需的同一预测快照、坐标变换和控制使能状态。 */
 struct ControlInputSnapshot {
   ArmorPredictionOutput prediction;  ///< 目标跟踪器输出的不可变正式预测快照。

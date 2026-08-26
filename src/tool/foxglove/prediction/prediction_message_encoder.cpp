@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <string_view>
 
 #include <fmt/format.h>
 #include <numbers>
@@ -18,16 +19,6 @@ namespace {
 
 ::foxglove::schemas::Vector3 Vector(const geometry::Vector3& value) {
   return {.x = value.x(), .y = value.y(), .z = value.z()};
-}
-
-::foxglove::schemas::Color HorizonColor(std::size_t index) {
-  // 从当前到未来使用绿、青、紫、洋红，透明度随预测距离增加而降低。
-  constexpr std::array<::foxglove::schemas::Color, 4> COLORS{
-      ::foxglove::schemas::Color{.r = 0.1, .g = 1.0, .b = 0.2, .a = 1.0},
-      ::foxglove::schemas::Color{.r = 0.1, .g = 0.8, .b = 1.0, .a = 0.9},
-      ::foxglove::schemas::Color{.r = 0.7, .g = 0.3, .b = 1.0, .a = 0.8},
-      ::foxglove::schemas::Color{.r = 1.0, .g = 0.2, .b = 0.8, .a = 0.7}};
-  return COLORS[std::min(index, COLORS.size() - 1)];
 }
 
 std::string NumberArray(const auto& values) {
@@ -76,9 +67,8 @@ std::optional<::foxglove::schemas::Point2> ProjectPoint(const geometry::Vector3&
   return ::foxglove::schemas::Point2{.x = U, .y = V};
 }
 
-const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionOutput& output,
-                                              ImagePredictionHorizon requested) {
-  const double TARGET = requested == ImagePredictionHorizon::CURRENT ? 0.0 : 0.1;
+const modules::PredictionHorizon* FindCurrentHorizon(const modules::ArmorPredictionOutput& output) {
+  constexpr double TARGET = 0.0;
   const auto FOUND = std::find_if(output.horizons.begin(), output.horizons.end(),
                                   [TARGET](const modules::PredictionHorizon& value) {
                                     return std::abs(value.seconds - TARGET) < 1.0e-9;
@@ -86,16 +76,78 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionOutp
   return FOUND == output.horizons.end() ? nullptr : &*FOUND;
 }
 
+::foxglove::schemas::LinePrimitive ArmorOutline(const geometry::RigidTransform& world_t_armor,
+                                                geometry::ArmorType type,
+                                                const ::foxglove::schemas::Color& color,
+                                                double thickness) {
+  const double WIDTH = type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
+  constexpr double HEIGHT = 0.055;
+  const auto X_AXIS = geometry::TransformVector(world_t_armor, geometry::Vector3::UnitX());
+  const auto Y_AXIS = geometry::TransformVector(world_t_armor, geometry::Vector3::UnitY());
+  ::foxglove::schemas::LinePrimitive outline;
+  outline.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LOOP;
+  outline.thickness = thickness;
+  outline.color = color;
+  outline.points = {
+      Point(world_t_armor.translation - X_AXIS * WIDTH * 0.5 + Y_AXIS * HEIGHT * 0.5),
+      Point(world_t_armor.translation + X_AXIS * WIDTH * 0.5 + Y_AXIS * HEIGHT * 0.5),
+      Point(world_t_armor.translation + X_AXIS * WIDTH * 0.5 - Y_AXIS * HEIGHT * 0.5),
+      Point(world_t_armor.translation - X_AXIS * WIDTH * 0.5 - Y_AXIS * HEIGHT * 0.5)};
+  return outline;
+}
+
+struct ProjectedArmor {
+  std::array<::foxglove::schemas::Point2, 4> pixels{};
+  bool front_facing{false};
+};
+
+std::optional<ProjectedArmor> ProjectArmor(const geometry::RigidTransform& world_t_armor,
+                                           geometry::ArmorType type,
+                                           const frame::SpatialFrameView& spatial) {
+  const auto WORLD_T_CAMERA =
+      geometry::Compose(spatial.world_t_gimbal, spatial.gimbal_t_camera_optical);
+  const auto CAMERA_T_ARMOR = geometry::Compose(geometry::Inverse(WORLD_T_CAMERA), world_t_armor);
+  const double WIDTH = type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
+  constexpr double HEIGHT = 0.055;
+  const std::array<geometry::Vector3, 4> LOCAL_CORNERS{
+      geometry::Vector3(-WIDTH * 0.5, HEIGHT * 0.5, 0.0),
+      geometry::Vector3(WIDTH * 0.5, HEIGHT * 0.5, 0.0),
+      geometry::Vector3(WIDTH * 0.5, -HEIGHT * 0.5, 0.0),
+      geometry::Vector3(-WIDTH * 0.5, -HEIGHT * 0.5, 0.0)};
+  ProjectedArmor projected;
+  const auto NORMAL_CAMERA = geometry::TransformVector(CAMERA_T_ARMOR, geometry::Vector3::UnitZ());
+  projected.front_facing = NORMAL_CAMERA.dot(CAMERA_T_ARMOR.translation) < 0.0;
+  double min_u = std::numeric_limits<double>::infinity();
+  double min_v = std::numeric_limits<double>::infinity();
+  double max_u = -std::numeric_limits<double>::infinity();
+  double max_v = -std::numeric_limits<double>::infinity();
+  for (std::size_t index = 0; index < LOCAL_CORNERS.size(); ++index) {
+    const auto CAMERA_POINT = geometry::TransformPoint(CAMERA_T_ARMOR, LOCAL_CORNERS[index]);
+    const auto PIXEL = ProjectPoint(CAMERA_POINT, spatial.calibration);
+    if (!PIXEL)
+      return std::nullopt;
+    projected.pixels[index] = *PIXEL;
+    min_u = std::min(min_u, PIXEL->x);
+    min_v = std::min(min_v, PIXEL->y);
+    max_u = std::max(max_u, PIXEL->x);
+    max_v = std::max(max_v, PIXEL->y);
+  }
+  const bool INTERSECTS = max_u >= 0.0 && max_v >= 0.0 &&
+                          min_u < static_cast<double>(spatial.calibration.width) &&
+                          min_v < static_cast<double>(spatial.calibration.height);
+  return INTERSECTS ? std::optional(projected) : std::nullopt;
+}
+
 }  // namespace
 
 ::foxglove::schemas::SceneUpdate EncodeScene(const modules::ArmorPredictionOutput& output,
                                              const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::SceneUpdate update;
-  if (output.state == modules::TrackerState::LOST || output.horizons.empty())
+  const auto* current = FindCurrentHorizon(output);
+  if (output.state == modules::TrackerState::LOST || !current)
     return update;
   const ::foxglove::schemas::Duration LIFETIME{.sec = 0, .nsec = 200'000'000};
-  const auto& current = output.horizons.front();
-  // prediction_target 聚合当前中心、速度、双半径和本帧观测关联，便于联合诊断。
+  // prediction_target 聚合当前中心、速度、车体轴和双半径，便于联合诊断。
   ::foxglove::schemas::SceneEntity target;
   target.timestamp = timestamp;
   target.frame_id = "world";
@@ -103,7 +155,7 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionOutp
   target.lifetime = LIFETIME;
   target.metadata = {{.key = "state", .value = modules::TrackerStateName(output.state)}};
   ::foxglove::schemas::SpherePrimitive center;
-  center.pose = ::foxglove::schemas::Pose{.position = Vector(current.center_world),
+  center.pose = ::foxglove::schemas::Pose{.position = Vector(current->center_world),
                                           .orientation = ::foxglove::schemas::Quaternion{.w = 1.0}};
   center.size = {.x = 0.12, .y = 0.12, .z = 0.12};
   center.color = {.r = 0.1, .g = 1.0, .b = 0.2, .a = 0.9};
@@ -112,14 +164,14 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionOutp
   velocity.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LIST;
   velocity.thickness = 0.02;
   velocity.color = {.r = 0.2, .g = 1.0, .b = 0.2, .a = 1.0};
-  velocity.points = {Point(current.center_world),
-                     Point(current.center_world + output.velocity_world)};
+  velocity.points = {Point(current->center_world),
+                     Point(current->center_world + output.velocity_world)};
   target.lines.push_back(std::move(velocity));
 
   const std::array<geometry::Vector3, 3> BODY_AXES{
-      current.orientation_world * geometry::Vector3::UnitX(),
-      current.orientation_world * geometry::Vector3::UnitY(),
-      current.orientation_world * geometry::Vector3::UnitZ()};
+      current->orientation_world * geometry::Vector3::UnitX(),
+      current->orientation_world * geometry::Vector3::UnitY(),
+      current->orientation_world * geometry::Vector3::UnitZ()};
   const std::array<::foxglove::schemas::Color, 3> AXIS_COLORS{
       ::foxglove::schemas::Color{.r = 1.0, .g = 0.1, .b = 0.1, .a = 1.0},
       ::foxglove::schemas::Color{.r = 0.1, .g = 1.0, .b = 0.1, .a = 1.0},
@@ -129,8 +181,8 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionOutp
     line.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LIST;
     line.thickness = 0.012;
     line.color = AXIS_COLORS[axis];
-    line.points = {Point(current.center_world),
-                   Point(current.center_world + 0.3 * BODY_AXES[axis])};
+    line.points = {Point(current->center_world),
+                   Point(current->center_world + 0.3 * BODY_AXES[axis])};
     target.lines.push_back(std::move(line));
   }
 
@@ -141,7 +193,7 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionOutp
     ring.color = pair == 0 ? ::foxglove::schemas::Color{.r = 0.2, .g = 1.0, .b = 0.3, .a = 0.55}
                            : ::foxglove::schemas::Color{.r = 0.1, .g = 0.7, .b = 1.0, .a = 0.55};
     const double RADIUS = output.radii_m[pair];
-    geometry::Vector3 ring_center = current.center_world;
+    geometry::Vector3 ring_center = current->center_world;
     if (pair == 1)
       ring_center += output.height_offset_m * BODY_AXES[2];
     constexpr int SEGMENTS = 48;
@@ -155,33 +207,63 @@ const modules::PredictionHorizon* FindHorizon(const modules::ArmorPredictionOutp
 
   update.entities.push_back(std::move(target));
 
-  const double WIDTH = output.type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
-  constexpr double HEIGHT = 0.055;
-  for (std::size_t horizon_index = 0; horizon_index < output.horizons.size(); ++horizon_index) {
-    // 每个时域使用稳定 entity id，Foxglove 可原位更新而不会留下历史拖影。
-    const auto& horizon = output.horizons[horizon_index];
-    ::foxglove::schemas::SceneEntity entity;
-    entity.timestamp = timestamp;
-    entity.frame_id = "world";
-    entity.id = fmt::format("prediction_{:.0f}ms", horizon.seconds * 1000.0);
-    entity.lifetime = LIFETIME;
-    entity.metadata = {{.key = "horizon_s", .value = fmt::format("{:.3f}", horizon.seconds)}};
-    for (const auto& armor : horizon.armors) {
-      const auto& pose = armor.world_t_armor;
-      const auto X_AXIS = geometry::TransformVector(pose, geometry::Vector3::UnitX());
-      const auto Y_AXIS = geometry::TransformVector(pose, geometry::Vector3::UnitY());
-      ::foxglove::schemas::LinePrimitive outline;
-      outline.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LOOP;
-      outline.thickness = horizon_index == 0 ? 0.014 : 0.008;
-      outline.color = HorizonColor(horizon_index);
-      outline.points = {Point(pose.translation - X_AXIS * WIDTH * 0.5 + Y_AXIS * HEIGHT * 0.5),
-                        Point(pose.translation + X_AXIS * WIDTH * 0.5 + Y_AXIS * HEIGHT * 0.5),
-                        Point(pose.translation + X_AXIS * WIDTH * 0.5 - Y_AXIS * HEIGHT * 0.5),
-                        Point(pose.translation - X_AXIS * WIDTH * 0.5 - Y_AXIS * HEIGHT * 0.5)};
-      entity.lines.push_back(std::move(outline));
-    }
-    update.entities.push_back(std::move(entity));
+  if (!output.type)
+    return update;
+
+  ::foxglove::schemas::SceneEntity armors;
+  armors.timestamp = timestamp;
+  armors.frame_id = "world";
+  armors.id = "prediction_0ms";
+  armors.lifetime = LIFETIME;
+  armors.metadata = {{.key = "horizon_s", .value = "0.000"}};
+  constexpr ::foxglove::schemas::Color CURRENT_COLOR{.r = 0.1, .g = 1.0, .b = 0.2, .a = 1.0};
+  for (const auto& armor : current->armors) {
+    armors.lines.push_back(ArmorOutline(armor.world_t_armor, *output.type, CURRENT_COLOR, 0.014));
   }
+  update.entities.push_back(std::move(armors));
+  return update;
+}
+
+::foxglove::schemas::SceneUpdate EncodeImpactScene(
+    const modules::ArmorPredictionOutput& output, const modules::ArmorImpactSnapshot* impact,
+    const ::foxglove::schemas::Timestamp& timestamp) {
+  constexpr std::string_view ENTITY_ID = "impact_prediction";
+  ::foxglove::schemas::SceneUpdate update;
+  const bool VALID = impact && output.state != modules::TrackerState::LOST &&
+                     impact->source_sequence == output.sequence && impact->ballistic.valid &&
+                     output.type && impact->selected_slot >= 0 && impact->selected_slot < 4 &&
+                     std::isfinite(impact->ballistic.prediction_horizon_s) &&
+                     impact->ballistic.prediction_horizon_s >= 0.0;
+  if (!VALID) {
+    update.deletions.push_back(
+        {.timestamp = timestamp,
+         .type = ::foxglove::schemas::SceneEntityDeletion::SceneEntityDeletionType::MATCHING_ID,
+         .id = std::string(ENTITY_ID)});
+    return update;
+  }
+
+  const auto HORIZON =
+      modules::ExtrapolatePrediction(output, impact->ballistic.prediction_horizon_s);
+  ::foxglove::schemas::SceneEntity entity;
+  entity.timestamp = timestamp;
+  entity.frame_id = "world";
+  entity.id = std::string(ENTITY_ID);
+  entity.lifetime = {.sec = 0, .nsec = 200'000'000};
+  entity.metadata = {
+      {.key = "horizon_s", .value = fmt::format("{:.6f}", impact->ballistic.prediction_horizon_s)},
+      {.key = "selected_slot", .value = std::to_string(impact->selected_slot)}};
+  constexpr ::foxglove::schemas::Color OTHER_COLOR{.r = 0.75, .g = 0.25, .b = 1.0, .a = 0.35};
+  constexpr ::foxglove::schemas::Color SELECTED_COLOR{.r = 0.75, .g = 0.25, .b = 1.0, .a = 1.0};
+  for (std::size_t slot = 0; slot < HORIZON.armors.size(); ++slot) {
+    if (static_cast<int>(slot) == impact->selected_slot)
+      continue;
+    entity.lines.push_back(
+        ArmorOutline(HORIZON.armors[slot].world_t_armor, *output.type, OTHER_COLOR, 0.008));
+  }
+  const auto SELECTED_SLOT = static_cast<std::size_t>(impact->selected_slot);
+  entity.lines.push_back(ArmorOutline(HORIZON.armors[SELECTED_SLOT].world_t_armor, *output.type,
+                                      SELECTED_COLOR, 0.018));
+  update.entities.push_back(std::move(entity));
   return update;
 }
 
@@ -320,108 +402,45 @@ std::string EncodeState(const modules::ArmorPredictionOutput& output,
   return update;
 }
 
-::foxglove::schemas::ImageAnnotations EncodeAnnotations(
+::foxglove::schemas::ImageAnnotations EncodeCurrentAnnotations(
     const modules::ArmorPredictionOutput& output,
-    const modules::ArmorPredictionDiagnostics& diagnostics, const frame::SpatialFrameView& spatial,
-    ImagePredictionHorizon requested, const ::foxglove::schemas::Timestamp& timestamp) {
+    const modules::ArmorPredictionDiagnostics& diagnostics, const frame::SpatialFrameView* spatial,
+    const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::ImageAnnotations annotations;
-  // ImageAnnotations 没有顶层时间戳；即使 LOST 也发布载体，让 Foxglove 清除上一帧框。
   AddTimestampCarrier(annotations, timestamp);
-  if (output.state == modules::TrackerState::LOST || !output.type)
-    return annotations;
-  const auto* horizon = FindHorizon(output, requested);
-  if (!horizon)
+  if (output.state == modules::TrackerState::LOST)
     return annotations;
 
-  const auto WORLD_T_CAMERA =
-      geometry::Compose(spatial.world_t_gimbal, spatial.gimbal_t_camera_optical);
-  const auto CAMERA_T_WORLD = geometry::Inverse(WORLD_T_CAMERA);
-  const auto& calibration = spatial.calibration;
-  const double WIDTH = *output.type == geometry::ArmorType::LARGE ? 0.225 : 0.135;
-  constexpr double HEIGHT = 0.055;
-  const std::array<geometry::Vector3, 4> LOCAL_CORNERS{
-      geometry::Vector3(-WIDTH * 0.5, HEIGHT * 0.5, 0.0),
-      geometry::Vector3(WIDTH * 0.5, HEIGHT * 0.5, 0.0),
-      geometry::Vector3(WIDTH * 0.5, -HEIGHT * 0.5, 0.0),
-      geometry::Vector3(-WIDTH * 0.5, -HEIGHT * 0.5, 0.0)};
-  const bool FUTURE = requested == ImagePredictionHorizon::FUTURE_100_MS;
-
-  if (!FUTURE) {
-    for (const auto& association : diagnostics.associations) {
-      const auto ADD_OUTLINE = [&](const std::array<cv::Point2f, 4>& corners,
-                                   const ::foxglove::schemas::Color& color, double thickness) {
-        ::foxglove::schemas::PointsAnnotation polygon;
-        polygon.timestamp = timestamp;
-        polygon.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
-        polygon.outline_color = color;
-        polygon.thickness = thickness;
-        for (const auto& corner : corners)
-          polygon.points.push_back({.x = corner.x, .y = corner.y});
-        annotations.points.push_back(std::move(polygon));
-      };
-      ADD_OUTLINE(association.observed_corners, {.r = 1.0, .g = 0.65, .b = 0.0, .a = 1.0}, 2.0);
-      if (association.candidate_slot >= 0) {
-        const auto COLOR = association.accepted
-                               ? ::foxglove::schemas::Color{.r = 0.0, .g = 0.8, .b = 1.0, .a = 1.0}
-                               : ::foxglove::schemas::Color{.r = 1.0, .g = 0.1, .b = 0.8, .a = 1.0};
-        ADD_OUTLINE(association.predicted_corners, COLOR, 2.0);
-      }
+  // 四槽位总览先绘制，随后叠加已接受关联框，确保关联结果始终处于最上层。
+  const auto* horizon = FindCurrentHorizon(output);
+  if (spatial && output.type && horizon) {
+    constexpr ::foxglove::schemas::Color FRONT_COLOR{.r = 0.0, .g = 0.55, .b = 0.08, .a = 1.0};
+    constexpr ::foxglove::schemas::Color BACK_COLOR{.r = 0.0, .g = 0.55, .b = 0.08, .a = 0.35};
+    for (const auto& armor : horizon->armors) {
+      const auto PROJECTED = ProjectArmor(armor.world_t_armor, *output.type, *spatial);
+      if (!PROJECTED)
+        continue;
+      ::foxglove::schemas::PointsAnnotation polygon;
+      polygon.timestamp = timestamp;
+      polygon.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
+      polygon.outline_color = PROJECTED->front_facing ? FRONT_COLOR : BACK_COLOR;
+      polygon.thickness = PROJECTED->front_facing ? 2.0 : 1.5;
+      polygon.points.assign(PROJECTED->pixels.begin(), PROJECTED->pixels.end());
+      annotations.points.push_back(std::move(polygon));
     }
   }
 
-  for (const auto& armor : horizon->armors) {
-    const auto CAMERA_T_ARMOR = geometry::Compose(CAMERA_T_WORLD, armor.world_t_armor);
-    const auto NORMAL_CAMERA =
-        geometry::TransformVector(CAMERA_T_ARMOR, geometry::Vector3::UnitZ());
-    // 法向与相机到装甲向量反向时为正面；背面仍以弱样式绘制以观察四槽位结构。
-    const bool FRONT = NORMAL_CAMERA.dot(CAMERA_T_ARMOR.translation) < 0.0;
-    std::array<::foxglove::schemas::Point2, 4> pixels{};
-    double min_u = std::numeric_limits<double>::infinity();
-    double min_v = std::numeric_limits<double>::infinity();
-    double max_u = -std::numeric_limits<double>::infinity();
-    double max_v = -std::numeric_limits<double>::infinity();
-    bool valid = true;
-    for (std::size_t index = 0; index < LOCAL_CORNERS.size(); ++index) {
-      const auto CAMERA_POINT = geometry::TransformPoint(CAMERA_T_ARMOR, LOCAL_CORNERS[index]);
-      const auto PROJECTED = ProjectPoint(CAMERA_POINT, calibration);
-      if (!PROJECTED) {
-        valid = false;
-        break;
-      }
-      pixels[index] = *PROJECTED;
-      min_u = std::min(min_u, PROJECTED->x);
-      min_v = std::min(min_v, PROJECTED->y);
-      max_u = std::max(max_u, PROJECTED->x);
-      max_v = std::max(max_v, PROJECTED->y);
-    }
-    const bool INTERSECTS = max_u >= 0.0 && max_v >= 0.0 &&
-                            min_u < static_cast<double>(calibration.width) &&
-                            min_v < static_cast<double>(calibration.height);
-    if (!valid || !INTERSECTS)
+  for (const auto& association : diagnostics.associations) {
+    if (!association.accepted || association.candidate_slot < 0)
       continue;
-
-    const double ALPHA = FRONT ? 1.0 : 0.35;
-    const ::foxglove::schemas::Color COLOR =
-        FUTURE ? ::foxglove::schemas::Color{.r = 0.75, .g = 0.25, .b = 1.0, .a = ALPHA}
-               : ::foxglove::schemas::Color{.r = 0.1, .g = 1.0, .b = 0.2, .a = ALPHA};
     ::foxglove::schemas::PointsAnnotation polygon;
     polygon.timestamp = timestamp;
     polygon.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
-    polygon.outline_color = COLOR;
-    polygon.thickness = FRONT ? 3.0 : 1.5;
-    polygon.points.assign(pixels.begin(), pixels.end());
+    polygon.outline_color = {.r = 0.1, .g = 1.0, .b = 0.2, .a = 1.0};
+    polygon.thickness = 3.0;
+    for (const auto& corner : association.predicted_corners)
+      polygon.points.push_back({.x = corner.x, .y = corner.y});
     annotations.points.push_back(std::move(polygon));
-
-    ::foxglove::schemas::TextAnnotation text;
-    text.timestamp = timestamp;
-    text.position = {.x = std::clamp(min_u, 0.0, static_cast<double>(calibration.width)),
-                     .y = std::clamp(min_v - 3.0, 0.0, static_cast<double>(calibration.height))};
-    text.text =
-        fmt::format("slot {} {}ms {}", armor.slot, FUTURE ? 100 : 0, FRONT ? "front" : "back");
-    text.font_size = 12.0;
-    text.text_color = COLOR;
-    text.background_color = {.a = FRONT ? 0.65 : 0.35};
-    annotations.texts.push_back(std::move(text));
   }
   return annotations;
 }
@@ -433,6 +452,38 @@ std::string EncodeState(const modules::ArmorPredictionOutput& output,
   return annotations;
 }
 
+::foxglove::schemas::ImageAnnotations EncodeImpactAnnotations(
+    const modules::ArmorPredictionOutput& output, const frame::SpatialFrameView& spatial,
+    const modules::ArmorImpactSnapshot& impact, const ::foxglove::schemas::Timestamp& timestamp) {
+  ::foxglove::schemas::ImageAnnotations annotations;
+  AddTimestampCarrier(annotations, timestamp);
+  constexpr ::foxglove::schemas::Color COLOR{.r = 0.75, .g = 0.25, .b = 1.0, .a = 1.0};
+
+  const bool CAN_PROJECT = impact.source_sequence == output.sequence && impact.ballistic.valid &&
+                           output.type && impact.selected_slot >= 0 && impact.selected_slot < 4 &&
+                           std::isfinite(impact.ballistic.prediction_horizon_s) &&
+                           impact.ballistic.prediction_horizon_s >= 0.0;
+  if (!CAN_PROJECT)
+    return annotations;
+
+  const auto HORIZON =
+      modules::ExtrapolatePrediction(output, impact.ballistic.prediction_horizon_s);
+  const auto PROJECTED =
+      ProjectArmor(HORIZON.armors[static_cast<std::size_t>(impact.selected_slot)].world_t_armor,
+                   *output.type, spatial);
+  if (!PROJECTED)
+    return annotations;
+
+  ::foxglove::schemas::PointsAnnotation polygon;
+  polygon.timestamp = timestamp;
+  polygon.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
+  polygon.outline_color = COLOR;
+  polygon.thickness = 4.0;
+  polygon.points.assign(PROJECTED->pixels.begin(), PROJECTED->pixels.end());
+  annotations.points.push_back(std::move(polygon));
+  return annotations;
+}
+
 ::foxglove::schemas::ImageAnnotations EncodeSelectedArmorAnnotations(
     const modules::ArmorPredictionOutput& output, const frame::SpatialFrameView& spatial,
     const modules::ArmorSelectionSnapshot& selection,
@@ -441,7 +492,7 @@ std::string EncodeState(const modules::ArmorPredictionOutput& output,
   AddTimestampCarrier(annotations, timestamp);
   if (output.state == modules::TrackerState::LOST || !output.type)
     return annotations;
-  const auto* horizon = FindHorizon(output, ImagePredictionHorizon::CURRENT);
+  const auto* horizon = FindCurrentHorizon(output);
   if (!horizon)
     return annotations;
 

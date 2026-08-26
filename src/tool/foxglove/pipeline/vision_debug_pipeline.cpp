@@ -2,6 +2,8 @@
 
 #include "core/logger.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <exception>
 #include <mutex>
 #include <string>
@@ -28,17 +30,19 @@ VisionDebugPipeline::VisionDebugPipeline(const Config& config, runtime::Foxglove
       session_.RegisterLiveChannel(live_channel_ids_.projectile_stats);
       session_.RegisterLiveChannel(live_channel_ids_.projection_annotations);
       session_.RegisterLiveChannel(live_channel_ids_.pnp_estimates);
-      session_.RegisterLiveChannel(live_channel_ids_.pnp_corners);
+      session_.RegisterLiveChannel(live_channel_ids_.pnp_raw_corners);
+      session_.RegisterLiveChannel(live_channel_ids_.pnp_final_corners);
       session_.RegisterLiveChannel(live_channel_ids_.pnp_reprojection);
       session_.RegisterLiveChannel(live_channel_ids_.pnp_error_vectors);
       session_.RegisterLiveChannel(live_channel_ids_.corner_refiner_axes);
       session_.RegisterLiveChannel(live_channel_ids_.corner_refiner_candidates);
       session_.RegisterLiveChannel(live_channel_ids_.pnp_stats);
       session_.RegisterLiveChannel(live_channel_ids_.prediction_scene);
+      session_.RegisterLiveChannel(live_channel_ids_.impact_scene);
       session_.RegisterLiveChannel(live_channel_ids_.prediction_state);
       session_.RegisterLiveChannel(live_channel_ids_.prediction_truth_overlay);
       session_.RegisterLiveChannel(live_channel_ids_.prediction_current_annotations);
-      session_.RegisterLiveChannel(live_channel_ids_.prediction_future_annotations);
+      session_.RegisterLiveChannel(live_channel_ids_.impact_annotations);
       session_.RegisterLiveChannel(live_channel_ids_.selected_armor_annotations);
     } catch (const std::exception& error) {
       live_channels_.reset();
@@ -94,7 +98,9 @@ TopicDemand VisionDebugPipeline::LiveDemand() const noexcept {
       .projection_annotations =
           session_.Subscription(live_channel_ids_.projection_annotations).subscribers > 0,
       .pnp_estimates = session_.Subscription(live_channel_ids_.pnp_estimates).subscribers > 0,
-      .pnp_corners = session_.Subscription(live_channel_ids_.pnp_corners).subscribers > 0,
+      .pnp_raw_corners = session_.Subscription(live_channel_ids_.pnp_raw_corners).subscribers > 0,
+      .pnp_final_corners =
+          session_.Subscription(live_channel_ids_.pnp_final_corners).subscribers > 0,
       .pnp_reprojection = session_.Subscription(live_channel_ids_.pnp_reprojection).subscribers > 0,
       .pnp_error_vectors =
           session_.Subscription(live_channel_ids_.pnp_error_vectors).subscribers > 0,
@@ -104,16 +110,43 @@ TopicDemand VisionDebugPipeline::LiveDemand() const noexcept {
           session_.Subscription(live_channel_ids_.corner_refiner_candidates).subscribers > 0,
       .pnp_stats = session_.Subscription(live_channel_ids_.pnp_stats).subscribers > 0,
       .prediction_scene = session_.Subscription(live_channel_ids_.prediction_scene).subscribers > 0,
+      .impact_scene = session_.Subscription(live_channel_ids_.impact_scene).subscribers > 0,
       .prediction_state = session_.Subscription(live_channel_ids_.prediction_state).subscribers > 0,
       .prediction_truth_overlay =
           session_.Subscription(live_channel_ids_.prediction_truth_overlay).subscribers > 0,
       .prediction_current_annotations =
           session_.Subscription(live_channel_ids_.prediction_current_annotations).subscribers > 0,
-      .prediction_future_annotations =
-          session_.Subscription(live_channel_ids_.prediction_future_annotations).subscribers > 0,
+      .impact_annotations =
+          session_.Subscription(live_channel_ids_.impact_annotations).subscribers > 0,
       .selected_armor_annotations =
           session_.Subscription(live_channel_ids_.selected_armor_annotations).subscribers > 0,
   };
+}
+
+void VisionDebugPipeline::UpdateImpact(const modules::FireControlOutput& output) noexcept {
+  try {
+    const modules::ArmorImpactSnapshot SNAPSHOT{.source_sequence = output.source_sequence,
+                                                .selected_slot = output.selected_slot,
+                                                .ballistic = output.ballistic};
+    std::lock_guard lock(impact_mutex_);
+    if (impact_stopped_)
+      return;
+    const auto EXISTING = std::find_if(
+        impact_snapshots_.begin(), impact_snapshots_.end(),
+        [&](const auto& value) { return value.source_sequence == SNAPSHOT.source_sequence; });
+    if (EXISTING != impact_snapshots_.end()) {
+      *EXISTING = SNAPSHOT;
+    } else {
+      impact_snapshots_.push_back(SNAPSHOT);
+      if (impact_snapshots_.size() > 8)
+        impact_snapshots_.pop_front();
+    }
+    impact_condition_.notify_all();
+  } catch (...) {
+    const auto COUNT = metrics_.OnEncodingError();
+    if (COUNT == 1 || COUNT % 100 == 0)
+      MV_LOG_ERROR("Foxglove", "failed to cache impact snapshot #{}", COUNT);
+  }
 }
 
 void VisionDebugPipeline::Publish(
@@ -176,17 +209,19 @@ void VisionDebugPipeline::ProcessFrame(const VisionDebugFrame& frame) {
                                                             .projectile_stats = true,
                                                             .projection_annotations = true,
                                                             .pnp_estimates = true,
-                                                            .pnp_corners = true,
+                                                            .pnp_raw_corners = true,
+                                                            .pnp_final_corners = true,
                                                             .pnp_reprojection = true,
                                                             .pnp_error_vectors = true,
                                                             .corner_refiner_axes = true,
                                                             .corner_refiner_candidates = true,
                                                             .pnp_stats = true,
                                                             .prediction_scene = true,
+                                                            .impact_scene = true,
                                                             .prediction_state = true,
                                                             .prediction_truth_overlay = true,
                                                             .prediction_current_annotations = true,
-                                                            .prediction_future_annotations = true,
+                                                            .impact_annotations = true,
                                                             .selected_armor_annotations = true}
                                               : TopicDemand{};
   const auto COMBINED_DEMAND = Merge(LIVE_DEMAND, RECORDING_DEMAND);
@@ -194,8 +229,11 @@ void VisionDebugPipeline::ProcessFrame(const VisionDebugFrame& frame) {
     return;
   }
 
+  const auto IMPACT = (COMBINED_DEMAND.impact_annotations || COMBINED_DEMAND.impact_scene)
+                          ? WaitForImpact(frame.output.prediction.sequence)
+                          : std::nullopt;
   // 合并后只编码一次，同一 PreparedFrame 供实时与录制频道复用。
-  const auto FRAME = encoder_.Encode(frame, COMBINED_DEMAND, metrics_.Counts());
+  const auto FRAME = encoder_.Encode(frame, COMBINED_DEMAND, metrics_.Counts(), IMPACT);
   if (FRAME.jpeg_ms.has_value()) {
     metrics_.OnEncoded();
   }
@@ -215,6 +253,28 @@ void VisionDebugPipeline::ProcessFrame(const VisionDebugFrame& frame) {
     }
   }
   metrics_.AddLatency(FRAME.jpeg_ms, FRAME.publish_latency_ms);
+}
+
+std::optional<modules::ArmorImpactSnapshot> VisionDebugPipeline::WaitForImpact(
+    std::uint64_t source_sequence) noexcept {
+  try {
+    std::unique_lock lock(impact_mutex_);
+    const auto FIND = [&]() {
+      return std::find_if(impact_snapshots_.begin(), impact_snapshots_.end(),
+                          [source_sequence](const auto& value) {
+                            return value.source_sequence == source_sequence;
+                          });
+    };
+    impact_condition_.wait_for(lock, std::chrono::milliseconds(20), [&] {
+      return impact_stopped_ || FIND() != impact_snapshots_.end() ||
+             (!impact_snapshots_.empty() &&
+              impact_snapshots_.back().source_sequence > source_sequence);
+    });
+    const auto MATCH = FIND();
+    return MATCH == impact_snapshots_.end() ? std::nullopt : std::optional(*MATCH);
+  } catch (...) {
+    return std::nullopt;
+  }
 }
 
 void VisionDebugPipeline::ReportPublishErrors(const ChannelPublishResult& result,
@@ -254,6 +314,11 @@ void VisionDebugPipeline::Stop() noexcept {
     return;
   }
   accepting_.store(false, std::memory_order_release);
+  {
+    std::lock_guard lock(impact_mutex_);
+    impact_stopped_ = true;
+  }
+  impact_condition_.notify_all();
   queue_.Stop();
   if (worker_.joinable()) {
     worker_.join();

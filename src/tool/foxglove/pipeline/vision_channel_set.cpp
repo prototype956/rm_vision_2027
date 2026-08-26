@@ -19,17 +19,19 @@ constexpr char K_GROUND_TRUTH_TOPIC[] = "/simulation/ground_truth";
 constexpr char K_PROJECTILE_STATS_TOPIC[] = "/simulation/projectiles/stats";
 constexpr char K_PROJECTION_ANNOTATIONS_TOPIC[] = "/simulation/ground_truth/annotations";
 constexpr char K_PNP_ESTIMATES_TOPIC[] = "/vision/pnp/estimate";
-constexpr char K_PNP_CORNERS_TOPIC[] = "/vision/pnp/corners";
+constexpr char K_PNP_RAW_CORNERS_TOPIC[] = "/vision/pnp/raw_corners";
+constexpr char K_PNP_FINAL_CORNERS_TOPIC[] = "/vision/pnp/final_corners";
 constexpr char K_PNP_REPROJECTION_TOPIC[] = "/vision/pnp/reprojection";
 constexpr char K_PNP_ERROR_VECTORS_TOPIC[] = "/vision/pnp/error_vectors";
 constexpr char K_CORNER_REFINER_AXES_TOPIC[] = "/vision/corner_refiner/axes";
 constexpr char K_CORNER_REFINER_CANDIDATES_TOPIC[] = "/vision/corner_refiner/candidates";
 constexpr char K_PNP_STATS_TOPIC[] = "/vision/pnp/stats";
 constexpr char K_PREDICTION_SCENE_TOPIC[] = "/vision/prediction/scene";
+constexpr char K_IMPACT_SCENE_TOPIC[] = "/vision/control/impact_scene";
 constexpr char K_PREDICTION_STATE_TOPIC[] = "/vision/prediction/state";
 constexpr char K_PREDICTION_TRUTH_OVERLAY_TOPIC[] = "/vision/prediction/truth_overlay";
 constexpr char K_PREDICTION_CURRENT_ANNOTATIONS_TOPIC[] = "/vision/prediction/current_annotations";
-constexpr char K_PREDICTION_FUTURE_ANNOTATIONS_TOPIC[] = "/vision/prediction/future_annotations";
+constexpr char K_IMPACT_ANNOTATIONS_TOPIC[] = "/vision/control/impact_annotations";
 constexpr char K_SELECTED_ARMOR_ANNOTATIONS_TOPIC[] = "/vision/control/selected_armor_annotations";
 
 // RawChannel 必须携带稳定 JSON Schema，Foxglove Plot/Raw Messages 才能解析字段。
@@ -252,8 +254,10 @@ VisionChannelSet::VisionChannelSet(const ::foxglove::Context& context) {
       K_PROJECTION_ANNOTATIONS_TOPIC, context, "create projection annotations channel");
   pnp_estimates_ = CreateSchemaChannel<::foxglove::schemas::SceneUpdateChannel>(
       K_PNP_ESTIMATES_TOPIC, context, "create PnP estimates channel");
-  pnp_corners_ = CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
-      K_PNP_CORNERS_TOPIC, context, "create PnP corners channel");
+  pnp_raw_corners_ = CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
+      K_PNP_RAW_CORNERS_TOPIC, context, "create raw PnP corners channel");
+  pnp_final_corners_ = CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
+      K_PNP_FINAL_CORNERS_TOPIC, context, "create final PnP corners channel");
   pnp_reprojection_ = CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
       K_PNP_REPROJECTION_TOPIC, context, "create PnP reprojection channel");
   pnp_error_vectors_ = CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
@@ -266,6 +270,8 @@ VisionChannelSet::VisionChannelSet(const ::foxglove::Context& context) {
                                 sizeof(K_PNP_STATS_SCHEMA) - 1, context);
   prediction_scene_ = CreateSchemaChannel<::foxglove::schemas::SceneUpdateChannel>(
       K_PREDICTION_SCENE_TOPIC, context, "create prediction scene channel");
+  impact_scene_ = CreateSchemaChannel<::foxglove::schemas::SceneUpdateChannel>(
+      K_IMPACT_SCENE_TOPIC, context, "create impact scene channel");
   prediction_state_ =
       CreateRawChannel(K_PREDICTION_STATE_TOPIC, "mv.vision.ArmorPredictionState",
                        K_PREDICTION_STATE_SCHEMA, sizeof(K_PREDICTION_STATE_SCHEMA) - 1, context);
@@ -275,10 +281,8 @@ VisionChannelSet::VisionChannelSet(const ::foxglove::Context& context) {
       CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
           K_PREDICTION_CURRENT_ANNOTATIONS_TOPIC, context,
           "create current prediction annotations channel");
-  prediction_future_annotations_ =
-      CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
-          K_PREDICTION_FUTURE_ANNOTATIONS_TOPIC, context,
-          "create future prediction annotations channel");
+  impact_annotations_ = CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
+      K_IMPACT_ANNOTATIONS_TOPIC, context, "create impact annotations channel");
   selected_armor_annotations_ = CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
       K_SELECTED_ARMOR_ANNOTATIONS_TOPIC, context, "create selected armor annotations channel");
 }
@@ -300,17 +304,19 @@ ChannelIds VisionChannelSet::Ids() const noexcept {
           .projectile_stats = projectile_stats_->id(),
           .projection_annotations = projection_annotations_->id(),
           .pnp_estimates = pnp_estimates_->id(),
-          .pnp_corners = pnp_corners_->id(),
+          .pnp_raw_corners = pnp_raw_corners_->id(),
+          .pnp_final_corners = pnp_final_corners_->id(),
           .pnp_reprojection = pnp_reprojection_->id(),
           .pnp_error_vectors = pnp_error_vectors_->id(),
           .corner_refiner_axes = corner_refiner_axes_->id(),
           .corner_refiner_candidates = corner_refiner_candidates_->id(),
           .pnp_stats = pnp_stats_->id(),
           .prediction_scene = prediction_scene_->id(),
+          .impact_scene = impact_scene_->id(),
           .prediction_state = prediction_state_->id(),
           .prediction_truth_overlay = prediction_truth_overlay_->id(),
           .prediction_current_annotations = prediction_current_annotations_->id(),
-          .prediction_future_annotations = prediction_future_annotations_->id(),
+          .impact_annotations = impact_annotations_->id(),
           .selected_armor_annotations = selected_armor_annotations_->id()};
 }
 
@@ -379,10 +385,15 @@ ChannelPublishResult VisionChannelSet::Publish(const PreparedFrame& frame,
     AddError(result, VisionTopic::PNP_ESTIMATES,
              pnp_estimates_->log(*frame.pnp_estimates, frame.epoch_nanos));
   }
-  if (demand.pnp_corners && frame.pnp_corners.has_value()) {
+  if (demand.pnp_raw_corners && frame.pnp_raw_corners.has_value()) {
     result.attempted = true;
-    AddError(result, VisionTopic::PNP_CORNERS,
-             pnp_corners_->log(*frame.pnp_corners, frame.epoch_nanos));
+    AddError(result, VisionTopic::PNP_RAW_CORNERS,
+             pnp_raw_corners_->log(*frame.pnp_raw_corners, frame.epoch_nanos));
+  }
+  if (demand.pnp_final_corners && frame.pnp_final_corners.has_value()) {
+    result.attempted = true;
+    AddError(result, VisionTopic::PNP_FINAL_CORNERS,
+             pnp_final_corners_->log(*frame.pnp_final_corners, frame.epoch_nanos));
   }
   if (demand.pnp_reprojection && frame.pnp_reprojection.has_value()) {
     result.attempted = true;
@@ -415,6 +426,11 @@ ChannelPublishResult VisionChannelSet::Publish(const PreparedFrame& frame,
     AddError(result, VisionTopic::PREDICTION_SCENE,
              prediction_scene_->log(*frame.prediction_scene, frame.epoch_nanos));
   }
+  if (demand.impact_scene && frame.impact_scene.has_value()) {
+    result.attempted = true;
+    AddError(result, VisionTopic::IMPACT_SCENE,
+             impact_scene_->log(*frame.impact_scene, frame.epoch_nanos));
+  }
   if (demand.prediction_state && frame.prediction_state_json.has_value()) {
     result.attempted = true;
     const auto* data = reinterpret_cast<const std::byte*>(frame.prediction_state_json->data());
@@ -432,11 +448,10 @@ ChannelPublishResult VisionChannelSet::Publish(const PreparedFrame& frame,
              prediction_current_annotations_->log(*frame.prediction_current_annotations,
                                                   frame.epoch_nanos));
   }
-  if (demand.prediction_future_annotations && frame.prediction_future_annotations.has_value()) {
+  if (demand.impact_annotations && frame.impact_annotations.has_value()) {
     result.attempted = true;
-    AddError(result, VisionTopic::PREDICTION_FUTURE_ANNOTATIONS,
-             prediction_future_annotations_->log(*frame.prediction_future_annotations,
-                                                 frame.epoch_nanos));
+    AddError(result, VisionTopic::IMPACT_ANNOTATIONS,
+             impact_annotations_->log(*frame.impact_annotations, frame.epoch_nanos));
   }
   if (demand.selected_armor_annotations && frame.selected_armor_annotations.has_value()) {
     result.attempted = true;
@@ -476,8 +491,10 @@ void VisionChannelSet::Close() noexcept {
     projection_annotations_->close();
   if (pnp_estimates_)
     pnp_estimates_->close();
-  if (pnp_corners_)
-    pnp_corners_->close();
+  if (pnp_raw_corners_)
+    pnp_raw_corners_->close();
+  if (pnp_final_corners_)
+    pnp_final_corners_->close();
   if (pnp_reprojection_)
     pnp_reprojection_->close();
   if (pnp_error_vectors_)
@@ -490,14 +507,16 @@ void VisionChannelSet::Close() noexcept {
     pnp_stats_->close();
   if (prediction_scene_)
     prediction_scene_->close();
+  if (impact_scene_)
+    impact_scene_->close();
   if (prediction_state_)
     prediction_state_->close();
   if (prediction_truth_overlay_)
     prediction_truth_overlay_->close();
   if (prediction_current_annotations_)
     prediction_current_annotations_->close();
-  if (prediction_future_annotations_)
-    prediction_future_annotations_->close();
+  if (impact_annotations_)
+    impact_annotations_->close();
   if (selected_armor_annotations_)
     selected_armor_annotations_->close();
 }
@@ -528,8 +547,10 @@ const char* TopicName(VisionTopic topic) noexcept {
       return "projection_annotations";
     case VisionTopic::PNP_ESTIMATES:
       return "pnp_estimates";
-    case VisionTopic::PNP_CORNERS:
-      return "pnp_corners";
+    case VisionTopic::PNP_RAW_CORNERS:
+      return "pnp_raw_corners";
+    case VisionTopic::PNP_FINAL_CORNERS:
+      return "pnp_final_corners";
     case VisionTopic::PNP_REPROJECTION:
       return "pnp_reprojection";
     case VisionTopic::PNP_ERROR_VECTORS:
@@ -542,14 +563,16 @@ const char* TopicName(VisionTopic topic) noexcept {
       return "pnp_stats";
     case VisionTopic::PREDICTION_SCENE:
       return "prediction_scene";
+    case VisionTopic::IMPACT_SCENE:
+      return "impact_scene";
     case VisionTopic::PREDICTION_STATE:
       return "prediction_state";
     case VisionTopic::PREDICTION_TRUTH_OVERLAY:
       return "prediction_truth_overlay";
     case VisionTopic::PREDICTION_CURRENT_ANNOTATIONS:
       return "prediction_current_annotations";
-    case VisionTopic::PREDICTION_FUTURE_ANNOTATIONS:
-      return "prediction_future_annotations";
+    case VisionTopic::IMPACT_ANNOTATIONS:
+      return "impact_annotations";
     case VisionTopic::SELECTED_ARMOR_ANNOTATIONS:
       return "selected_armor_annotations";
   }

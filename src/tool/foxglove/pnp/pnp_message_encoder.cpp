@@ -152,6 +152,47 @@ bool HasAppliedRefinement(const simulation_evaluation::PnpEvaluationAttempt& att
   return attempt.refinement && attempt.refinement->success && !attempt.refinement->fallback;
 }
 
+void AddTimestampCarrier(::foxglove::schemas::ImageAnnotations& annotations,
+                         const ::foxglove::schemas::Timestamp& timestamp) {
+  // ImageAnnotations 没有顶层时间戳，用不可见点集承载帧时间并清除上一帧角点。
+  ::foxglove::schemas::PointsAnnotation carrier;
+  carrier.timestamp = timestamp;
+  carrier.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::POINTS;
+  carrier.thickness = 0.0;
+  annotations.points.push_back(std::move(carrier));
+}
+
+void AddCornerOutline(::foxglove::schemas::ImageAnnotations& annotations,
+                      const std::array<cv::Point2f, 4>& corners,
+                      const ::foxglove::schemas::Color& color, double thickness,
+                      std::string_view label, const ::foxglove::schemas::Timestamp& timestamp) {
+  ::foxglove::schemas::PointsAnnotation outline;
+  outline.timestamp = timestamp;
+  outline.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
+  outline.outline_color = color;
+  outline.thickness = thickness;
+  float min_u = corners.front().x;
+  float min_v = corners.front().y;
+  for (const auto& point : corners) {
+    outline.points.push_back({.x = point.x, .y = point.y});
+    min_u = std::min(min_u, point.x);
+    min_v = std::min(min_v, point.y);
+  }
+  annotations.points.push_back(std::move(outline));
+  if (label.empty())
+    return;
+
+  ::foxglove::schemas::TextAnnotation text;
+  text.timestamp = timestamp;
+  text.position = {.x = std::max(0.0, static_cast<double>(min_u)),
+                   .y = std::max(0.0, static_cast<double>(min_v) - 3.0)};
+  text.text = std::string(label);
+  text.font_size = 12.0;
+  text.text_color = color;
+  text.background_color = {.a = 0.65};
+  annotations.texts.push_back(std::move(text));
+}
+
 }  // namespace
 
 ::foxglove::schemas::SceneUpdate EncodeEstimates(
@@ -187,34 +228,40 @@ bool HasAppliedRefinement(const simulation_evaluation::PnpEvaluationAttempt& att
   return update;
 }
 
-::foxglove::schemas::ImageAnnotations EncodeCorners(
+::foxglove::schemas::ImageAnnotations EncodeRawCorners(
     const simulation_evaluation::PnpEvaluationResult& result,
     const ::foxglove::schemas::Timestamp& timestamp) {
   ::foxglove::schemas::ImageAnnotations annotations;
+  AddTimestampCarrier(annotations, timestamp);
+  for (const auto& attempt : result.attempts) {
+    if (attempt.source != simulation_evaluation::PnpEvaluationSource::DETECTION ||
+        !attempt.refinement)
+      continue;
+    AddCornerOutline(annotations, attempt.refinement->original_corners,
+                     {.g = 1.0, .b = 1.0, .a = 1.0}, 1.5, {}, timestamp);
+  }
+  return annotations;
+}
+
+::foxglove::schemas::ImageAnnotations EncodeFinalCorners(
+    const simulation_evaluation::PnpEvaluationResult& result,
+    const ::foxglove::schemas::Timestamp& timestamp) {
+  ::foxglove::schemas::ImageAnnotations annotations;
+  AddTimestampCarrier(annotations, timestamp);
   for (const auto& attempt : result.attempts) {
     if (attempt.source != simulation_evaluation::PnpEvaluationSource::DETECTION ||
         !attempt.refinement)
       continue;
     const auto& refinement = *attempt.refinement;
-    // 青色始终表示原始网络输入；洋红色仅表示实际提交给 PnP 的成功精修结果。
-    ::foxglove::schemas::PointsAnnotation raw;
-    raw.timestamp = timestamp;
-    raw.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
-    raw.outline_color = {.g = 1.0, .b = 1.0, .a = 1.0};
-    raw.thickness = 1.5;
-    for (const auto& point : refinement.original_corners)
-      raw.points.push_back({.x = point.x, .y = point.y});
-    annotations.points.push_back(std::move(raw));
     if (HasAppliedRefinement(attempt)) {
-      ::foxglove::schemas::PointsAnnotation refined;
-      refined.timestamp = timestamp;
-      refined.type = ::foxglove::schemas::PointsAnnotation::PointsAnnotationType::LINE_LOOP;
-      refined.outline_color = {.r = 1.0, .b = 1.0, .a = 1.0};
-      refined.thickness = 1.5;
-      for (const auto& point : refinement.refined_corners)
-        refined.points.push_back({.x = point.x, .y = point.y});
-      annotations.points.push_back(std::move(refined));
+      AddCornerOutline(annotations, refinement.refined_corners, {.r = 1.0, .b = 1.0, .a = 1.0}, 2.5,
+                       "REFINED", timestamp);
+      continue;
     }
+    const auto LABEL =
+        fmt::format("FALLBACK:{}", modules::CornerRefinementStatusName(refinement.status));
+    AddCornerOutline(annotations, refinement.refined_corners, {.r = 1.0, .g = 0.85, .a = 1.0}, 2.5,
+                     LABEL, timestamp);
   }
   return annotations;
 }

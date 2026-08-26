@@ -86,14 +86,19 @@ PnP 失败不会阻止已跟踪目标的 UVL 更新。检测与精修数量不�
 `camera.backend=talos` 时创建命令运行时，实机相机后端不加载发弹输出。F5 外部控制和既有
 跟踪、时效、不确定度、弹道、MPC、瞄准稳定及冷却门控仍全部生效。
 
-Foxglove 保持 `/vision/prediction/*` 话题名称。`state` 提供状态顺序、协方差、先验创新/NIS、
+Foxglove 的 `state` 提供状态顺序、协方差、先验创新/NIS、
 机动阶段、连续证据、确认/活动剩余时间、实际 yaw 过程噪声、试更新角速度变化、关联门限与
 计数、逐灯条关联、同槽灯条对数量、light-only阻止原因、融合/灯条-only/装甲回退状态、
 单调重置计数、估计耗时和 Talos
 中心/yaw/yaw角速度误差。原始 yaw 误差保留槽位相位，`truth_yaw_equivalent_error_rad` 将误差
-折叠到四装甲 `pi/2` 对称区间用于验收；`scene` 显示车体三轴、双半径和当前/未来装甲；
-`current_annotations` 同时显示实测与关联前预测轮廓，
-`future_annotations` 显示100 ms重投影。
+折叠到四装甲 `pi/2` 对称区间用于验收；`/vision/prediction/scene` 只显示当前车体三轴、双半径
+和当前四装甲；`/vision/control/impact_scene` 使用严格同帧的弹道命中时域显示四装甲，并以
+不透明紫色粗线突出最终选中槽位，其余槽位使用半透明紫色细线；
+`/vision/prediction/current_annotations` 使用当前时域显示完整四槽位预测：正面为深绿色 2 px
+实线，背面为 35% 透明的绿色 1.5 px 实线；通过全部门限的亮绿色 3 px 关联预测框最后绘制。
+固定 100 ms 图像话题已移除，`/vision/control/impact_annotations` 改为显示火控最终选中槽位在
+弹道命中时域的紫色 4 px 实线预测，不附加文字；该时域来自预测年龄、命令延迟和迭代收敛
+的弹丸飞行时间，并严格匹配相同 `source_sequence` 的图像。
 
 灯条检测与融合另见 `ARMOR_LIGHT_DETECTOR.md`。本阶段不增加独立验收程序。按
 Release/OpenVINO 构建后使用 Talos/Foxglove 依次录制收敛后

@@ -12,7 +12,10 @@
 #include "tool/foxglove/vision_debug_publisher.hpp"
 
 #include <atomic>
+#include <condition_variable>
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <thread>
 
 #include <optional>
@@ -43,6 +46,8 @@ class VisionDebugPipeline final {
       const ::mv::runtime::VisionFrameDiagnostics& diagnostics,
       const std::optional<simulation_evaluation::SimulationEvaluationResult>& simulation_evaluation,
       std::optional<modules::ArmorSelectionSnapshot> selection) noexcept;
+  /** @brief 保存火控命中快照，供图像工作线程按源帧序号严格匹配。 */
+  void UpdateImpact(const modules::FireControlOutput& output) noexcept;
   /** @brief 获取流水线、会话和关键实时订阅的线程安全组合快照。 */
   [[nodiscard]] VisionPublisherStats SnapshotStats() const noexcept;
   /** @brief 查询流水线是否仍接受帧且至少有一个 sink 可用。 */
@@ -57,6 +62,9 @@ class VisionDebugPipeline final {
   void WorkerLoop() noexcept;
   /** @brief 合并实时与录制需求，编码一次并分发到两个 sink。 */
   void ProcessFrame(const VisionDebugFrame& frame);
+  /** @brief 有界等待与指定视觉源帧完全同序号的火控命中快照。 */
+  [[nodiscard]] std::optional<modules::ArmorImpactSnapshot> WaitForImpact(
+      std::uint64_t source_sequence) noexcept;
   /** @brief 将逐话题 SDK 错误上报给对应会话 sink。 */
   void ReportPublishErrors(const ChannelPublishResult& result, bool recording) noexcept;
 
@@ -66,8 +74,12 @@ class VisionDebugPipeline final {
   VisionPublisherMetrics metrics_;     ///< 线程安全累计统计。
   std::unique_ptr<VisionChannelSet> live_channels_;       ///< WebSocket Context 频道集合。
   std::unique_ptr<VisionChannelSet> recording_channels_;  ///< MCAP Context 频道集合。
-  ChannelIds live_channel_ids_;           ///< 查询实时订阅需求所需的频道 ID。
-  std::thread worker_;                    ///< 唯一编码和频道发布线程。
+  ChannelIds live_channel_ids_;               ///< 查询实时订阅需求所需的频道 ID。
+  std::thread worker_;                        ///< 唯一编码和频道发布线程。
+  std::mutex impact_mutex_;                   ///< 保护同序号命中快照缓存。
+  std::condition_variable impact_condition_;  ///< 控制结果到达或停止等待通知。
+  std::deque<modules::ArmorImpactSnapshot> impact_snapshots_;  ///< 最近 8 个控制源帧结果。
+  bool impact_stopped_{false};            ///< 停止时中断后台线程的命中快照等待。
   std::atomic<bool> accepting_{false};    ///< Publish() 是否允许继续入队。
   std::atomic<bool> stop_called_{false};  ///< 保证 Stop() 只执行一次。
 };

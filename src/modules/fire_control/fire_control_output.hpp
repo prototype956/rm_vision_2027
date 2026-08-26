@@ -48,6 +48,7 @@ struct BallisticSolution {
   double pitch{0.0};
   double distance_m{0.0};
   double fly_time_s{0.0};
+  double prediction_horizon_s{0.0};  ///< 产生 target_world 的预测时域，单位为秒。
 };
 
 /** @brief 控制运行时与 HAL 消费的单周期正式火控输出。 */

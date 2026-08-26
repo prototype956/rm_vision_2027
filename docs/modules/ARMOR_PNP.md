@@ -31,15 +31,18 @@ PnP 世界位姿，IPPE 失败也不会阻断已跟踪目标的图像观测更�
 ## 仿真验收
 
 使用 `scripts/run_simulation_vision.sh` 启动完整链路。在 Foxglove 中叠加原图、
-`/simulation/ground_truth/annotations`、`/vision/pnp/corners` 和
+`/simulation/ground_truth/annotations`、`/vision/pnp/raw_corners`、
+`/vision/pnp/final_corners` 和
 `/vision/pnp/reprojection`，并在 3D 面板以
 `world` 为固定坐标系同时观察真值与估计装甲。
 
-输入角点、PnP 重投影和真值误差线分别由 `/vision/pnp/corners`、
-`/vision/pnp/reprojection` 和 `/vision/pnp/error_vectors` 独立显示。真值基准链继续写入
+原始输入角点、正式输入角点、PnP 重投影和真值误差线分别由
+`/vision/pnp/raw_corners`、`/vision/pnp/final_corners`、`/vision/pnp/reprojection` 和
+`/vision/pnp/error_vectors` 独立显示。`final_corners` 在精修失败时以黄色框和状态文字显示
+实际提交的原始回退角点，不额外运行第二次 PnP。真值基准链继续写入
 `/vision/pnp/stats`，其输入四角由黄色
 `/simulation/ground_truth/annotations` 单独显示。真值二维投影只保留正面朝向相机且与
-图像相交的装甲；原始和最终框不绘制角点身份文字，详细角点数据保留在统计消息中。
+图像相交的装甲；详细角点数据保留在统计消息中。
 严格遮挡仍需仿真渲染端提供深度或可见性 ID。
 
 按 2/4/6/8/10 m 和 0/15/30/45° 采集 MCAP。`/vision/pnp/stats.summary` 每 100 帧原子更新

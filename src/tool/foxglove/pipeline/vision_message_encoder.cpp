@@ -45,11 +45,11 @@ std::string EncodeDebugStats(const VisionDebugFrame& frame,
 bool TopicDemand::Any() const noexcept {
   return image || armor_annotations || armor_stats || lightbar_annotations || lightbar_stats ||
          debug_stats || calibration || frustum || ground_truth || projectile_stats ||
-         projection_annotations || pnp_estimates || pnp_corners || pnp_reprojection ||
-         pnp_error_vectors || corner_refiner_axes || corner_refiner_candidates || pnp_stats ||
-         prediction_scene || prediction_state || prediction_truth_overlay ||
-         prediction_current_annotations || prediction_future_annotations ||
-         selected_armor_annotations;
+         projection_annotations || pnp_estimates || pnp_raw_corners || pnp_final_corners ||
+         pnp_reprojection || pnp_error_vectors || corner_refiner_axes ||
+         corner_refiner_candidates || pnp_stats || prediction_scene || impact_scene ||
+         prediction_state || prediction_truth_overlay || prediction_current_annotations ||
+         impact_annotations || selected_armor_annotations;
 }
 
 TopicDemand Merge(TopicDemand left, TopicDemand right) noexcept {
@@ -66,7 +66,8 @@ TopicDemand Merge(TopicDemand left, TopicDemand right) noexcept {
       .projectile_stats = left.projectile_stats || right.projectile_stats,
       .projection_annotations = left.projection_annotations || right.projection_annotations,
       .pnp_estimates = left.pnp_estimates || right.pnp_estimates,
-      .pnp_corners = left.pnp_corners || right.pnp_corners,
+      .pnp_raw_corners = left.pnp_raw_corners || right.pnp_raw_corners,
+      .pnp_final_corners = left.pnp_final_corners || right.pnp_final_corners,
       .pnp_reprojection = left.pnp_reprojection || right.pnp_reprojection,
       .pnp_error_vectors = left.pnp_error_vectors || right.pnp_error_vectors,
       .corner_refiner_axes = left.corner_refiner_axes || right.corner_refiner_axes,
@@ -74,12 +75,12 @@ TopicDemand Merge(TopicDemand left, TopicDemand right) noexcept {
           left.corner_refiner_candidates || right.corner_refiner_candidates,
       .pnp_stats = left.pnp_stats || right.pnp_stats,
       .prediction_scene = left.prediction_scene || right.prediction_scene,
+      .impact_scene = left.impact_scene || right.impact_scene,
       .prediction_state = left.prediction_state || right.prediction_state,
       .prediction_truth_overlay = left.prediction_truth_overlay || right.prediction_truth_overlay,
       .prediction_current_annotations =
           left.prediction_current_annotations || right.prediction_current_annotations,
-      .prediction_future_annotations =
-          left.prediction_future_annotations || right.prediction_future_annotations,
+      .impact_annotations = left.impact_annotations || right.impact_annotations,
       .selected_armor_annotations =
           left.selected_armor_annotations || right.selected_armor_annotations};
 }
@@ -89,8 +90,9 @@ VisionMessageEncoder::VisionMessageEncoder(const ImageConfig& config)
       steady_anchor_(SteadyClock::now()),
       system_anchor_(std::chrono::system_clock::now()) {}
 
-PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicDemand demand,
-                                           PipelineCounts counts) const {
+PreparedFrame VisionMessageEncoder::Encode(
+    const VisionDebugFrame& frame, TopicDemand demand, PipelineCounts counts,
+    const std::optional<modules::ArmorImpactSnapshot>& impact) const {
   const auto& packet = frame.packet;
   const auto& stamp = packet.capture.stamp;
   const auto SPATIAL_VIEW = mv::frame::MakeSpatialFrameView(packet);
@@ -160,17 +162,14 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
     result.pnp_estimates = pnp::EncodeEstimates(PNP_DIAGNOSTIC, *packet.kinematics, TIMESTAMP);
   if (demand.prediction_current_annotations) {
     result.prediction_current_annotations =
-        SPATIAL_VIEW ? prediction::EncodeAnnotations(
-                           frame.output.prediction, frame.diagnostics.prediction, *SPATIAL_VIEW,
-                           prediction::ImagePredictionHorizon::CURRENT, TIMESTAMP)
-                     : prediction::EncodeEmptyAnnotations(TIMESTAMP);
+        prediction::EncodeCurrentAnnotations(frame.output.prediction, frame.diagnostics.prediction,
+                                             SPATIAL_VIEW ? &*SPATIAL_VIEW : nullptr, TIMESTAMP);
   }
-  if (demand.prediction_future_annotations) {
-    result.prediction_future_annotations =
-        SPATIAL_VIEW ? prediction::EncodeAnnotations(
-                           frame.output.prediction, frame.diagnostics.prediction, *SPATIAL_VIEW,
-                           prediction::ImagePredictionHorizon::FUTURE_100_MS, TIMESTAMP)
-                     : prediction::EncodeEmptyAnnotations(TIMESTAMP);
+  if (demand.impact_annotations) {
+    result.impact_annotations =
+        SPATIAL_VIEW && impact ? prediction::EncodeImpactAnnotations(
+                                     frame.output.prediction, *SPATIAL_VIEW, *impact, TIMESTAMP)
+                               : prediction::EncodeEmptyAnnotations(TIMESTAMP);
   }
   if (demand.selected_armor_annotations) {
     result.selected_armor_annotations =
@@ -179,8 +178,11 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
                                                          *frame.armor_selection, TIMESTAMP)
             : prediction::EncodeEmptyAnnotations(TIMESTAMP);
   }
-  if (demand.pnp_corners) {
-    result.pnp_corners = pnp::EncodeCorners(PNP_DIAGNOSTIC, TIMESTAMP);
+  if (demand.pnp_raw_corners) {
+    result.pnp_raw_corners = pnp::EncodeRawCorners(PNP_DIAGNOSTIC, TIMESTAMP);
+  }
+  if (demand.pnp_final_corners) {
+    result.pnp_final_corners = pnp::EncodeFinalCorners(PNP_DIAGNOSTIC, TIMESTAMP);
   }
   if (demand.pnp_reprojection) {
     result.pnp_reprojection = pnp::EncodeReprojection(PNP_DIAGNOSTIC, TIMESTAMP);
@@ -200,6 +202,10 @@ PreparedFrame VisionMessageEncoder::Encode(const VisionDebugFrame& frame, TopicD
   }
   if (demand.prediction_scene) {
     result.prediction_scene = prediction::EncodeScene(frame.output.prediction, TIMESTAMP);
+  }
+  if (demand.impact_scene) {
+    result.impact_scene = prediction::EncodeImpactScene(frame.output.prediction,
+                                                        impact ? &*impact : nullptr, TIMESTAMP);
   }
   if (demand.prediction_state) {
     result.prediction_state_json = prediction::EncodeState(

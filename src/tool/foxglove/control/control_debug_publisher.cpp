@@ -15,6 +15,7 @@
 #include <foxglove/context.hpp>
 #include <foxglove/error.hpp>
 #include <numbers>
+#include <optional>
 
 namespace mv::tool::foxglove::control {
 namespace {
@@ -38,11 +39,13 @@ struct ControlDebugView final : modules::FireControlOutput, modules::FireControl
 };
 
 // 高频 state/tracking 使用 JSON 便于 Foxglove Plot 直接选择字段；低频 trajectory
-// 携带完整数组，scene 则提供 world 坐标系中的空间关系和颜色状态提示。
+// 携带完整数组，三个 scene 按选择、瞄准和轨迹职责提供 world 系空间关系。
 constexpr char K_STATE_TOPIC[] = "/vision/control/state";
 constexpr char K_TRACKING_TOPIC[] = "/vision/control/tracking";
 constexpr char K_TRAJECTORY_TOPIC[] = "/vision/control/trajectory";
-constexpr char K_SCENE_TOPIC[] = "/vision/control/scene";
+constexpr char K_SELECTION_SCENE_TOPIC[] = "/vision/control/selection_scene";
+constexpr char K_AIM_SCENE_TOPIC[] = "/vision/control/aim_scene";
+constexpr char K_TRAJECTORY_SCENE_TOPIC[] = "/vision/control/trajectory_scene";
 constexpr char K_TRANSFORMS_TOPIC[] = "/vision/transforms";
 constexpr char K_STATE_SCHEMA[] = R"json({
   "type":"object",
@@ -231,6 +234,17 @@ std::unique_ptr<::foxglove::RawChannel> CreateChannel(const char* topic, const c
   return std::make_unique<::foxglove::RawChannel>(std::move(channel).value());
 }
 
+/** @brief 创建 SceneUpdate 频道，失败时保留话题名和 Foxglove 错误文本。 */
+std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> CreateSceneChannel(
+    const char* topic, const ::foxglove::Context& context) {
+  auto channel = ::foxglove::schemas::SceneUpdateChannel::create(topic, context);
+  if (!channel.has_value()) {
+    throw std::runtime_error(std::string("create ") + topic + ": " +
+                             ::foxglove::strerror(channel.error()));
+  }
+  return std::make_unique<::foxglove::schemas::SceneUpdateChannel>(std::move(channel).value());
+}
+
 // JSON 不支持 NaN 和无穷值；诊断中的非有限数统一编码为 null，保证消息始终合法。
 std::string Number(double value) {
   return std::isfinite(value) ? fmt::format("{:.12g}", value) : "null";
@@ -352,7 +366,8 @@ std::string EncodeState(const ControlDebugView& value, std::uint64_t dropped_sam
       "\"armor_slot\":{},"
       "\"armor_selection\":{},"
       "\"ballistics\":{{\"valid\":{},\"bullet_speed_mps\":{},\"distance_m\":{},"
-      "\"flight_time_s\":{},\"target_world\":[{},{},{}]}},"
+      "\"flight_time_s\":{},\"prediction_horizon_s\":{},"
+      "\"target_world\":[{},{},{}]}},"
       "\"angles\":{{\"reference_yaw\":{},\"reference_pitch\":{},\"feedback_yaw\":{},"
       "\"feedback_pitch\":{},\"command_yaw\":{},\"command_pitch\":{},"
       "\"measured_yaw\":{},\"measured_pitch\":{},\"matched_prior_yaw\":{},"
@@ -417,9 +432,10 @@ std::string EncodeState(const ControlDebugView& value, std::uint64_t dropped_sam
       Number(value.feedback_age_s), TrackerStateName(value.tracker_state), value.selected_slot,
       EncodeArmorSelection(value.armor_selection), ballistic.valid, Number(value.bullet_speed_mps),
       Number(ballistic.distance_m), Number(ballistic.fly_time_s),
-      Number(ballistic.target_world.x()), Number(ballistic.target_world.y()),
-      Number(ballistic.target_world.z()), Number(value.target_yaw), Number(value.target_pitch),
-      Number(feedback.yaw), Number(feedback.pitch), Number(command.yaw), Number(command.pitch),
+      Number(ballistic.prediction_horizon_s), Number(ballistic.target_world.x()),
+      Number(ballistic.target_world.y()), Number(ballistic.target_world.z()),
+      Number(value.target_yaw), Number(value.target_pitch), Number(feedback.yaw),
+      Number(feedback.pitch), Number(command.yaw), Number(command.pitch),
       OptionalNumber(measured.valid, measured.yaw), OptionalNumber(measured.valid, measured.pitch),
       OptionalNumber(matched.valid, matched.command.yaw),
       OptionalNumber(matched.valid, matched.command.pitch), Number(value.yaw_error),
@@ -848,51 +864,26 @@ geometry::Vector3 AimPoint(const geometry::Vector3& muzzle, double yaw, double p
                                                HORIZONTAL * std::sin(yaw), std::sin(pitch));
 }
 
-/**
- * @brief 构造 world 坐标系控制场景。
- *
- * 场景同时显示四装甲候选、枪口和弹道命中点，以及参考、MPC、融合反馈、实测反馈和
- * 已发布命令射线；颜色含义也写入场景状态文本。
- */
-::foxglove::schemas::SceneUpdate EncodeScene(
-    const ControlDebugView& value, const std::deque<FeedbackHistorySample>& estimated_history,
-    const std::deque<FeedbackHistorySample>& measured_history) {
-  ::foxglove::schemas::SceneUpdate update;
-  if (!value.muzzle_pose_valid)
-    return update;
-  const auto TIMESTAMP = ::foxglove::schemas::Timestamp{
-      .sec = static_cast<std::uint32_t>(value.command_timestamp_ns / 1'000'000'000ULL),
-      .nsec = static_cast<std::uint32_t>(value.command_timestamp_ns % 1'000'000'000ULL)};
-  const ::foxglove::schemas::Duration lifetime{.sec = 0, .nsec = 150'000'000};
-  const auto muzzle = value.world_t_muzzle.translation;
-  const double distance = value.ballistic.valid ? value.ballistic.distance_m : 3.0;
-
+/** @brief 创建带控制时间戳、world 坐标系和短生命周期的稳定场景实体。 */
+::foxglove::schemas::SceneEntity MakeSceneEntity(std::uint64_t timestamp_ns, std::string_view id) {
   ::foxglove::schemas::SceneEntity entity;
-  entity.timestamp = TIMESTAMP;
+  entity.timestamp = {.sec = static_cast<std::uint32_t>(timestamp_ns / 1'000'000'000ULL),
+                      .nsec = static_cast<std::uint32_t>(timestamp_ns % 1'000'000'000ULL)};
   entity.frame_id = "world";
-  entity.id = "control_trajectory";
-  entity.lifetime = lifetime;
+  entity.id = std::string(id);
+  entity.lifetime = {.sec = 0, .nsec = 150'000'000};
+  return entity;
+}
+
+/** @brief 构造装甲槽位选择场景；候选姿态有效时不依赖枪口位姿。 */
+::foxglove::schemas::SceneUpdate EncodeSelectionScene(const ControlDebugView& value) {
+  ::foxglove::schemas::SceneUpdate update;
+  auto entity = MakeSceneEntity(value.command_timestamp_ns, "control_selection");
   entity.metadata = {
       {.key = "tracker", .value = modules::TrackerStateName(value.tracker_state)},
-      {.key = "slot", .value = std::to_string(value.selected_slot)},
-      {.key = "reject", .value = std::string(modules::FireRejectReasonName(value.reject_reason))},
-      {.key = "mpc", .value = value.plan.valid ? "valid" : "invalid"},
-      {.key = "command_source",
-       .value = std::string(modules::GimbalCommandSourceName(value.command_source))},
-      {.key = "command_lookahead_s", .value = Number(value.plan.command_lookahead_s)},
-      {.key = "fallback_trajectory_index",
-       .value = std::to_string(value.fallback_trajectory_index)},
-      {.key = "fire", .value = value.command.fire ? "pulse" : "off"},
-      {.key = "actuator_mode", .value = ActuatorModeName(value.actuator_telemetry.mode)},
-      {.key = "actuator_saturation",
-       .value = std::to_string(value.actuator_telemetry.saturation_flags)},
-      {.key = "feedback_source",
-       .value = std::string(modules::GimbalFeedbackSourceName(value.feedback_source))},
-      {.key = "runtime_actuator_age_s", .value = Number(value.runtime_actuator_age_s)},
-      {.key = "pitch_feedback_minus_runtime",
-       .value = value.feedback_runtime_comparison_valid
-                    ? Number(value.pitch_feedback_minus_runtime_actuator)
-                    : "null"},
+      {.key = "locked_slot", .value = std::to_string(value.armor_selection.locked_slot)},
+      {.key = "pending_slot", .value = std::to_string(value.armor_selection.pending_slot)},
+      {.key = "pending_duration_s", .value = Number(value.armor_selection.pending_duration_s)},
       {.key = "selection_decision",
        .value = std::string(modules::ArmorSelectionDecisionName(value.armor_selection.decision))}};
 
@@ -919,6 +910,7 @@ geometry::Vector3 AimPoint(const geometry::Vector3& muzzle, double yaw, double p
         Point(pose.translation + X_AXIS * ARMOR_WIDTH * 0.5 + Y_AXIS * ARMOR_HEIGHT * 0.5),
         Point(pose.translation + X_AXIS * ARMOR_WIDTH * 0.5 - Y_AXIS * ARMOR_HEIGHT * 0.5),
         Point(pose.translation - X_AXIS * ARMOR_WIDTH * 0.5 - Y_AXIS * ARMOR_HEIGHT * 0.5)};
+    const auto OUTLINE_COLOR = outline.color;
     entity.lines.push_back(std::move(outline));
 
     ::foxglove::schemas::TextPrimitive label;
@@ -930,7 +922,7 @@ geometry::Vector3 AimPoint(const geometry::Vector3& muzzle, double yaw, double p
     label.billboard = true;
     label.font_size = 11.0;
     label.scale_invariant = true;
-    label.color = outline.color;
+    label.color = OUTLINE_COLOR;
     label.text = fmt::format("slot {} | view {:.1f} deg{}", candidate.slot,
                              candidate.view_angle_rad * 180.0 / std::numbers::pi,
                              SELECTED  ? " | SELECTED"
@@ -938,14 +930,43 @@ geometry::Vector3 AimPoint(const geometry::Vector3& muzzle, double yaw, double p
                                        : "");
     entity.texts.push_back(std::move(label));
   }
+  if (!entity.lines.empty())
+    update.entities.push_back(std::move(entity));
+  return update;
+}
 
+/** @brief 构造枪口、弹道目标和当前反馈/发布命令射线组成的瞄准场景。 */
+::foxglove::schemas::SceneUpdate EncodeAimScene(const ControlDebugView& value) {
+  ::foxglove::schemas::SceneUpdate update;
+  if (!value.muzzle_pose_valid)
+    return update;
+  auto entity = MakeSceneEntity(value.command_timestamp_ns, "control_aim");
+  entity.metadata = {
+      {.key = "slot", .value = std::to_string(value.selected_slot)},
+      {.key = "ballistic", .value = value.ballistic.valid ? "valid" : "invalid"},
+      {.key = "reject", .value = std::string(modules::FireRejectReasonName(value.reject_reason))},
+      {.key = "fire_eligible", .value = value.fire_eligible ? "true" : "false"},
+      {.key = "fire", .value = value.command.fire ? "pulse" : "off"},
+      {.key = "feedback_source",
+       .value = std::string(modules::GimbalFeedbackSourceName(value.feedback_source))},
+      {.key = "actuator_mode", .value = ActuatorModeName(value.actuator_telemetry.mode)},
+      {.key = "actuator_saturation",
+       .value = std::to_string(value.actuator_telemetry.saturation_flags)},
+      {.key = "runtime_actuator_age_s", .value = Number(value.runtime_actuator_age_s)},
+      {.key = "pitch_feedback_minus_runtime",
+       .value = value.feedback_runtime_comparison_valid
+                    ? Number(value.pitch_feedback_minus_runtime_actuator)
+                    : "null"}};
+
+  const auto MUZZLE = value.world_t_muzzle.translation;
+  const double DISTANCE = value.ballistic.valid ? value.ballistic.distance_m : 3.0;
   ::foxglove::schemas::SpherePrimitive muzzle_marker;
   muzzle_marker.pose = ::foxglove::schemas::Pose{
-      .position = ::foxglove::schemas::Vector3{.x = muzzle.x(), .y = muzzle.y(), .z = muzzle.z()},
+      .position = ::foxglove::schemas::Vector3{.x = MUZZLE.x(), .y = MUZZLE.y(), .z = MUZZLE.z()},
       .orientation = ::foxglove::schemas::Quaternion{.w = 1.0}};
   muzzle_marker.size = {.x = 0.06, .y = 0.06, .z = 0.06};
   muzzle_marker.color = {.r = 1.0, .g = 1.0, .b = 1.0, .a = 1.0};
-  entity.spheres.push_back(std::move(muzzle_marker));
+  entity.spheres.push_back(muzzle_marker);
 
   if (value.ballistic.valid) {
     ::foxglove::schemas::SpherePrimitive target;
@@ -959,7 +980,7 @@ geometry::Vector3 AimPoint(const geometry::Vector3& muzzle, double yaw, double p
         value.command.fire    ? ::foxglove::schemas::Color{.r = 1.0, .g = 0.1, .b = 0.1, .a = 1.0}
         : value.fire_eligible ? ::foxglove::schemas::Color{.r = 1.0, .g = 0.8, .b = 0.0, .a = 1.0}
                               : ::foxglove::schemas::Color{.r = 0.8, .g = 0.2, .b = 0.8, .a = 1.0};
-    entity.spheres.push_back(std::move(target));
+    entity.spheres.push_back(target);
   }
 
   auto add_ray = [&](double yaw, double pitch, ::foxglove::schemas::Color color, double thickness) {
@@ -969,7 +990,7 @@ geometry::Vector3 AimPoint(const geometry::Vector3& muzzle, double yaw, double p
     ray.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LIST;
     ray.thickness = thickness;
     ray.color = color;
-    ray.points = {Point(muzzle), Point(AimPoint(muzzle, yaw, pitch, distance))};
+    ray.points = {Point(MUZZLE), Point(AimPoint(MUZZLE, yaw, pitch, DISTANCE))};
     entity.lines.push_back(std::move(ray));
   };
   add_ray(value.feedback.yaw, value.feedback.pitch, {.r = 1.0, .g = 1.0, .b = 1.0, .a = 0.8},
@@ -978,7 +999,35 @@ geometry::Vector3 AimPoint(const geometry::Vector3& muzzle, double yaw, double p
     add_ray(value.command.yaw, value.command.pitch, {.r = 0.1, .g = 1.0, .b = 0.2, .a = 1.0},
             0.015);
   }
+  update.entities.push_back(std::move(entity));
+  return update;
+}
 
+/** @brief 构造一秒反馈历史、参考轨迹和 MPC 计划轨迹组成的轨迹场景。 */
+::foxglove::schemas::SceneUpdate EncodeTrajectoryScene(
+    const ControlDebugView& value, const std::deque<FeedbackHistorySample>& estimated_history,
+    const std::deque<FeedbackHistorySample>& measured_history) {
+  ::foxglove::schemas::SceneUpdate update;
+  if (!value.muzzle_pose_valid)
+    return update;
+  auto entity = MakeSceneEntity(value.command_timestamp_ns, "control_trajectory");
+  entity.metadata = {
+      {.key = "mpc", .value = value.plan.valid ? "valid" : "invalid"},
+      {.key = "command_source",
+       .value = std::string(modules::GimbalCommandSourceName(value.command_source))},
+      {.key = "command_lookahead_s", .value = Number(value.plan.command_lookahead_s)},
+      {.key = "fallback_trajectory_index",
+       .value = std::to_string(value.fallback_trajectory_index)},
+      {.key = "failure_reason",
+       .value = std::string(modules::GimbalTrajectoryFailureReasonName(value.plan.failure_reason))},
+      {.key = "failure_axis",
+       .value = std::string(modules::GimbalTrajectoryAxisName(value.plan.failure_axis))},
+      {.key = "failure_index", .value = std::to_string(value.plan.failure_index)},
+      {.key = "yaw_max_residual", .value = Number(MaxResidual(value.plan.yaw_solver))},
+      {.key = "pitch_max_residual", .value = Number(MaxResidual(value.plan.pitch_solver))}};
+
+  const auto MUZZLE = value.world_t_muzzle.translation;
+  const double DISTANCE = value.ballistic.valid ? value.ballistic.distance_m : 3.0;
   auto add_history = [&](const std::deque<FeedbackHistorySample>& history,
                          ::foxglove::schemas::Color color, double thickness) {
     ::foxglove::schemas::LinePrimitive line;
@@ -990,7 +1039,7 @@ geometry::Vector3 AimPoint(const geometry::Vector3& muzzle, double yaw, double p
           !std::isfinite(sample.feedback.pitch))
         continue;
       line.points.push_back(
-          Point(AimPoint(muzzle, sample.feedback.yaw, sample.feedback.pitch, distance)));
+          Point(AimPoint(MUZZLE, sample.feedback.yaw, sample.feedback.pitch, DISTANCE)));
     }
     if (line.points.size() >= 2)
       entity.lines.push_back(std::move(line));
@@ -1006,7 +1055,7 @@ geometry::Vector3 AimPoint(const geometry::Vector3& muzzle, double yaw, double p
     for (const auto& point : value.plan.reference) {
       if (!std::isfinite(point.yaw) || !std::isfinite(point.pitch))
         continue;
-      reference.points.push_back(Point(AimPoint(muzzle, point.yaw, point.pitch, distance)));
+      reference.points.push_back(Point(AimPoint(MUZZLE, point.yaw, point.pitch, DISTANCE)));
     }
     if (reference.points.size() >= 2)
       entity.lines.push_back(std::move(reference));
@@ -1021,50 +1070,13 @@ geometry::Vector3 AimPoint(const geometry::Vector3& muzzle, double yaw, double p
     for (const auto& point : value.plan.trajectory) {
       if (!std::isfinite(point.yaw) || !std::isfinite(point.pitch))
         continue;
-      planned.points.push_back(Point(AimPoint(muzzle, point.yaw, point.pitch, distance)));
+      planned.points.push_back(Point(AimPoint(MUZZLE, point.yaw, point.pitch, DISTANCE)));
     }
     if (planned.points.size() >= 2)
       entity.lines.push_back(std::move(planned));
   }
-
-  ::foxglove::schemas::TextPrimitive status;
-  status.pose = ::foxglove::schemas::Pose{
-      .position =
-          ::foxglove::schemas::Vector3{.x = muzzle.x(), .y = muzzle.y(), .z = muzzle.z() + 0.18},
-      .orientation = ::foxglove::schemas::Quaternion{.w = 1.0}};
-  status.billboard = true;
-  status.font_size = 14.0;
-  status.scale_invariant = true;
-  status.color = value.command.fire
-                     ? ::foxglove::schemas::Color{.r = 1.0, .g = 0.1, .b = 0.1, .a = 1.0}
-                     : ::foxglove::schemas::Color{.r = 1.0, .g = 1.0, .b = 1.0, .a = 1.0};
-  status.text = fmt::format(
-      "cyan=reference yellow/red=MPC white=estimate magenta=measured green=published\n"
-      "slot {} | pending {} ({:.0f} ms) | {} | {} | {} | source={}\n"
-      "MPC {} axis={} index={} residual(y/p)={:.3g}/{:.3g} measure_age={:.1f}ms send={:.1f}us",
-      value.selected_slot, value.armor_selection.pending_slot,
-      value.armor_selection.pending_duration_s * 1.0e3,
-      modules::ArmorSelectionDecisionName(value.armor_selection.decision),
-      value.plan.valid ? "MPC OK" : "MPC FAIL", modules::FireRejectReasonName(value.reject_reason),
-      modules::GimbalCommandSourceName(value.command_source),
-      modules::GimbalTrajectoryFailureReasonName(value.plan.failure_reason),
-      modules::GimbalTrajectoryAxisName(value.plan.failure_axis), value.plan.failure_index,
-      MaxResidual(value.plan.yaw_solver), MaxResidual(value.plan.pitch_solver),
-      value.measurement_age_s * 1.0e3, value.sink_send_time_us);
-  status.text += fmt::format(
-      "\nactuator={} valid={} saturation=0x{:02x} feedback={} runtime_age={}ms "
-      "pitch_feedback_error={}",
-      ActuatorModeName(value.actuator_telemetry.mode), value.actuator_telemetry.valid,
-      value.actuator_telemetry.saturation_flags,
-      modules::GimbalFeedbackSourceName(value.feedback_source),
-      std::isfinite(value.runtime_actuator_age_s)
-          ? fmt::format("{:.1f}", value.runtime_actuator_age_s * 1.0e3)
-          : "invalid",
-      value.feedback_runtime_comparison_valid
-          ? fmt::format("{:.4f}", value.pitch_feedback_minus_runtime_actuator)
-          : "invalid");
-  entity.texts.push_back(std::move(status));
-  update.entities.push_back(std::move(entity));
+  if (!entity.lines.empty())
+    update.entities.push_back(std::move(entity));
   return update;
 }
 
@@ -1086,13 +1098,9 @@ struct ControlDebugPublisher::ChannelSet {
                              sizeof(K_TRACKING_SCHEMA) - 1, context);
     trajectory = CreateChannel(K_TRAJECTORY_TOPIC, "mv.vision.ControlTrajectory",
                                K_TRAJECTORY_SCHEMA, sizeof(K_TRAJECTORY_SCHEMA) - 1, context);
-    auto scene_result = ::foxglove::schemas::SceneUpdateChannel::create(K_SCENE_TOPIC, context);
-    if (!scene_result.has_value()) {
-      throw std::runtime_error(std::string("create ") + K_SCENE_TOPIC + ": " +
-                               ::foxglove::strerror(scene_result.error()));
-    }
-    scene =
-        std::make_unique<::foxglove::schemas::SceneUpdateChannel>(std::move(scene_result).value());
+    selection_scene = CreateSceneChannel(K_SELECTION_SCENE_TOPIC, context);
+    aim_scene = CreateSceneChannel(K_AIM_SCENE_TOPIC, context);
+    trajectory_scene = CreateSceneChannel(K_TRAJECTORY_SCENE_TOPIC, context);
     auto transforms_result =
         ::foxglove::schemas::FrameTransformsChannel::create(K_TRANSFORMS_TOPIC, context);
     if (!transforms_result.has_value()) {
@@ -1114,15 +1122,21 @@ struct ControlDebugPublisher::ChannelSet {
       tracking->close();
     if (trajectory)
       trajectory->close();
-    if (scene)
-      scene->close();
+    if (selection_scene)
+      selection_scene->close();
+    if (aim_scene)
+      aim_scene->close();
+    if (trajectory_scene)
+      trajectory_scene->close();
     if (transforms)
       transforms->close();
   }
   std::unique_ptr<::foxglove::RawChannel> state;       ///< 分组完整控制状态 JSON。
   std::unique_ptr<::foxglove::RawChannel> tracking;    ///< 扁平时序与误差诊断 JSON。
   std::unique_ptr<::foxglove::RawChannel> trajectory;  ///< 完整参考和计划轨迹 JSON。
-  std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> scene;  ///< world 系控制场景。
+  std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> selection_scene;  ///< 装甲选择场景。
+  std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> aim_scene;  ///< 当前瞄准场景。
+  std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> trajectory_scene;  ///< 轨迹场景。
   std::unique_ptr<::foxglove::schemas::FrameTransformsChannel> transforms;  ///< 控制时刻 TF。
   bool closed{false};  ///< 是否已执行频道关闭流程。
 };
@@ -1137,12 +1151,16 @@ ControlDebugPublisher::ControlDebugPublisher(const Config& config,
       live_state_id_ = live_->state->id();
       live_tracking_id_ = live_->tracking->id();
       live_trajectory_id_ = live_->trajectory->id();
-      live_scene_id_ = live_->scene->id();
+      live_selection_scene_id_ = live_->selection_scene->id();
+      live_aim_scene_id_ = live_->aim_scene->id();
+      live_trajectory_scene_id_ = live_->trajectory_scene->id();
       live_transforms_id_ = live_->transforms->id();
       session_.RegisterLiveChannel(live_state_id_);
       session_.RegisterLiveChannel(live_tracking_id_);
       session_.RegisterLiveChannel(live_trajectory_id_);
-      session_.RegisterLiveChannel(live_scene_id_);
+      session_.RegisterLiveChannel(live_selection_scene_id_);
+      session_.RegisterLiveChannel(live_aim_scene_id_);
+      session_.RegisterLiveChannel(live_trajectory_scene_id_);
       session_.RegisterLiveChannel(live_transforms_id_);
     } catch (const std::exception& error) {
       live_.reset();
@@ -1182,7 +1200,9 @@ void ControlDebugPublisher::Publish(
                            (session_.Subscription(live_state_id_).subscribers > 0 ||
                             session_.Subscription(live_tracking_id_).subscribers > 0 ||
                             session_.Subscription(live_trajectory_id_).subscribers > 0 ||
-                            session_.Subscription(live_scene_id_).subscribers > 0 ||
+                            session_.Subscription(live_selection_scene_id_).subscribers > 0 ||
+                            session_.Subscription(live_aim_scene_id_).subscribers > 0 ||
+                            session_.Subscription(live_trajectory_scene_id_).subscribers > 0 ||
                             session_.Subscription(live_transforms_id_).subscribers > 0);
   if (!accepting_.load(std::memory_order_acquire) || (!live_demand && !session_.RecordingActive()))
     return;
@@ -1270,12 +1290,29 @@ void ControlDebugPublisher::Process(const modules::FireControlResult& result) no
          value.command_timestamp_ns >= last_trajectory_timestamp_ns_ + trajectory_period_ns_);
     // 数组轨迹和三维场景编码较重，按图像帧率采样；标量频道仍保留每个控制周期。
     std::string trajectory_json;
-    ::foxglove::schemas::SceneUpdate scene;
+    std::optional<::foxglove::schemas::SceneUpdate> selection_scene;
+    std::optional<::foxglove::schemas::SceneUpdate> aim_scene;
+    std::optional<::foxglove::schemas::SceneUpdate> trajectory_scene;
     if (trajectory_sample) {
       last_trajectory_sequence_ = value.source_sequence;
       last_trajectory_timestamp_ns_ = value.command_timestamp_ns;
       trajectory_json = EncodeTrajectory(value, estimated_history_, measured_history_);
-      scene = EncodeScene(value, estimated_history_, measured_history_);
+      const bool RECORD_SCENES = recording_ && session_.RecordingActive();
+      const bool LIVE_SELECTION_SCENE =
+          live_ && session_.LiveActive() &&
+          session_.Subscription(live_selection_scene_id_).subscribers > 0;
+      const bool LIVE_AIM_SCENE = live_ && session_.LiveActive() &&
+                                  session_.Subscription(live_aim_scene_id_).subscribers > 0;
+      const bool LIVE_TRAJECTORY_SCENE =
+          live_ && session_.LiveActive() &&
+          session_.Subscription(live_trajectory_scene_id_).subscribers > 0;
+      if (RECORD_SCENES || LIVE_SELECTION_SCENE)
+        selection_scene = EncodeSelectionScene(value);
+      if (RECORD_SCENES || LIVE_AIM_SCENE)
+        aim_scene = EncodeAimScene(value);
+      if (RECORD_SCENES || LIVE_TRAJECTORY_SCENE) {
+        trajectory_scene = EncodeTrajectoryScene(value, estimated_history_, measured_history_);
+      }
     }
     // Foxglove Context 的写入由会话级互斥量串行化，避免其他发布器并发写 live/MCAP。
     std::lock_guard publish_lock(session_.PublishMutex());
@@ -1298,10 +1335,24 @@ void ControlDebugPublisher::Process(const modules::FireControlResult& result) no
           session_.ReportLiveError("publish control trajectory", error);
         }
       }
-      if (trajectory_sample && session_.Subscription(live_scene_id_).subscribers > 0) {
-        const auto error = live_->scene->log(scene, value.command_timestamp_ns);
-        if (error != ::foxglove::FoxgloveError::Ok) {
-          session_.ReportLiveError("publish control scene", error);
+      if (selection_scene && session_.Subscription(live_selection_scene_id_).subscribers > 0) {
+        const auto ERROR =
+            live_->selection_scene->log(*selection_scene, value.command_timestamp_ns);
+        if (ERROR != ::foxglove::FoxgloveError::Ok) {
+          session_.ReportLiveError("publish control selection scene", ERROR);
+        }
+      }
+      if (aim_scene && session_.Subscription(live_aim_scene_id_).subscribers > 0) {
+        const auto ERROR = live_->aim_scene->log(*aim_scene, value.command_timestamp_ns);
+        if (ERROR != ::foxglove::FoxgloveError::Ok) {
+          session_.ReportLiveError("publish control aim scene", ERROR);
+        }
+      }
+      if (trajectory_scene && session_.Subscription(live_trajectory_scene_id_).subscribers > 0) {
+        const auto ERROR =
+            live_->trajectory_scene->log(*trajectory_scene, value.command_timestamp_ns);
+        if (ERROR != ::foxglove::FoxgloveError::Ok) {
+          session_.ReportLiveError("publish control trajectory scene", ERROR);
         }
       }
       if (transforms && session_.Subscription(live_transforms_id_).subscribers > 0) {
@@ -1325,9 +1376,22 @@ void ControlDebugPublisher::Process(const modules::FireControlResult& result) no
         if (error != ::foxglove::FoxgloveError::Ok) {
           session_.ReportRecordingError("record control trajectory", error);
         }
-        const auto scene_error = recording_->scene->log(scene, value.command_timestamp_ns);
-        if (scene_error != ::foxglove::FoxgloveError::Ok) {
-          session_.ReportRecordingError("record control scene", scene_error);
+        if (selection_scene) {
+          const auto ERROR =
+              recording_->selection_scene->log(*selection_scene, value.command_timestamp_ns);
+          if (ERROR != ::foxglove::FoxgloveError::Ok)
+            session_.ReportRecordingError("record control selection scene", ERROR);
+        }
+        if (aim_scene) {
+          const auto ERROR = recording_->aim_scene->log(*aim_scene, value.command_timestamp_ns);
+          if (ERROR != ::foxglove::FoxgloveError::Ok)
+            session_.ReportRecordingError("record control aim scene", ERROR);
+        }
+        if (trajectory_scene) {
+          const auto ERROR =
+              recording_->trajectory_scene->log(*trajectory_scene, value.command_timestamp_ns);
+          if (ERROR != ::foxglove::FoxgloveError::Ok)
+            session_.ReportRecordingError("record control trajectory scene", ERROR);
         }
       }
       if (transforms) {

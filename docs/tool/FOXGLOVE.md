@@ -30,20 +30,33 @@ PASS/FAIL 判定。
   装甲命中率和尚未命中数。
 - `/simulation/ground_truth/annotations`：黄色装甲灯条端点真值及 `GT:TL/TR/BR/BL` 标签。
 - `/vision/pnp/estimate`：正式检测单链 PnP 的相机系/世界系三维估计。
-- `/vision/pnp/corners`：青色原始角点和有效的洋红色精修角点。
+- `/vision/pnp/raw_corners`：网络输出的青色 1.5 px 实线原始 PnP 输入角点。
+- `/vision/pnp/final_corners`：实际提交给正式 PnP 的角点；洋红色 2.5 px 实线
+  `REFINED` 表示精修成功，黄色 2.5 px 实线 `FALLBACK:<status>` 表示精修失败并整体回退
+  原始角点。
 - `/vision/pnp/reprojection`：绿色正式 PnP 重投影。
 - `/vision/pnp/error_vectors`：网络原角点到真值的灰线，以及成功精修角点到真值的洋红线。
 - `/vision/corner_refiner/axes`：左右灯条浅蓝 PCA 中心轴与质心。
 - `/vision/corner_refiner/candidates`：橙色搜索区间、黄色扫描线候选、绿色已提交或红色回退端点。
 - `/vision/pnp/stats`：逐次求解状态、候选、重投影和真值误差 JSON。
-- `/vision/prediction/scene`：13维 ESEKF 车体完整姿态、双半径和当前/未来四装甲。
+- `/vision/prediction/scene`：13维 ESEKF 当前车体中心、速度、姿态轴、双半径和当前四装甲。
+- `/vision/control/impact_scene`：弹道命中时域的紫色四装甲；最终选中槽位使用不透明粗线，
+  其余槽位使用半透明细线。
+- `/vision/control/selection_scene`：装甲选择时域的四槽位候选；锁定槽位为绿色粗线，待切换
+  槽位为黄色粗线，可进入候选为青色，不可进入候选为半透明灰色，并保留 `slot/view` 标签。
+- `/vision/control/aim_scene`：白色枪口球、弹道目标球、白色当前反馈射线和绿色已发布指令
+  射线；目标球红/黄/紫分别表示已开火、满足开火资格和其余有效弹道状态，不附加状态文字。
+- `/vision/control/trajectory_scene`：最近 1 秒白色估计反馈、洋红色实测反馈、青色参考轨迹，
+  以及有效时黄色、无效时红色的 MPC 计划轨迹，不附加文字。
 - `/vision/prediction/state`：固定顺序状态、协方差、创新、NIS及每自由度NIS、机动模式、关联
   门限与接受/拒绝计数、逐灯条关联、灯条-only/联合融合/装甲回退标志、累计重置计数、耗时及
   Talos 中心/yaw/yaw角速度误差。
 - `/vision/prediction/truth_overlay`：车辆中心估计到同标签 Talos 真值的世界系误差线。
-- `/vision/prediction/current_annotations`：当前重投影及橙色实测轮廓；正式提交的关联预测为
-  青色，被像素或NIS门限拒绝的最近候选预测为洋红色。
-- `/vision/prediction/future_annotations`：100 ms后的四装甲图像重投影。
+- `/vision/prediction/current_annotations`：当前四槽位预测中，正面使用深绿色 2 px 实线，
+  背面使用 35% 透明的绿色 1.5 px 实线；亮绿色 3 px 已接受关联框位于最上层。
+- `/vision/control/impact_annotations`：火控最终选中槽位在弹道命中时域的紫色 4 px 实线预测框，
+  不附加文字。
+- `/vision/control/selected_armor_annotations`：当前时域的绿色锁定槽位和黄色待切换槽位。
 
 将 Foxglove 连接到 `ws://<NUC-IP>:8765`，在 Image 面板选择图像话题，再将
 annotations 话题加入 Image annotations。Plot 面板可直接选择 stats 中的数值字段。
@@ -89,10 +102,11 @@ ESEKF 机动联调时建议同时绘制
 `truth_yaw_error_rad` 保留任意槽位0带来的 `pi/2` 相位差，不应用作四装甲姿态精度门槛；
 `reset_reason` 表示最近原因，只有 `reset_count` 增加才代表发生了新的安全重置。
 
-推荐布局：一个 Image 面板选择 `/vision/camera/image`，叠加 ground truth、lightbars、corners、
-reprojection、error vectors、axes 和 candidates；一个 Plot 面板观察灯条检测/接受数、精修成功/回退计数、
-raw/final 角点误差及最终深度误差；一个 3D 面板以 `world` 为固定坐标系叠加 transforms、
-frustum、ground truth 和 `/vision/pnp/estimate`。
+推荐布局：一个 Image 面板选择 `/vision/camera/image`，按调试阶段叠加 ground truth、lightbars、
+raw/final corners、reprojection、current association、selected armor 或 impact；一个 Plot 面板观察
+灯条检测/接受数、精修成功/回退计数、raw/final 角点误差及最终深度误差；3D 面板以 `world`
+为固定坐标系，空间定位时叠加 transforms、frustum、ground truth 和 `/vision/pnp/estimate`，
+火控联调时按需独立启用 selection、aim、trajectory 或 impact scene，避免无关几何相互遮挡。
 
 内部实现按 `image`、`armor_detector`、`armor_light_detector`、`spatial` 和 `simulation` 分离消息
 编码。图像调试领域由 `pipeline` 统一限流并保持同帧采集时间；`transforms` 复用
@@ -101,11 +115,18 @@ frustum、ground truth 和 `/vision/pnp/estimate`。
 运行时不再依赖 Foxglove 类型，而是向传输无关的 `IRuntimeDiagnosticsSink` 分别提交
 `VisionFrameOutput + VisionFrameDiagnostics` 和
 `ControlCycleOutput + ControlCycleDiagnostics`。应用层适配器再将两套数据交给 Foxglove，
-编码边界按既有 Schema 重新组合。当前仍完整创建并保持原有 29 个频道；诊断发布失败不改变
+编码边界按既有 Schema 重新组合。当前完整创建 33 个频道；诊断发布失败不改变
 正式视觉结果、控制命令或退出状态。
+`impact_annotations` 或 `impact_scene` 被订阅/录制时，图像调试线程等待最多 20 ms，并只接受
+完全相同 `source_sequence` 的控制快照；两者复用一次等待结果，超时分别清除旧标注和旧实体。
 控制话题的 `runtime` 分组和扁平 `tracking` 中提供 `feedback_projection_dt_s`、
 `pose_projection_dt_s`、`chassis_motion_valid` 和 `pose_projection_status`，用于区分完整运动外推、
 缺少底盘速度时的位置保持，以及过期或时间非法降级。
+`/vision/control/state.ballistics.prediction_horizon_s` 记录生成最终 `target_world` 时实际使用的
+总预测时域，供 impact 标注和控制状态交叉核对。
+三个控制 SceneUpdate 话题和 `/vision/control/trajectory` 共用 `image.max_fps` 降采样节奏；
+实时输出只编码已订阅的场景，MCAP 录制启用时记录全部三个场景。旧
+`/vision/control/scene` 不再创建，也不提供兼容别名。
 
 ## 构建与运行
 

@@ -274,6 +274,8 @@ BallisticSolution FireControl::SolveBallistic(const ControlInputSnapshot& input,
     result.pitch = PITCH;
     result.distance_m = DELTA.norm();
     result.fly_time_s = NEXT_FLY_TIME;
+    // 保存与 target_world 严格对应的时域；收敛后的 NEXT_FLY_TIME 仅用于误差判定。
+    result.prediction_horizon_s = HORIZON_S;
     if (std::abs(NEXT_FLY_TIME - fly_time) < config_.ballistic_time_tolerance_s) {
       result.valid = true;
       return result;

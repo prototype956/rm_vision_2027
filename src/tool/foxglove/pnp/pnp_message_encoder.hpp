@@ -19,8 +19,13 @@ namespace mv::tool::foxglove::pnp {
     const simulation_evaluation::PnpEvaluationResult& result,
     const frame::FrameKinematics& kinematics, const ::foxglove::schemas::Timestamp& timestamp);
 
-/** @brief 编码检测输入的青色原始角点，以及成功应用后的洋红色精修角点。 */
-[[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeCorners(
+/** @brief 将网络原始角点编码为青色闭合图像线框。 */
+[[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeRawCorners(
+    const simulation_evaluation::PnpEvaluationResult& result,
+    const ::foxglove::schemas::Timestamp& timestamp);
+
+/** @brief 将正式 PnP 输入角点编码为精修成功或原始回退线框。 */
+[[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeFinalCorners(
     const simulation_evaluation::PnpEvaluationResult& result,
     const ::foxglove::schemas::Timestamp& timestamp);
 

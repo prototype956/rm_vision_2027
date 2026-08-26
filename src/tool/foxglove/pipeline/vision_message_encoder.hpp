@@ -26,17 +26,19 @@ struct TopicDemand {
   bool projectile_stats{false};                ///< 是否需要仿真弹丸累计统计。
   bool projection_annotations{false};          ///< 是否需要真值二维重投影点。
   bool pnp_estimates{false};                   ///< 是否需要 PnP 三维估计。
-  bool pnp_corners{false};                     ///< 是否需要原始/精修输入角点。
+  bool pnp_raw_corners{false};                 ///< 是否需要网络原始 PnP 输入角点。
+  bool pnp_final_corners{false};               ///< 是否需要正式 PnP 输入角点。
   bool pnp_reprojection{false};                ///< 是否需要原始/精修 PnP 重投影。
   bool pnp_error_vectors{false};               ///< 是否需要原始角点到真值的误差线。
   bool corner_refiner_axes{false};             ///< 是否需要角点精修 PCA 轴。
   bool corner_refiner_candidates{false};       ///< 是否需要梯度搜索区间与候选点。
   bool pnp_stats{false};                       ///< 是否需要 PnP 指标。
   bool prediction_scene{false};                ///< 是否需要预测三维场景。
+  bool impact_scene{false};                    ///< 是否需要火控命中时刻三维场景。
   bool prediction_state{false};                ///< 是否需要预测状态 JSON。
   bool prediction_truth_overlay{false};        ///< 是否需要预测与仿真真值对照。
-  bool prediction_current_annotations{false};  ///< 是否需要当前预测二维重投影。
-  bool prediction_future_annotations{false};   ///< 是否需要 100 ms 预测二维重投影。
+  bool prediction_current_annotations{false};  ///< 是否需要已接受关联预测框。
+  bool impact_annotations{false};              ///< 是否需要火控命中时刻预测框。
   bool selected_armor_annotations{false};      ///< 是否需要火控选中装甲同帧标注。
 
   /** @brief 查询是否至少需求一个话题。 */
@@ -70,20 +72,22 @@ struct PreparedFrame {
   std::optional<::foxglove::schemas::SceneUpdate> ground_truth;       ///< 三维仿真真值。
   std::optional<std::string> projectile_stats_json;  ///< 仿真弹丸累计统计。
   std::optional<::foxglove::schemas::ImageAnnotations> projection_annotations;  ///< 真值投影点。
-  std::optional<::foxglove::schemas::SceneUpdate> pnp_estimates;     ///< PnP 三维估计图元。
-  std::optional<::foxglove::schemas::ImageAnnotations> pnp_corners;  ///< PnP 输入角点。
+  std::optional<::foxglove::schemas::SceneUpdate> pnp_estimates;  ///< PnP 三维估计图元。
+  std::optional<::foxglove::schemas::ImageAnnotations> pnp_raw_corners;  ///< 原始输入角点。
+  std::optional<::foxglove::schemas::ImageAnnotations> pnp_final_corners;  ///< 正式输入角点。
   std::optional<::foxglove::schemas::ImageAnnotations> pnp_reprojection;  ///< 模型重投影线框。
   std::optional<::foxglove::schemas::ImageAnnotations> pnp_error_vectors;    ///< 角点误差线。
   std::optional<::foxglove::schemas::ImageAnnotations> corner_refiner_axes;  ///< 灯条 PCA 轴。
   std::optional<::foxglove::schemas::ImageAnnotations> corner_refiner_candidates;  ///< 精修候选点。
   std::optional<std::string> pnp_stats_json;  ///< 符合固定 Schema 的 PnP 指标。
   std::optional<::foxglove::schemas::SceneUpdate> prediction_scene;  ///< 预测装甲场景。
-  std::optional<std::string> prediction_state_json;                  ///< EKF 状态诊断。
+  std::optional<::foxglove::schemas::SceneUpdate> impact_scene;  ///< 命中时刻四装甲场景。
+  std::optional<std::string> prediction_state_json;              ///< EKF 状态诊断。
   std::optional<::foxglove::schemas::SceneUpdate> prediction_truth_overlay;  ///< 真值误差线。
   std::optional<::foxglove::schemas::ImageAnnotations>
-      prediction_current_annotations;  ///< 当前四装甲重投影。
+      prediction_current_annotations;  ///< 已接受关联预测框。
   std::optional<::foxglove::schemas::ImageAnnotations>
-      prediction_future_annotations;  ///< 100 ms 四装甲重投影。
+      impact_annotations;  ///< 火控选中装甲命中时刻重投影。
   std::optional<::foxglove::schemas::ImageAnnotations>
       selected_armor_annotations;  ///< 火控选中/待切换装甲重投影。
   std::optional<double> jpeg_ms;   ///< JPEG 编码耗时，未编码图像时为空。
@@ -105,8 +109,9 @@ class VisionMessageEncoder final {
    * @brief 按合并需求编码单帧消息，结果可被实时和录制频道共享。
    * @throws std::runtime_error JPEG 编码失败。
    */
-  [[nodiscard]] PreparedFrame Encode(const VisionDebugFrame& frame, TopicDemand demand,
-                                     PipelineCounts counts) const;
+  [[nodiscard]] PreparedFrame Encode(
+      const VisionDebugFrame& frame, TopicDemand demand, PipelineCounts counts,
+      const std::optional<modules::ArmorImpactSnapshot>& impact) const;
 
  private:
   ImageConfig config_;                     ///< frame_id、max_fps 和 JPEG 质量配置副本。

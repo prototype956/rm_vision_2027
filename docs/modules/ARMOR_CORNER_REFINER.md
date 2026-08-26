@@ -32,7 +32,9 @@ ROI 无效、过暗、矩退化或端点未找到都会让整块装甲回退网�
 
 ## Foxglove
 
-- `/vision/pnp/corners`：青色网络原框；精修成功时增加洋红色正式输入框。
+- `/vision/pnp/raw_corners`：青色 1.5 px 实线网络原始输入框。
+- `/vision/pnp/final_corners`：洋红色 2.5 px 实线 `REFINED` 正式输入框；失败时以黄色
+  2.5 px 实线 `FALLBACK:<status>` 显示实际提交给 PnP 的原始回退框。
 - `/vision/corner_refiner/axes`：浅蓝 PCA 轴和灰度质心。
 - `/vision/corner_refiner/candidates`：橙色搜索区间、黄色逐扫描线候选，以及绿色已提交或
   红色被原子回退的平均端点。

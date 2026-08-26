@@ -92,6 +92,7 @@ void VisionDebugPublisher::PublishControl(
     const ::mv::runtime::ControlCycleOutput& output,
     const ::mv::runtime::ControlCycleDiagnostics& diagnostics) noexcept {
   impl_->UpdateSelection(output, diagnostics);
+  impl_->pipeline.UpdateImpact(output.fire_control);
   impl_->control.Publish(output, diagnostics);
 }
 

@@ -28,17 +28,19 @@ enum class VisionTopic {
   PROJECTILE_STATS,                ///< 仿真弹丸发射与命中累计统计。
   PROJECTION_ANNOTATIONS,          ///< 真值探针在相机图像上的重投影点。
   PNP_ESTIMATES,                   ///< 相机系与世界系下的 PnP 三维估计。
-  PNP_CORNERS,                     ///< PnP 原始及精修输入角点。
+  PNP_RAW_CORNERS,                 ///< 网络原始 PnP 输入角点。
+  PNP_FINAL_CORNERS,               ///< 正式 PnP 输入角点。
   PNP_REPROJECTION,                ///< PnP 模型重投影线框。
   PNP_ERROR_VECTORS,               ///< 检测角点到仿真真值的误差向量。
   CORNER_REFINER_AXES,             ///< 角点精修灯条 PCA 轴。
   CORNER_REFINER_CANDIDATES,       ///< 角点精修搜索区间及候选点。
   PNP_STATS,                       ///< PnP 解算与角点精修指标 JSON。
   PREDICTION_SCENE,                ///< 预测整车与装甲三维场景。
+  IMPACT_SCENE,                    ///< 火控命中时域四装甲三维场景。
   PREDICTION_STATE,                ///< 预测 EKF 状态 JSON。
   PREDICTION_TRUTH_OVERLAY,        ///< 预测中心与仿真真值误差线。
-  PREDICTION_CURRENT_ANNOTATIONS,  ///< 当前预测装甲二维重投影。
-  PREDICTION_FUTURE_ANNOTATIONS,   ///< 100 ms 预测装甲二维重投影。
+  PREDICTION_CURRENT_ANNOTATIONS,  ///< 已接受关联预测框。
+  IMPACT_ANNOTATIONS,              ///< 火控命中时刻选中装甲重投影。
   SELECTED_ARMOR_ANNOTATIONS,      ///< 火控选中装甲同帧二维重投影。
 };
 
@@ -56,17 +58,19 @@ struct ChannelIds {
   std::uint64_t projectile_stats{0};                ///< 弹丸统计频道 ID。
   std::uint64_t projection_annotations{0};          ///< 真值重投影标注频道 ID。
   std::uint64_t pnp_estimates{0};                   ///< PnP 三维估计频道 ID。
-  std::uint64_t pnp_corners{0};                     ///< PnP 输入角点频道 ID。
+  std::uint64_t pnp_raw_corners{0};                 ///< 原始 PnP 输入角点频道 ID。
+  std::uint64_t pnp_final_corners{0};               ///< 正式 PnP 输入角点频道 ID。
   std::uint64_t pnp_reprojection{0};                ///< PnP 重投影频道 ID。
   std::uint64_t pnp_error_vectors{0};               ///< PnP 角点误差向量频道 ID。
   std::uint64_t corner_refiner_axes{0};             ///< 角点精修 PCA 轴频道 ID。
   std::uint64_t corner_refiner_candidates{0};       ///< 角点精修候选点频道 ID。
   std::uint64_t pnp_stats{0};                       ///< PnP 指标频道 ID。
   std::uint64_t prediction_scene{0};                ///< 预测场景频道 ID。
+  std::uint64_t impact_scene{0};                    ///< 命中时刻场景频道 ID。
   std::uint64_t prediction_state{0};                ///< 预测状态频道 ID。
   std::uint64_t prediction_truth_overlay{0};        ///< 预测真值对照频道 ID。
-  std::uint64_t prediction_current_annotations{0};  ///< 当前预测图像标注频道 ID。
-  std::uint64_t prediction_future_annotations{0};   ///< 100 ms 预测图像标注频道 ID。
+  std::uint64_t prediction_current_annotations{0};  ///< 已接受关联预测标注频道 ID。
+  std::uint64_t impact_annotations{0};              ///< 命中时刻预测标注频道 ID。
   std::uint64_t selected_armor_annotations{0};      ///< 火控选中装甲标注频道 ID。
 };
 
@@ -80,7 +84,7 @@ struct ChannelPublishError {
 struct ChannelPublishResult {
   bool attempted{false};                         ///< 是否至少调用了一个频道的 log()。
   bool success{true};                            ///< 所有已尝试频道是否均成功。
-  std::array<ChannelPublishError, 24> errors{};  ///< 每个固定话题最多记录一个错误。
+  std::array<ChannelPublishError, 26> errors{};  ///< 每个固定话题最多记录一个错误。
   std::size_t error_count{0};                    ///< errors 中的有效元素数量。
 };
 
@@ -124,7 +128,10 @@ class VisionChannelSet final {
   std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel>
       projection_annotations_;  ///< 真值重投影频道。
   std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> pnp_estimates_;  ///< PnP 估计频道。
-  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> pnp_corners_;  ///< 输入角点频道。
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel>
+      pnp_raw_corners_;  ///< 原始输入角点频道。
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel>
+      pnp_final_corners_;  ///< 正式输入角点频道。
   std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel>
       pnp_reprojection_;  ///< PnP 重投影频道。
   std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel>
@@ -135,10 +142,11 @@ class VisionChannelSet final {
       corner_refiner_candidates_;                      ///< 角点精修候选点频道。
   std::unique_ptr<::foxglove::RawChannel> pnp_stats_;  ///< PnP 指标频道。
   std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> prediction_scene_;
+  std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> impact_scene_;
   std::unique_ptr<::foxglove::RawChannel> prediction_state_;
   std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> prediction_truth_overlay_;
   std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> prediction_current_annotations_;
-  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> prediction_future_annotations_;
+  std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> impact_annotations_;
   std::unique_ptr<::foxglove::schemas::ImageAnnotationsChannel> selected_armor_annotations_;
   bool closed_{false};  ///< 保证显式 Close() 与析构关闭幂等。
 };

@@ -27,7 +27,7 @@ struct FeedbackHistorySample {
 /**
  * @brief 通过有界队列接收 100 Hz 火控结果，并在后台串行写入 Foxglove 和 MCAP。
  *
- * state 与 tracking 保留控制周期频率；trajectory 和 scene 按图像最大帧率降采样。
+ * state 与 tracking 保留控制周期频率；trajectory 和三个功能场景按图像最大帧率降采样。
  * 队列满时丢弃最旧样本，使实时诊断优先追赶最新控制状态。Stop() 会排空已入队数据。
  */
 class ControlDebugPublisher final {
@@ -69,10 +69,12 @@ class ControlDebugPublisher final {
   std::uint64_t live_state_id_{0};         ///< 实时 state 频道订阅查询 ID。
   std::uint64_t live_tracking_id_{0};      ///< 实时 tracking 频道订阅查询 ID。
   std::uint64_t live_trajectory_id_{0};    ///< 实时 trajectory 频道订阅查询 ID。
-  std::uint64_t live_scene_id_{0};         ///< 实时 scene 频道订阅查询 ID。
-  std::uint64_t live_transforms_id_{0};    ///< 实时短时外推 TF 频道订阅查询 ID。
-  std::mutex mutex_;                       ///< 保护生产者—消费者队列。
-  std::condition_variable condition_;      ///< 新样本或停止信号通知。
+  std::uint64_t live_selection_scene_id_{0};   ///< 实时装甲选择场景订阅查询 ID。
+  std::uint64_t live_aim_scene_id_{0};         ///< 实时当前瞄准场景订阅查询 ID。
+  std::uint64_t live_trajectory_scene_id_{0};  ///< 实时轨迹场景订阅查询 ID。
+  std::uint64_t live_transforms_id_{0};        ///< 实时短时外推 TF 频道订阅查询 ID。
+  std::mutex mutex_;                           ///< 保护生产者—消费者队列。
+  std::condition_variable condition_;          ///< 新样本或停止信号通知。
   std::deque<QueueSample> queue_;  ///< 按到达顺序分别保存正式输出与诊断输出。
   std::thread worker_;             ///< 唯一编码与发布线程。
   std::atomic<bool> accepting_{false};     ///< 是否仍接受 Publish() 输入。
@@ -83,7 +85,7 @@ class ControlDebugPublisher final {
   std::uint64_t last_measured_sequence_{~std::uint64_t{0}};  ///< 最近纳入历史的实测帧。
   std::uint64_t last_trajectory_sequence_{~std::uint64_t{0}};  ///< 最近重型样本源帧。
   std::uint64_t last_trajectory_timestamp_ns_{0};  ///< 最近重型样本发布时间。
-  std::uint64_t trajectory_period_ns_{0};          ///< trajectory/scene 最小发布间隔。
+  std::uint64_t trajectory_period_ns_{0};          ///< trajectory/场景最小发布间隔。
 };
 
 }  // namespace mv::tool::foxglove::control

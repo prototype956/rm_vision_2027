@@ -11,18 +11,17 @@
 
 namespace mv::tool::foxglove::prediction {
 
-/** @brief 图像重投影所选择的固定预测时域。 */
-enum class ImagePredictionHorizon {
-  CURRENT = 0,   ///< 当前后验状态，对应 0 ms horizon。
-  FUTURE_100_MS  ///< 100 ms 匀速外推状态。
-};
-
 /**
- * @brief 编码世界系车辆中心、速度、双半径轨迹、关联线和全部预测装甲线框。
- * @return LOST 或没有 horizon 时返回空 SceneUpdate。
+ * @brief 编码世界系当前车辆中心、速度、车体轴、双半径和当前四装甲线框。
+ * @return LOST 或没有 0 s horizon 时返回空 SceneUpdate。
  */
 [[nodiscard]] ::foxglove::schemas::SceneUpdate EncodeScene(
     const modules::ArmorPredictionOutput& output, const ::foxglove::schemas::Timestamp& timestamp);
+
+/** @brief 编码严格同源帧弹道命中时域的四装甲，并突出火控最终选中槽位。 */
+[[nodiscard]] ::foxglove::schemas::SceneUpdate EncodeImpactScene(
+    const modules::ArmorPredictionOutput& output, const modules::ArmorImpactSnapshot* impact,
+    const ::foxglove::schemas::Timestamp& timestamp);
 
 /** @brief 将 EKF 状态、协方差、创新、NIS、关联和重置原因编码为诊断 JSON。 */
 [[nodiscard]] std::string EncodeState(
@@ -40,19 +39,20 @@ enum class ImagePredictionHorizon {
     const simulation_evaluation::PredictionEvaluationResult& evaluation,
     const ::foxglove::schemas::Timestamp& timestamp);
 
-/**
- * @brief 将指定时域的四装甲位姿按相机畸变模型重投影为图像线框和槽位文字。
- *
- * 正面装甲使用不透明粗线，背面装甲使用半透明细线；图像外或相机后的装甲不输出。
- */
-[[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeAnnotations(
+/** @brief 将当前四槽位预测和通过全部关联门限的预测轮廓编码为绿色实线。 */
+[[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeCurrentAnnotations(
     const modules::ArmorPredictionOutput& output,
-    const modules::ArmorPredictionDiagnostics& diagnostics, const frame::SpatialFrameView& spatial,
-    ImagePredictionHorizon horizon, const ::foxglove::schemas::Timestamp& timestamp);
+    const modules::ArmorPredictionDiagnostics& diagnostics, const frame::SpatialFrameView* spatial,
+    const ::foxglove::schemas::Timestamp& timestamp);
 
 /** @brief 生成只携带时间戳的空标注，使 Foxglove 清除上一帧预测线框。 */
 [[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeEmptyAnnotations(
     const ::foxglove::schemas::Timestamp& timestamp);
+
+/** @brief 将严格同源帧火控选中槽位在弹道命中时域的位姿编码为无文字矩形框。 */
+[[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeImpactAnnotations(
+    const modules::ArmorPredictionOutput& output, const frame::SpatialFrameView& spatial,
+    const modules::ArmorImpactSnapshot& impact, const ::foxglove::schemas::Timestamp& timestamp);
 
 /** 将火控锁定槽位和待切换槽位重投影到与原图严格同帧的图像坐标。 */
 [[nodiscard]] ::foxglove::schemas::ImageAnnotations EncodeSelectedArmorAnnotations(
