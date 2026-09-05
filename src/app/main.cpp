@@ -17,11 +17,14 @@
 #include "runtime/runtime_supervisor.hpp"
 #include "runtime/vision_pipeline.hpp"
 #include "runtime/vision_runtime.hpp"
+#include "runtime/vision_tuning.hpp"
 #include "tool/debug/debug_window.hpp"
 #include "tool/foxglove/foxglove_config.hpp"
 #include "tool/foxglove/vision_debug_publisher.hpp"
 #include "tool/simulation_evaluation/simulation_evaluation_config.hpp"
 #include "tool/simulation_evaluation/simulation_evaluator.hpp"
+#include "tool/web/web_debug_config.hpp"
+#include "tool/web/web_debug_server.hpp"
 
 #include <csignal>
 #include <cstdio>
@@ -29,6 +32,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <filesystem>
 
@@ -78,6 +82,49 @@ class FoxgloveDiagnosticsSink final : public runtime::IRuntimeDiagnosticsSink {
  private:
   tool::foxglove::VisionDebugPublisher& publisher_;
 };
+
+/** @brief 将同一运行时诊断分发到全部已启动的调试后端。 */
+class DiagnosticsFanoutSink final : public runtime::IRuntimeDiagnosticsSink {
+ public:
+  void Add(runtime::IRuntimeDiagnosticsSink& sink) { sinks_.push_back(&sink); }
+  [[nodiscard]] bool Empty() const noexcept { return sinks_.empty(); }
+
+  void PublishVision(const frame::FramePacket& packet, const runtime::VisionFrameOutput& output,
+                     const runtime::VisionFrameDiagnostics& diagnostics,
+                     const std::optional<tool::simulation_evaluation::SimulationEvaluationResult>&
+                         evaluation) noexcept override {
+    for (auto* sink : sinks_)
+      sink->PublishVision(packet, output, diagnostics, evaluation);
+  }
+
+  void PublishControl(const runtime::ControlCycleOutput& output,
+                      const runtime::ControlCycleDiagnostics& diagnostics) noexcept override {
+    for (auto* sink : sinks_)
+      sink->PublishControl(output, diagnostics);
+  }
+
+  [[nodiscard]] runtime::RuntimeDiagnosticsHealth SnapshotHealth() const noexcept override {
+    runtime::RuntimeDiagnosticsHealth combined{.available = false};
+    for (const auto* sink : sinks_) {
+      const auto HEALTH = sink->SnapshotHealth();
+      combined.available = combined.available || HEALTH.available;
+      combined.error_count += HEALTH.error_count;
+    }
+    return combined;
+  }
+
+ private:
+  std::vector<runtime::IRuntimeDiagnosticsSink*> sinks_;
+};
+
+runtime::VisionFrontendTuningConfig MakeFrontendTuningConfig(
+    const runtime::VisionPipelineConfig& config) {
+  return {.detector = {.enemy_color = config.detector.enemy_color,
+                       .confidence_threshold = config.detector.confidence_threshold,
+                       .nms_iou_threshold = config.detector.nms_iou_threshold},
+          .corner_refiner = config.corner_refiner,
+          .light_detector = config.light_detector};
+}
 
 struct CameraSelection {
   std::string backend;                ///< 传给相机工厂的后端名称。
@@ -147,6 +194,7 @@ int Run() {
         ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_light_detector.yaml",
                                modules::ARMOR_LIGHT_DETECTOR_CONFIG_SCHEMA_VERSION);
     pipeline_config.light_detector = modules::ParseArmorLightDetectorConfig(LIGHT_DETECTOR_YAML);
+    runtime::VisionTuningMailbox tuning_mailbox(MakeFrontendTuningConfig(pipeline_config));
 
     std::unique_ptr<runtime::VisionPipeline> pipeline;
     try {
@@ -238,9 +286,33 @@ int Run() {
       foxglove_publisher.reset();
     }
 
-    std::unique_ptr<FoxgloveDiagnosticsSink> diagnostics_sink;
-    if (foxglove_publisher)
-      diagnostics_sink = std::make_unique<FoxgloveDiagnosticsSink>(*foxglove_publisher);
+    std::unique_ptr<FoxgloveDiagnosticsSink> foxglove_diagnostics_sink;
+    DiagnosticsFanoutSink diagnostics_fanout;
+    if (foxglove_publisher) {
+      foxglove_diagnostics_sink = std::make_unique<FoxgloveDiagnosticsSink>(*foxglove_publisher);
+      diagnostics_fanout.Add(*foxglove_diagnostics_sink);
+    }
+
+    std::unique_ptr<tool::web::WebDebugServer> web_debug_server;
+    try {
+      const auto WEB_YAML = ConfigLoader::LoadFile(CONFIG_ROOT / "tool/web.yaml");
+      auto web_config = tool::web::ParseConfig(WEB_YAML);
+      if (web_config.enabled) {
+        web_debug_server = std::make_unique<tool::web::WebDebugServer>(
+            std::move(web_config), tuning_mailbox, pipeline_config, PROJECT_ROOT);
+        if (web_debug_server->Start()) {
+          diagnostics_fanout.Add(*web_debug_server);
+        }
+      }
+    } catch (const std::exception& error) {
+      MV_LOG_WARN("WebDebug", "disabled after initialization failure: {}", error.what());
+      web_debug_server.reset();
+    } catch (...) {
+      MV_LOG_WARN("WebDebug", "disabled after unknown initialization failure");
+      web_debug_server.reset();
+    }
+    runtime::IRuntimeDiagnosticsSink* diagnostics_sink =
+        diagnostics_fanout.Empty() ? nullptr : &diagnostics_fanout;
 
     std::unique_ptr<runtime::ControlRuntime> control_runtime;
     if (CAMERA_SELECTION.backend == "talos") {
@@ -256,8 +328,7 @@ int Run() {
       }
       try {
         control_runtime = std::make_unique<runtime::ControlRuntime>(
-            FIRE_CONFIG, PLANNER_CONFIG, std::move(command_sink), diagnostics_sink.get(),
-            supervisor);
+            FIRE_CONFIG, PLANNER_CONFIG, std::move(command_sink), diagnostics_sink, supervisor);
         control_runtime->Start();
       } catch (const std::exception& error) {
         static_cast<void>(
@@ -274,8 +345,8 @@ int Run() {
     }
 
     runtime::VisionRuntime vision_runtime(*camera, *pipeline, control_runtime.get(), window.get(),
-                                          diagnostics_sink.get(), simulation_evaluator.get(),
-                                          supervisor);
+                                          diagnostics_sink, simulation_evaluator.get(), supervisor,
+                                          &tuning_mailbox);
     return runtime::RuntimeExitCode(
         vision_runtime.Run([] { return g_stop_requested != 0; }).reason);
   } catch (const std::exception& error) {

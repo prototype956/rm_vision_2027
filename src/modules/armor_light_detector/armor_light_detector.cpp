@@ -81,6 +81,12 @@ const char* LightbarThresholdSourceName(LightbarThresholdSource source) noexcept
 ArmorLightDetector::ArmorLightDetector(ArmorLightDetectorConfig config, ArmorColor enemy_color)
     : config_(config), enemy_color_(enemy_color) {}
 
+void ArmorLightDetector::UpdateConfig(const ArmorLightDetectorConfig& config,
+                                      ArmorColor enemy_color) noexcept {
+  config_ = config;
+  enemy_color_ = enemy_color;
+}
+
 LightbarDetectionResult ArmorLightDetector::Detect(
     const cv::Mat& bgr_image, const cv::Mat& gray_image, std::span<const ArmorDetection> detections,
     std::span<const CornerRefinementOutput> refinements) const noexcept {

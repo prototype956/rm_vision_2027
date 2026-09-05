@@ -27,6 +27,14 @@ message(STATUS "  ✓ spdlog found: ${spdlog_VERSION}")
 find_package(yaml-cpp REQUIRED)
 message(STATUS "  ✓ yaml-cpp found")
 
+if(USE_OPENVINO)
+    # Web 调试服务使用 Beast/Asio 和 JSON，不在运行时下载前端或 C++ 依赖。
+    find_package(Boost 1.74 CONFIG REQUIRED COMPONENTS system)
+    find_package(nlohmann_json 3.10 REQUIRED)
+    message(STATUS "  ✓ Boost.System found: ${Boost_VERSION}")
+    message(STATUS "  ✓ nlohmann/json found: ${nlohmann_json_VERSION}")
+endif()
+
 # Eigen - 内部三维几何与固定尺寸线性代数
 find_package(Eigen3 3.4 REQUIRED NO_MODULE)
 message(STATUS "  ✓ Eigen found: ${Eigen3_VERSION}")

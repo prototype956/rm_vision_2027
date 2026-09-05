@@ -44,6 +44,13 @@ struct ArmorDetectorConfig {
   float nms_iou_threshold{0.45F};           ///< NMS IoU 阈值，范围为 [0, 1]。
 };
 
+/** @brief 不重载模型即可在帧边界更新的检测后处理参数。 */
+struct ArmorDetectorRuntimeConfig {
+  ArmorColor enemy_color{ArmorColor::RED};  ///< 需要保留的敌方装甲颜色。
+  float confidence_threshold{0.65F};        ///< objectness 筛选阈值，范围为 (0, 1)。
+  float nms_iou_threshold{0.45F};           ///< NMS IoU 阈值，范围为 [0, 1]。
+};
+
 /**
  * @brief 模型、设备或 OpenVINO 编译阶段的初始化异常。
  */
@@ -100,6 +107,13 @@ class YoloArmorDetector final {
    * @throws ArmorDetectorRuntimeError OpenVINO 推理或后处理失败。
    */
   [[nodiscard]] ArmorDetectorResult Detect(const cv::Mat& bgr_image);
+
+  /**
+   * @brief 在调用线程的下一次 Detect() 前替换轻量后处理参数。
+   *
+   * 调用方必须保证本函数不与 Detect() 并发，并传入已经过配置解析器校验的参数。
+   */
+  void UpdateRuntimeConfig(const ArmorDetectorRuntimeConfig& config) noexcept;
 
   /**
    * @brief 检查当前实例是否已成功初始化。

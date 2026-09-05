@@ -20,6 +20,13 @@ struct VisionPipelineConfig {
   modules::ArmorLightDetectorConfig light_detector;
 };
 
+/** @brief 可在相邻图像帧之间原子替换的检测前端参数。 */
+struct VisionFrontendTuningConfig {
+  modules::ArmorDetectorRuntimeConfig detector;
+  modules::ArmorCornerRefinerConfig corner_refiner;
+  modules::ArmorLightDetectorConfig light_detector;
+};
+
 /** @brief 同一相机帧经过完整感知链后产生的正式结果和诊断。 */
 struct VisionFrameResult {
   VisionFrameOutput output;
@@ -49,6 +56,9 @@ class VisionPipeline final {
    * @return 检测、PnP、预测和诊断结果。
    */
   [[nodiscard]] VisionFrameResult Process(const VisionFrameInput& input);
+
+  /** @brief 在帧处理线程中统一替换已校验的检测、精修和灯条参数。 */
+  void ApplyFrontendTuning(const VisionFrontendTuningConfig& config) noexcept;
 
  private:
   modules::YoloArmorDetector detector_;

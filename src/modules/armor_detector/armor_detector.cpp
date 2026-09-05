@@ -227,6 +227,12 @@ ArmorDetectorResult YoloArmorDetector::Detect(const cv::Mat& bgr_image) {
   }
 }
 
+void YoloArmorDetector::UpdateRuntimeConfig(const ArmorDetectorRuntimeConfig& config) noexcept {
+  impl_->config.enemy_color = config.enemy_color;
+  impl_->config.confidence_threshold = config.confidence_threshold;
+  impl_->config.nms_iou_threshold = config.nms_iou_threshold;
+}
+
 bool YoloArmorDetector::IsInitialized() const noexcept {
   return impl_->initialized;
 }

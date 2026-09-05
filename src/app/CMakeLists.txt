@@ -17,6 +17,7 @@ target_link_libraries(mv-vision-main
         mv-tool-debug
         mv-tool-foxglove
         mv-tool-simulation-evaluation
+        mv-tool-web
 )
 
 target_compile_definitions(mv-vision-main PRIVATE

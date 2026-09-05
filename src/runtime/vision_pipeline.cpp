@@ -12,6 +12,12 @@ VisionPipeline::VisionPipeline(const VisionPipelineConfig& config)
   detector_.Init(config.detector);
 }
 
+void VisionPipeline::ApplyFrontendTuning(const VisionFrontendTuningConfig& config) noexcept {
+  detector_.UpdateRuntimeConfig(config.detector);
+  corner_refiner_.UpdateConfig(config.corner_refiner);
+  light_detector_.UpdateConfig(config.light_detector, config.detector.enemy_color);
+}
+
 VisionFrameResult VisionPipeline::Process(const VisionFrameInput& input) {
   VisionFrameResult result;
   const auto& image = input.capture.image;

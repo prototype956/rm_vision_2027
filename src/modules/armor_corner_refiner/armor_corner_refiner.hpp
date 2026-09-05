@@ -112,6 +112,9 @@ class ArmorCornerRefiner final {
   [[nodiscard]] CornerRefinementResult Refine(const cv::Mat& gray_image,
                                               std::span<const cv::Point2f, 4> corners) const;
 
+  /** @brief 在下一次 Refine() 前替换已校验的精修参数。 */
+  void UpdateConfig(const ArmorCornerRefinerConfig& config) noexcept { config_ = config; }
+
  private:
   ArmorCornerRefinerConfig config_;  ///< 构造时保存的精修参数副本。
 };

@@ -52,6 +52,9 @@ class ArmorLightDetector final {
       std::span<const ArmorDetection> detections,
       std::span<const CornerRefinementOutput> refinements) const noexcept;
 
+  /** @brief 在下一次 Detect() 前替换已校验配置和共享敌方颜色。 */
+  void UpdateConfig(const ArmorLightDetectorConfig& config, ArmorColor enemy_color) noexcept;
+
  private:
   ArmorLightDetectorConfig config_;
   ArmorColor enemy_color_{ArmorColor::RED};

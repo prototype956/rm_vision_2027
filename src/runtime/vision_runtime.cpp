@@ -6,6 +6,7 @@
 #include "runtime/control_runtime.hpp"
 #include "runtime/runtime_diagnostics_sink.hpp"
 #include "runtime/vision_pipeline.hpp"
+#include "runtime/vision_tuning.hpp"
 #include "tool/debug/armor_detection_overlay.hpp"
 #include "tool/debug/debug_window.hpp"
 #include "tool/simulation_evaluation/simulation_evaluator.hpp"
@@ -101,14 +102,16 @@ VisionRuntime::VisionRuntime(hal::ICamera& camera, VisionPipeline& pipeline,
                              ControlRuntime* control, tool::DebugWindow* window,
                              IRuntimeDiagnosticsSink* diagnostics,
                              tool::simulation_evaluation::SimulationEvaluator* evaluator,
-                             RuntimeSupervisor& supervisor) noexcept
+                             RuntimeSupervisor& supervisor,
+                             VisionTuningMailbox* tuning_mailbox) noexcept
     : camera_(camera),
       pipeline_(pipeline),
       control_(control),
       window_(window),
       diagnostics_(diagnostics),
       evaluator_(evaluator),
-      supervisor_(supervisor) {}
+      supervisor_(supervisor),
+      tuning_mailbox_(tuning_mailbox) {}
 
 RuntimeRunResult VisionRuntime::Run(const std::function<bool()>& stop_requested) {
   const auto STOP_WITH_TERMINAL = [this](RuntimeTerminationReason fallback) {
@@ -142,6 +145,15 @@ RuntimeRunResult VisionRuntime::Run(const std::function<bool()>& stop_requested)
 
     if (status == hal::GrabStatus::OK) {
       supervisor_.Recover(RuntimeComponent::CAMERA);
+      if (tuning_mailbox_) {
+        if (const auto TUNING = tuning_mailbox_->TryTakePending()) {
+          pipeline_.ApplyFrontendTuning(TUNING->config);
+          tuning_mailbox_->MarkApplied(
+              {.request_id = TUNING->request_id, .source_sequence = packet.capture.stamp.sequence});
+          MV_LOG_INFO("WebDebug", "frontend tuning revision={} applied at sequence={}",
+                      TUNING->target_revision, packet.capture.stamp.sequence);
+        }
+      }
       VisionFrameResult result;
       try {
         const auto SPATIAL = frame::MakeSpatialFrameView(packet);
