@@ -734,6 +734,7 @@ ArmorPredictionResult ArmorPredictor::Impl::Snapshot(const frame::FrameStamp& st
   auto& output = result.output;
   auto& diagnostics = result.diagnostics;
   output.sequence = stamp.sequence;
+  output.source_round_id = stamp.simulation_round_id;
   output.source_capture_timestamp_ns = stamp.capture_timestamp_ns;
   output.source_receive_steady_time = stamp.receive_steady_time;
   if (stamp.capture_steady_time) {

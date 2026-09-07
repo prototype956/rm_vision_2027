@@ -68,7 +68,7 @@ std::string EncodeProjectileStats(const mv::simulation::ProjectileStatistics& st
     center.color = target.team == 0
                        ? ::foxglove::schemas::Color{.r = 1.0, .g = 0.1, .b = 0.1, .a = 0.8}
                        : ::foxglove::schemas::Color{.r = 0.1, .g = 0.3, .b = 1.0, .a = 0.8};
-    entity.spheres.push_back(std::move(center));
+    entity.spheres.push_back(center);
 
     ::foxglove::schemas::LinePrimitive heading;
     heading.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LIST;
@@ -92,6 +92,7 @@ std::string EncodeProjectileStats(const mv::simulation::ProjectileStatistics& st
     entity.id = fmt::format("truth_armor_{}", armor.id);
     entity.lifetime = LIFETIME;
     entity.metadata = {
+        {.key = "owner_robot_id", .value = std::to_string(armor.owner_robot_id)},
         {.key = "team", .value = std::to_string(armor.team)},
         {.key = "label", .value = std::to_string(armor.label)},
         {.key = "type", .value = armor.type == geometry::ArmorType::LARGE ? "large" : "small"}};
@@ -106,13 +107,13 @@ std::string EncodeProjectileStats(const mv::simulation::ProjectileStatistics& st
     ::foxglove::schemas::LinePrimitive axes;
     axes.type = ::foxglove::schemas::LinePrimitive::LineType::LINE_LIST;
     axes.thickness = 0.008;
-    const auto origin = armor.world_t_armor.translation;
-    axes.points = {ToPoint(origin),
-                   ToPoint(origin + geometry::TransformVector(armor.world_t_armor, {0.08, 0, 0})),
-                   ToPoint(origin),
-                   ToPoint(origin + geometry::TransformVector(armor.world_t_armor, {0, 0.08, 0})),
-                   ToPoint(origin),
-                   ToPoint(origin + geometry::TransformVector(armor.world_t_armor, {0, 0, 0.08}))};
+    const auto ORIGIN = armor.world_t_armor.translation;
+    axes.points = {ToPoint(ORIGIN),
+                   ToPoint(ORIGIN + geometry::TransformVector(armor.world_t_armor, {0.08, 0, 0})),
+                   ToPoint(ORIGIN),
+                   ToPoint(ORIGIN + geometry::TransformVector(armor.world_t_armor, {0, 0.08, 0})),
+                   ToPoint(ORIGIN),
+                   ToPoint(ORIGIN + geometry::TransformVector(armor.world_t_armor, {0, 0, 0.08}))};
     axes.colors = {{.r = 1.0, .a = 1.0}, {.r = 1.0, .a = 1.0}, {.g = 1.0, .a = 1.0},
                    {.g = 1.0, .a = 1.0}, {.b = 1.0, .a = 1.0}, {.b = 1.0, .a = 1.0}};
     entity.lines.push_back(std::move(axes));
@@ -132,10 +133,10 @@ std::string EncodeProjectileStats(const mv::simulation::ProjectileStatistics& st
   const auto CAMERA_T_WORLD = mv::geometry::Inverse(WORLD_T_CAMERA);
   const auto& calibration = camera_model;
   for (const auto& armor : simulation_data.armors) {
-    const auto camera_t_armor = mv::geometry::Compose(CAMERA_T_WORLD, armor.world_t_armor);
-    const auto normal_camera =
-        mv::geometry::TransformVector(camera_t_armor, geometry::Vector3::UnitZ());
-    if (normal_camera.dot(camera_t_armor.translation) >= 0.0) {
+    const auto CAMERA_T_ARMOR = mv::geometry::Compose(CAMERA_T_WORLD, armor.world_t_armor);
+    const auto NORMAL_CAMERA =
+        mv::geometry::TransformVector(CAMERA_T_ARMOR, geometry::Vector3::UnitZ());
+    if (NORMAL_CAMERA.dot(CAMERA_T_ARMOR.translation) >= 0.0) {
       continue;
     }
     ::foxglove::schemas::PointsAnnotation polygon;
@@ -151,23 +152,23 @@ std::string EncodeProjectileStats(const mv::simulation::ProjectileStatistics& st
     std::array<::foxglove::schemas::Point2, 4> projected{};
     for (std::size_t index = 0; index < armor.corners_world.size(); ++index) {
       const auto& corner = armor.corners_world[index];
-      const auto camera_point = mv::geometry::TransformPoint(CAMERA_T_WORLD, corner);
-      if (camera_point.z() <= 0.0) {
+      const auto CAMERA_POINT = mv::geometry::TransformPoint(CAMERA_T_WORLD, corner);
+      if (CAMERA_POINT.z() <= 0.0) {
         visible = false;
         break;
       }
-      const double u = calibration.fx * camera_point.x() / camera_point.z() + calibration.cx;
-      const double v = calibration.fy * camera_point.y() / camera_point.z() + calibration.cy;
-      min_u = std::min(min_u, u);
-      min_v = std::min(min_v, v);
-      max_u = std::max(max_u, u);
-      max_v = std::max(max_v, v);
-      projected[index] = {.x = u, .y = v};
+      const double U = calibration.fx * CAMERA_POINT.x() / CAMERA_POINT.z() + calibration.cx;
+      const double V = calibration.fy * CAMERA_POINT.y() / CAMERA_POINT.z() + calibration.cy;
+      min_u = std::min(min_u, U);
+      min_v = std::min(min_v, V);
+      max_u = std::max(max_u, U);
+      max_v = std::max(max_v, V);
+      projected[index] = {.x = U, .y = V};
       polygon.points.push_back(projected[index]);
     }
-    const bool intersects_image =
+    const bool INTERSECTS_IMAGE =
         max_u >= 0.0 && max_v >= 0.0 && min_u < calibration.width && min_v < calibration.height;
-    if (visible && intersects_image) {
+    if (visible && INTERSECTS_IMAGE) {
       annotations.points.push_back(std::move(polygon));
       constexpr std::array<std::string_view, 4> CORNER_NAMES{"TL", "TR", "BR", "BL"};
       for (std::size_t index = 0; index < projected.size(); ++index) {

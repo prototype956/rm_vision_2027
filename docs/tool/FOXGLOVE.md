@@ -16,6 +16,9 @@ PASS/FAIL 判定。
 
 实时与录制使用相同的话题：
 
+- `/referee/self`：Talos v7 的最近 10 Hz 自身裁判采样，包含血量、热量、弹量及禁射原因。
+- `/simulation/combat/evaluation`：当前物理状态、按机器人统计和有界事件，敌方血量仅在评估通道。
+  时间与去重约定见 [战斗遥测验收](../test/talos_combat.md)。
 - `/vision/camera/image`：JPEG `foxglove.CompressedImage`。
 - `/vision/armor/annotations`：四角框和颜色、类别、置信度文字。
 - `/vision/armor/stats`：检测耗时、候选数、最终检测数及装甲检测阶段状态。

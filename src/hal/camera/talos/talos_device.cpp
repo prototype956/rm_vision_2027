@@ -149,6 +149,45 @@ mv::geometry::RigidTransform ConvertTransform(const RigidTransformF32& value) no
                                                value.rotation.z)};
 }
 
+/** @brief 拒绝越界、非法编码及混合回合采样，避免把损坏附件交给展示端。 */
+bool ValidCombat(const simulation::CombatFrameMeta& combat) {
+  using simulation::COMBAT_MAX_EVENTS;
+  using simulation::COMBAT_MAX_ROBOTS;
+  if (combat.round_id == 0 || combat.robot_count > COMBAT_MAX_ROBOTS ||
+      combat.event_count > COMBAT_MAX_EVENTS || combat.referee_valid > 1 ||
+      combat.round_started_ns > combat.sim_time_ns ||
+      combat.referee_sample_ns > combat.sim_time_ns ||
+      combat.referee_sample_ns < combat.round_started_ns)
+    return false;
+  const auto VALID_ROBOT = [](const simulation::RobotCombatMeta& robot) {
+    return robot.robot_id != 0 && robot.hp <= robot.max_hp && robot.max_hp > 0 && robot.team <= 1 &&
+           robot.role <= 2 && robot.life <= 1 && robot.shooter <= 1 && robot.allowance_mode <= 1 &&
+           robot.fire_permitted <= 1 && robot.fire_blocks <= 255 &&
+           (robot.fire_permitted != 0) == (robot.fire_blocks == 0) &&
+           (robot.life == 1) == (robot.hp == 0) && std::isfinite(robot.heat) && robot.heat >= 0 &&
+           std::isfinite(robot.heat_limit) && robot.heat_limit >= 0 &&
+           std::isfinite(robot.cooling_per_second) && robot.cooling_per_second >= 0 &&
+           std::isfinite(robot.heat_locked_s) && robot.heat_locked_s >= 0;
+  };
+  if (combat.referee_valid &&
+      (!VALID_ROBOT(combat.self_referee) || combat.referee_sample_sequence == 0))
+    return false;
+  for (std::size_t i = 0; i < combat.robot_count; ++i) {
+    if (!VALID_ROBOT(combat.robots[i]) ||
+        (i > 0 && combat.robots[i - 1].robot_id >= combat.robots[i].robot_id))
+      return false;
+  }
+  for (std::size_t i = 0; i < combat.event_count; ++i) {
+    const auto& event = combat.events[i];
+    if (event.id == 0 || event.round_id != combat.round_id ||
+        event.round_time_ns > combat.sim_time_ns - combat.round_started_ns ||
+        event.detail[sizeof(event.detail) - 1] != 0 ||
+        (i > 0 && combat.events[i - 1].id >= event.id))
+      return false;
+  }
+  return true;
+}
+
 void PopulateFrameContext(const CapturedFrameMeta& metadata, bool chassis_valid, bool truth_valid,
                           bool projectile_valid, frame::FramePacket& packet) {
   // Grab() 已分别验证正式数据和可选仿真附件，这里只负责从 ABI 类型提升。
@@ -196,9 +235,12 @@ void PopulateFrameContext(const CapturedFrameMeta& metadata, bool chassis_valid,
         .pitch_acceleration = metadata.gimbal_pitch_acceleration_rad_s2};
   }
 
-  if (!truth_valid)
-    return;
   simulation::SimulationFrameData simulation;
+  simulation.combat = metadata.combat;
+  if (!truth_valid) {
+    packet.simulation = std::move(simulation);
+    return;
+  }
   if (projectile_valid) {
     const auto& projectiles = metadata.projectile_statistics;
     simulation.projectile_statistics =
@@ -224,6 +266,7 @@ void PopulateFrameContext(const CapturedFrameMeta& metadata, bool chassis_valid,
   for (std::size_t index = 0; index < truth.armor_count; ++index) {
     const auto& armor = truth.armors[index];
     simulation::GroundTruthArmor converted{
+        .owner_robot_id = armor.owner_robot_id,
         .id = armor.id,
         .team = armor.team,
         .label = armor.label,
@@ -332,6 +375,13 @@ struct TalosDevice::Impl {
       return false;
     }
 
+    ShmHeader header_probe{};
+    if (::pread(meta_fd, &header_probe, sizeof(header_probe), 0) != sizeof(header_probe) ||
+        header_probe.magic != K_SHM_MAGIC || header_probe.version != K_SHM_VERSION) {
+      error = "Talos protocol mismatch: expected v7, got v" + std::to_string(header_probe.version);
+      ResetMappings();
+      return false;
+    }
     struct stat meta_stat {};
     if (::fstat(meta_fd, &meta_stat) != 0 ||
         meta_stat.st_size < static_cast<off_t>(sizeof(ShmMetaRegion))) {
@@ -482,7 +532,7 @@ GrabStatus TalosDevice::Grab(frame::FramePacket& packet) {
     const auto INVALID = [&]() {
       const uint64_t COUNT = ++impl_->invalid_frames;
       if (COUNT == 1 || COUNT % 100 == 0) {
-        MV_LOG_WARN("HAL.Camera.Talos", "rejected invalid Talos v6 frame #{} (seq={})", COUNT,
+        MV_LOG_WARN("HAL.Camera.Talos", "rejected invalid Talos v7 frame #{} (seq={})", COUNT,
                     metadata.frame_sequence);
       }
       return GrabStatus::INVALID_FRAME;
@@ -531,7 +581,7 @@ GrabStatus TalosDevice::Grab(frame::FramePacket& packet) {
       }
     }
 
-    if (metadata.capture_timestamp_ns == 0 ||
+    if (!ValidCombat(metadata.combat) || metadata.capture_timestamp_ns == 0 ||
         metadata.camera_info.timestamp_ns != metadata.capture_timestamp_ns ||
         metadata.width != static_cast<uint32_t>(impl_->info.output_width) ||
         metadata.height != static_cast<uint32_t>(impl_->info.output_height) ||
@@ -597,6 +647,7 @@ GrabStatus TalosDevice::Grab(frame::FramePacket& packet) {
         metadata.capture_timestamp_ns, packet.capture.stamp.receive_steady_time);
     packet.capture.stamp.capture_timestamp_ns = metadata.capture_timestamp_ns;
     packet.capture.stamp.sequence = metadata.frame_sequence;
+    packet.capture.stamp.simulation_round_id = metadata.combat.round_id;
     packet.capture.stamp.source_invalid_frames = impl_->invalid_frames;
     PopulateFrameContext(metadata, CHASSIS_VALID, truth_valid, PROJECTILE_VALID, packet);
     return GrabStatus::OK;

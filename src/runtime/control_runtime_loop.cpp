@@ -297,6 +297,10 @@ void ControlRuntimeImpl::ProcessSnapshot(
     }
   }
   const auto SEND_START = std::chrono::steady_clock::now();
+  output.command.source_round_id = snapshot->prediction.source_round_id;
+  output.command.source_frame_sequence = snapshot->prediction.sequence;
+  output.command.source_capture_timestamp_ns =
+      snapshot->prediction.source_capture_timestamp_ns.value_or(0);
   const bool SEND_SUCCEEDED = sink_->Send(output.command);
   diagnostics.sink_send_time_us =
       std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - SEND_START)

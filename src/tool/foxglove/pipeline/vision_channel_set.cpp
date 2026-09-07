@@ -1,5 +1,7 @@
 #include "tool/foxglove/pipeline/vision_channel_set.hpp"
 
+#include "tool/foxglove/simulation/combat_message_encoder.hpp"
+
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -16,6 +18,8 @@ constexpr char K_DEBUG_STATS_TOPIC[] = "/vision/debug/stats";
 constexpr char K_CALIBRATION_TOPIC[] = "/vision/camera/calibration";
 constexpr char K_FRUSTUM_TOPIC[] = "/vision/camera/frustum";
 constexpr char K_GROUND_TRUTH_TOPIC[] = "/simulation/ground_truth";
+constexpr char K_REFEREE_STATE_TOPIC[] = "/referee/self";
+constexpr char K_COMBAT_EVALUATION_TOPIC[] = "/simulation/combat/evaluation";
 constexpr char K_PROJECTILE_STATS_TOPIC[] = "/simulation/projectiles/stats";
 constexpr char K_PROJECTION_ANNOTATIONS_TOPIC[] = "/simulation/ground_truth/annotations";
 constexpr char K_PNP_ESTIMATES_TOPIC[] = "/vision/pnp/estimate";
@@ -252,6 +256,14 @@ VisionChannelSet::VisionChannelSet(const ::foxglove::Context& context) {
   projectile_stats_ =
       CreateRawChannel(K_PROJECTILE_STATS_TOPIC, "mv.simulation.ProjectileStatistics",
                        K_PROJECTILE_STATS_SCHEMA, sizeof(K_PROJECTILE_STATS_SCHEMA) - 1, context);
+  const auto COMBAT_EVALUATION_SCHEMA = simulation::CombatSchema(false);
+  combat_evaluation_ =
+      CreateRawChannel(K_COMBAT_EVALUATION_TOPIC, "mv.combat_evaluation",
+                       COMBAT_EVALUATION_SCHEMA.data(), COMBAT_EVALUATION_SCHEMA.size(), context);
+  const auto REFEREE_STATE_SCHEMA = simulation::CombatSchema(true);
+  referee_state_ =
+      CreateRawChannel(K_REFEREE_STATE_TOPIC, "mv.referee_state", REFEREE_STATE_SCHEMA.data(),
+                       REFEREE_STATE_SCHEMA.size(), context);
   projection_annotations_ = CreateSchemaChannel<::foxglove::schemas::ImageAnnotationsChannel>(
       K_PROJECTION_ANNOTATIONS_TOPIC, context, "create projection annotations channel");
   pnp_estimates_ = CreateSchemaChannel<::foxglove::schemas::SceneUpdateChannel>(
@@ -304,6 +316,8 @@ ChannelIds VisionChannelSet::Ids() const noexcept {
           .frustum = frustum_->id(),
           .ground_truth = ground_truth_->id(),
           .projectile_stats = projectile_stats_->id(),
+          .referee_state = referee_state_->id(),
+          .combat_evaluation = combat_evaluation_->id(),
           .projection_annotations = projection_annotations_->id(),
           .pnp_estimates = pnp_estimates_->id(),
           .pnp_raw_corners = pnp_raw_corners_->id(),
@@ -376,6 +390,19 @@ ChannelPublishResult VisionChannelSet::Publish(const PreparedFrame& frame,
     const auto* data = reinterpret_cast<const std::byte*>(frame.projectile_stats_json->data());
     AddError(result, VisionTopic::PROJECTILE_STATS,
              projectile_stats_->log(data, frame.projectile_stats_json->size(), frame.epoch_nanos));
+  }
+  if (demand.referee_state && frame.referee_state_json.has_value()) {
+    result.attempted = true;
+    const auto* data = reinterpret_cast<const std::byte*>(frame.referee_state_json->data());
+    AddError(result, VisionTopic::REFEREE_STATE,
+             referee_state_->log(data, frame.referee_state_json->size(), frame.epoch_nanos));
+  }
+  if (demand.combat_evaluation && frame.combat_evaluation_json.has_value()) {
+    result.attempted = true;
+    const auto* data = reinterpret_cast<const std::byte*>(frame.combat_evaluation_json->data());
+    AddError(
+        result, VisionTopic::COMBAT_EVALUATION,
+        combat_evaluation_->log(data, frame.combat_evaluation_json->size(), frame.epoch_nanos));
   }
   if (demand.projection_annotations && frame.projection_annotations.has_value()) {
     result.attempted = true;
@@ -489,6 +516,10 @@ void VisionChannelSet::Close() noexcept {
     ground_truth_->close();
   if (projectile_stats_)
     projectile_stats_->close();
+  if (combat_evaluation_)
+    combat_evaluation_->close();
+  if (referee_state_)
+    referee_state_->close();
   if (projection_annotations_)
     projection_annotations_->close();
   if (pnp_estimates_)
@@ -543,6 +574,10 @@ const char* TopicName(VisionTopic topic) noexcept {
       return "frustum";
     case VisionTopic::GROUND_TRUTH:
       return "ground_truth";
+    case VisionTopic::REFEREE_STATE:
+      return "referee_state";
+    case VisionTopic::COMBAT_EVALUATION:
+      return "combat_evaluation";
     case VisionTopic::PROJECTILE_STATS:
       return "projectile_stats";
     case VisionTopic::PROJECTION_ANNOTATIONS:

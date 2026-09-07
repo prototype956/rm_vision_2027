@@ -1,5 +1,6 @@
 add_library(mv-tool-foxglove-simulation STATIC
     simulation_message_encoder.cpp
+    combat_message_encoder.cpp
 )
 
 target_include_directories(mv-tool-foxglove-simulation
@@ -15,6 +16,7 @@ target_link_libraries(mv-tool-foxglove-simulation
         mv-geometry
     PRIVATE
         fmt::fmt
+        nlohmann_json::nlohmann_json
 )
 
 message(STATUS "    + mv-tool-foxglove-simulation (ground truth + projections)")

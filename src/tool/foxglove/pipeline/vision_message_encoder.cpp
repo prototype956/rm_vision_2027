@@ -5,6 +5,7 @@
 #include "tool/foxglove/image/image_message_encoder.hpp"
 #include "tool/foxglove/pnp/pnp_message_encoder.hpp"
 #include "tool/foxglove/prediction/prediction_message_encoder.hpp"
+#include "tool/foxglove/simulation/combat_message_encoder.hpp"
 #include "tool/foxglove/simulation/simulation_message_encoder.hpp"
 #include "tool/foxglove/spatial/spatial_message_encoder.hpp"
 
@@ -45,11 +46,11 @@ std::string EncodeDebugStats(const VisionDebugFrame& frame,
 bool TopicDemand::Any() const noexcept {
   return image || armor_annotations || armor_stats || lightbar_annotations || lightbar_stats ||
          debug_stats || calibration || frustum || ground_truth || projectile_stats ||
-         projection_annotations || pnp_estimates || pnp_raw_corners || pnp_final_corners ||
-         pnp_reprojection || pnp_error_vectors || corner_refiner_axes ||
-         corner_refiner_candidates || pnp_stats || prediction_scene || impact_scene ||
-         prediction_state || prediction_truth_overlay || prediction_current_annotations ||
-         impact_annotations || selected_armor_annotations;
+         referee_state || combat_evaluation || projection_annotations || pnp_estimates ||
+         pnp_raw_corners || pnp_final_corners || pnp_reprojection || pnp_error_vectors ||
+         corner_refiner_axes || corner_refiner_candidates || pnp_stats || prediction_scene ||
+         impact_scene || prediction_state || prediction_truth_overlay ||
+         prediction_current_annotations || impact_annotations || selected_armor_annotations;
 }
 
 TopicDemand Merge(TopicDemand left, TopicDemand right) noexcept {
@@ -64,6 +65,8 @@ TopicDemand Merge(TopicDemand left, TopicDemand right) noexcept {
       .frustum = left.frustum || right.frustum,
       .ground_truth = left.ground_truth || right.ground_truth,
       .projectile_stats = left.projectile_stats || right.projectile_stats,
+      .referee_state = left.referee_state || right.referee_state,
+      .combat_evaluation = left.combat_evaluation || right.combat_evaluation,
       .projection_annotations = left.projection_annotations || right.projection_annotations,
       .pnp_estimates = left.pnp_estimates || right.pnp_estimates,
       .pnp_raw_corners = left.pnp_raw_corners || right.pnp_raw_corners,
@@ -143,6 +146,14 @@ PreparedFrame VisionMessageEncoder::Encode(
   if (packet.camera_model && demand.frustum)
     result.frustum = spatial::EncodeFrustum(*packet.camera_model, TIMESTAMP);
   if (packet.simulation) {
+    if (packet.simulation->combat) {
+      if (demand.referee_state)
+        result.referee_state_json =
+            simulation::EncodeCombat(*packet.simulation->combat, stamp.sequence, TIMESTAMP, true);
+      if (demand.combat_evaluation)
+        result.combat_evaluation_json =
+            simulation::EncodeCombat(*packet.simulation->combat, stamp.sequence, TIMESTAMP, false);
+    }
     if (demand.ground_truth)
       result.ground_truth = simulation::EncodeGroundTruth(*packet.simulation, TIMESTAMP);
     if (demand.projectile_stats && packet.simulation->projectile_statistics) {

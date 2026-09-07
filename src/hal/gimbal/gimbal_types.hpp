@@ -54,6 +54,9 @@ struct GimbalFeedback {
  * valid=false 表示停止外部跟随；此时后端忽略其余运动字段并禁止开火。
  */
 struct GimbalCommand {
+  std::uint64_t source_round_id{0};              ///< Talos 来源图像回合。
+  std::uint64_t source_frame_sequence{0};        ///< Talos 来源图像编号。
+  std::uint64_t source_capture_timestamp_ns{0};  ///< 来源图像采集 epoch 纳秒。
   bool valid{false};              ///< 是否启用该目标；false 表示发送停止命令。
   bool fire{false};               ///< 有效目标下是否建议开火。
   std::uint64_t timestamp_ns{0};  ///< 命令生成的 Unix epoch 纳秒时间；0 由后端补当前时间。

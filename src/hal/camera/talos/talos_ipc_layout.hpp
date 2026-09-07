@@ -1,14 +1,16 @@
 #pragma once
 
+#include "simulation/combat_frame_data.hpp"
+
 #include <cstddef>
 #include <cstdint>
 
 namespace mv::hal::detail::talos_ipc {
 
-// 本文件声明的常量、字段顺序、显式填充和对齐必须与 Daedalus 的 Talos v6
+// 本文件声明的常量、字段顺序、显式填充和对齐必须与 Daedalus 的 Talos v7
 // 共享内存 ABI 完全一致。元数据位于可读写映射，图像像素位于独立的只读三缓冲池。
-constexpr std::uint32_t K_SHM_MAGIC = 0x54414C06;  ///< Talos v6 元数据文件标识。
-constexpr std::uint32_t K_SHM_VERSION = 6;         ///< 当前支持的共享内存协议版本。
+constexpr std::uint32_t K_SHM_MAGIC = 0x54414C07;  ///< Talos v7 元数据文件标识。
+constexpr std::uint32_t K_SHM_VERSION = 7;         ///< 当前支持的共享内存协议版本。
 constexpr std::uint8_t K_FLAG_NEW = 0x80;  ///< state 中“存在未消费数据”的标志位。
 constexpr std::uint8_t K_INDEX_MASK = 0x03;  ///< state 中可读槽位索引的掩码。
 constexpr std::uint8_t K_FORMAT_RGB8 = 0;    ///< 三通道 RGB 字节顺序。
@@ -63,7 +65,11 @@ struct alignas(32) GimbalCmd {
   float pitch_deg;             ///< 目标俯仰角，单位为度。
   float distance_m;            ///< 目标距离，单位为米。
   std::uint8_t fire_advice;    ///< 非零表示视觉端建议开火。
-  std::uint8_t pad[11];        ///< ABI 填充，禁止复用。
+  std::uint8_t pad[3];
+  std::uint64_t source_round_id;              ///< 来源图像回合。
+  std::uint64_t source_frame_sequence;        ///< 来源图像编号。
+  std::uint64_t source_capture_timestamp_ns;  ///< 来源图像采集时刻。
+  std::uint8_t pad2[16];                      ///< ABI 填充，禁止复用。
 };
 
 /** @brief 与单帧图像严格同步的针孔相机内参和 plumb_bob 畸变参数。 */
@@ -118,14 +124,16 @@ struct alignas(64) GroundTruthRuneMeta {
 
 /** @brief 与图像同帧的单块装甲板几何真值。 */
 struct alignas(64) GroundTruthArmorMeta {
-  std::uint64_t id;                 ///< 本次仿真运行内的稳定装甲标识。
-  std::uint8_t team;                ///< 队伍编码：0 为红方，1 为蓝方。
-  std::uint8_t label;               ///< Talos 装甲类别编码。
-  std::uint8_t armor_type;          ///< 尺寸编码：0 为小装甲，1 为大装甲。
-  std::uint8_t pad1;                ///< ABI 填充，禁止复用。
-  float width_m;                    ///< 装甲物理宽度，单位为米。
-  float height_m;                   ///< 装甲物理高度，单位为米。
-  std::uint8_t pad2[12];            ///< ABI 填充，禁止复用。
+  std::uint64_t id;         ///< 本次仿真运行内的稳定装甲标识。
+  std::uint8_t team;        ///< 队伍编码：0 为红方，1 为蓝方。
+  std::uint8_t label;       ///< Talos 装甲类别编码。
+  std::uint8_t armor_type;  ///< 尺寸编码：0 为小装甲，1 为大装甲。
+  std::uint8_t pad1;        ///< ABI 填充，禁止复用。
+  float width_m;            ///< 装甲物理宽度，单位为米。
+  float height_m;           ///< 装甲物理高度，单位为米。
+  std::uint8_t pad2[4];
+  std::uint64_t owner_robot_id;  ///< 所属战斗机器人稳定 ID；非机器人为 0。            ///< ABI
+                                 ///< 填充，禁止复用。
   RigidTransformF32 world_t_armor;  ///< armor 到 world 的变换。
   float corners_world[4][3];        ///< world 系角点，顺序为 TL、TR、BR、BL。
   std::uint8_t pad3[16];            ///< ABI 填充，禁止复用。
@@ -170,6 +178,7 @@ struct alignas(64) CapturedFrameMeta {
   ProjectileStatisticsMeta projectile_statistics;  ///< 同帧弹丸累计统计。
   ChassisObservationMeta chassis_observation;      ///< 同帧底盘局部运动观测。
   GroundTruthBatchMeta ground_truth;               ///< 同帧仿真真值。
+  simulation::CombatFrameMeta combat;              ///< 同帧真值及最近裁判采样。
 };
 
 /** @brief 发布端写、相机端消费的帧元数据三缓冲。 */
@@ -210,7 +219,7 @@ struct alignas(64) RuntimeStateMeta {
   std::uint8_t pad[4];              ///< ABI 填充，禁止复用。
 };
 
-/** @brief Talos v6 元数据文件的完整顶层布局。 */
+/** @brief Talos v7 元数据文件的完整顶层布局。 */
 struct alignas(64) ShmMetaRegion {
   ShmHeader header;                ///< 协议头和发布端心跳。
   FrameTripleBuffer frame;         ///< Talos 发布给视觉端的帧快照。
@@ -218,26 +227,29 @@ struct alignas(64) ShmMetaRegion {
   RuntimeStateMeta runtime_state;  ///< Talos 云台执行器运行状态。
 };
 
+static_assert(offsetof(CapturedFrameMeta, combat) == 6144);
+
 // 编译期固定 ABI 尺寸和关键偏移，防止字段或对齐变化静默破坏跨进程协议。
 static_assert(sizeof(ShmHeader) == 64);
 static_assert(sizeof(QuaternionF32) == 16);
 static_assert(sizeof(RigidTransformF32) == 32);
 static_assert(sizeof(ProjectileStatisticsMeta) == 32);
-static_assert(sizeof(GimbalCmd) == 32);
+static_assert(sizeof(GimbalCmd) == 64);
 static_assert(sizeof(CameraCalibrationMeta) == 128);
 static_assert(sizeof(ChassisObservationMeta) == 128);
 static_assert(sizeof(GroundTruthTargetMeta) == 64);
 static_assert(sizeof(GroundTruthArmorMeta) == 128);
+static_assert(offsetof(GroundTruthArmorMeta, owner_robot_id) == 24);
 static_assert(sizeof(GroundTruthBatchMeta) == 5696);
-static_assert(sizeof(CapturedFrameMeta) == 6144);
+static_assert(sizeof(CapturedFrameMeta) == 24768);
 static_assert(offsetof(CapturedFrameMeta, projectile_statistics) == 288);
 static_assert(offsetof(CapturedFrameMeta, chassis_observation) == 320);
 static_assert(offsetof(CapturedFrameMeta, ground_truth) == 448);
-static_assert(sizeof(FrameTripleBuffer) == 18496);
-static_assert(sizeof(GimbalTripleBuffer) == 192);
+static_assert(sizeof(FrameTripleBuffer) == 74368);
+static_assert(sizeof(GimbalTripleBuffer) == 256);
 static_assert(offsetof(ShmMetaRegion, frame) == 64);
-static_assert(offsetof(ShmMetaRegion, gimbal_cmd) == 18560);
-static_assert(offsetof(ShmMetaRegion, runtime_state) == 18752);
-static_assert(sizeof(ShmMetaRegion) == 18816);
+static_assert(offsetof(ShmMetaRegion, gimbal_cmd) == 74432);
+static_assert(offsetof(ShmMetaRegion, runtime_state) == 74688);
+static_assert(sizeof(ShmMetaRegion) == 74752);
 
 }  // namespace mv::hal::detail::talos_ipc

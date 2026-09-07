@@ -13,6 +13,7 @@ namespace mv::frame {
 
 /** @brief 一帧图像的采集时间、顺序和数据源健康标识。 */
 struct FrameStamp {
+  std::uint64_t simulation_round_id{0};  ///< Talos 回合；实机为 0，仅用于传输隔离。
   std::chrono::steady_clock::time_point receive_steady_time{};  ///< HAL 收帧单调时钟。
   std::optional<std::chrono::steady_clock::time_point>
       capture_steady_time;  ///< 数据源采集时刻映射到本机单调时钟。

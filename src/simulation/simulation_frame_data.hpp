@@ -2,6 +2,7 @@
 
 #include "geometry/armor_type.hpp"
 #include "geometry/rigid_transform.hpp"
+#include "simulation/combat_frame_data.hpp"
 
 #include <array>
 #include <cstdint>
@@ -24,6 +25,7 @@ struct GroundTruthTarget {
 
 /** @brief 与图像同帧的单块装甲板三维真值。 */
 struct GroundTruthArmor {
+  std::uint64_t owner_robot_id{0};  ///< 战斗机器人稳定 ID；非机器人为 0。
   std::uint64_t id{0};
   std::uint8_t team{0};
   std::uint8_t label{0};
@@ -44,6 +46,7 @@ struct ProjectileStatistics {
 
 /** @brief 与采集图像原子同步的仿真真值和累计统计。 */
 struct SimulationFrameData {
+  std::optional<CombatFrameMeta> combat;  ///< 同帧评估与独立裁判采样，仅供诊断。
   std::optional<ProjectileStatistics> projectile_statistics;  ///< 仿真弹丸累计统计。
   std::vector<GroundTruthTarget> targets;                     ///< 当前机器人真值。
   std::vector<GroundTruthArmor> armors;                       ///< 当前装甲板真值。

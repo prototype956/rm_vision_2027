@@ -120,6 +120,14 @@ bool TalosGimbalCommandSink::Open(const YAML::Node& camera_config) noexcept {
       impl_->CloseMapping();
       return false;
     }
+    ShmHeader header_probe{};
+    if (::pread(impl_->fd, &header_probe, sizeof(header_probe), 0) != sizeof(header_probe) ||
+        header_probe.magic != K_SHM_MAGIC || header_probe.version != K_SHM_VERSION) {
+      MV_LOG_ERROR("HAL.Gimbal.Talos", "Talos protocol mismatch: expected v7, got v{}",
+                   header_probe.version);
+      impl_->CloseMapping();
+      return false;
+    }
     struct stat status {};
     if (fstat(impl_->fd, &status) != 0 ||
         status.st_size != static_cast<off_t>(sizeof(ShmMetaRegion))) {
@@ -179,6 +187,9 @@ bool TalosGimbalCommandSink::Send(const GimbalCommand& command) noexcept {
   slot.pitch_deg = VALID ? static_cast<float>(-command.pitch * RAD_TO_DEG) : 0.0F;
   slot.distance_m = VALID ? static_cast<float>(command.target_distance_m) : -1.0F;
   slot.fire_advice = VALID && command.fire ? 1 : 0;
+  slot.source_round_id = command.source_round_id;
+  slot.source_frame_sequence = command.source_frame_sequence;
+  slot.source_capture_timestamp_ns = command.source_capture_timestamp_ns;
   // 先完整写入槽位，再用原子交换发布“新数据 + 槽位索引”；交换返回的旧状态
   // 携带消费者已释放的槽位，作为下一次写入位置。
   const std::uint8_t READY = static_cast<std::uint8_t>(buffer.write_index | K_FLAG_NEW);

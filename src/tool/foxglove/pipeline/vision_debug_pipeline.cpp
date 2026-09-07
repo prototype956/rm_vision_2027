@@ -28,6 +28,8 @@ VisionDebugPipeline::VisionDebugPipeline(const Config& config, runtime::Foxglove
       session_.RegisterLiveChannel(live_channel_ids_.frustum);
       session_.RegisterLiveChannel(live_channel_ids_.ground_truth);
       session_.RegisterLiveChannel(live_channel_ids_.projectile_stats);
+      session_.RegisterLiveChannel(live_channel_ids_.referee_state);
+      session_.RegisterLiveChannel(live_channel_ids_.combat_evaluation);
       session_.RegisterLiveChannel(live_channel_ids_.projection_annotations);
       session_.RegisterLiveChannel(live_channel_ids_.pnp_estimates);
       session_.RegisterLiveChannel(live_channel_ids_.pnp_raw_corners);
@@ -95,6 +97,9 @@ TopicDemand VisionDebugPipeline::LiveDemand() const noexcept {
       .frustum = session_.Subscription(live_channel_ids_.frustum).subscribers > 0,
       .ground_truth = session_.Subscription(live_channel_ids_.ground_truth).subscribers > 0,
       .projectile_stats = session_.Subscription(live_channel_ids_.projectile_stats).subscribers > 0,
+      .referee_state = session_.Subscription(live_channel_ids_.referee_state).subscribers > 0,
+      .combat_evaluation =
+          session_.Subscription(live_channel_ids_.combat_evaluation).subscribers > 0,
       .projection_annotations =
           session_.Subscription(live_channel_ids_.projection_annotations).subscribers > 0,
       .pnp_estimates = session_.Subscription(live_channel_ids_.pnp_estimates).subscribers > 0,
@@ -207,6 +212,8 @@ void VisionDebugPipeline::ProcessFrame(const VisionDebugFrame& frame) {
                                                             .frustum = true,
                                                             .ground_truth = true,
                                                             .projectile_stats = true,
+                                                            .referee_state = true,
+                                                            .combat_evaluation = true,
                                                             .projection_annotations = true,
                                                             .pnp_estimates = true,
                                                             .pnp_raw_corners = true,

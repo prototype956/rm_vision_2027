@@ -1,4 +1,5 @@
 add_subdirectory(camera)
+add_subdirectory(talos)
 
 if(USE_OPENVINO)
     add_subdirectory(armor_detector)
