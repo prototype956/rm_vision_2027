@@ -27,7 +27,8 @@ FireControlConfig ParseFireControlConfig(const YAML::Node& root) {
       BALLISTICS, {"bullet_speed_mps", "gravity_mps2", "max_iterations", "time_tolerance_s"},
       "fire control config.ballistics");
   ConfigLoader::RejectUnknownKeys(
-      TIMING, {"command_delay_s", "max_prediction_age_s", "max_temp_lost_control_s"},
+      TIMING,
+      {"command_delay_s", "max_prediction_age_s", "max_temp_lost_control_s", "max_referee_age_s"},
       "fire control config.timing");
   ConfigLoader::RejectUnknownKeys(
       SELECTION,
@@ -55,6 +56,8 @@ FireControlConfig ParseFireControlConfig(const YAML::Node& root) {
       ConfigLoader::Require<double>(TIMING, "max_prediction_age_s", CONTEXT);
   config.max_temp_lost_control_s =
       ConfigLoader::Require<double>(TIMING, "max_temp_lost_control_s", CONTEXT);
+  if (TIMING["max_referee_age_s"])
+    config.max_referee_age_s = ConfigLoader::Require<double>(TIMING, "max_referee_age_s", CONTEXT);
   config.armor_enter_angle_rad =
       ConfigLoader::Require<double>(SELECTION, "enter_angle_deg", CONTEXT) * DEG;
   config.armor_leave_angle_rad =
@@ -76,6 +79,7 @@ FireControlConfig ParseFireControlConfig(const YAML::Node& root) {
   config.fire_pulse_width_s = ConfigLoader::Require<double>(PULSE, "width_s", CONTEXT);
 
   const bool VALID =
+      std::isfinite(config.max_referee_age_s) && config.max_referee_age_s > 0.0 &&
       config.bullet_speed_mps > 0.0 && config.gravity_mps2 > 0.0 &&
       config.ballistic_max_iterations > 0 && config.ballistic_time_tolerance_s > 0.0 &&
       config.command_delay_s >= 0.0 && config.max_prediction_age_s > 0.0 &&

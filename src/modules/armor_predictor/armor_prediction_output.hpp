@@ -32,7 +32,8 @@ struct PredictionHorizon {
 
 /** @brief 下游控制消费的正式目标状态和预测时域。 */
 struct ArmorPredictionOutput {
-  std::uint64_t source_round_id{0};  ///< 原样转发来源图像回合，不参与目标估计。
+  std::uint64_t source_round_id{0};   ///< 原样转发来源图像回合，不参与目标估计。
+  std::uint64_t track_generation{0};  ///< Increments on successful filter initialization.
   std::uint64_t sequence{0};
   std::optional<std::uint64_t> source_capture_timestamp_ns;
   std::chrono::steady_clock::time_point source_receive_steady_time{};

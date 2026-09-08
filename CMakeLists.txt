@@ -31,6 +31,18 @@ if(BUILD_MAIN AND NOT USE_OPENVINO)
         "Use -DBUILD_MAIN=OFF -DUSE_OPENVINO=OFF for camera-only builds.")
 endif()
 
+option(BUILD_CONTROL_CORE_ONLY "Build portable synchronous control core and acceptance programs only" OFF)
+if(BUILD_CONTROL_CORE_ONLY)
+    if(BUILD_MAIN OR USE_OPENVINO OR USE_MINDVISION_SDK)
+        message(FATAL_ERROR "Control-only mode requires BUILD_MAIN=OFF, USE_OPENVINO=OFF, USE_MINDVISION_SDK=OFF")
+    endif()
+    set(CMAKE_CXX_STANDARD 20)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+    include(cmake/ControlCore.cmake)
+    return()
+endif()
+
 # ============================================================================
 # 开发工具配置
 # ============================================================================

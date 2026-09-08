@@ -30,6 +30,12 @@ enum class FireRejectReason {
   AIM_ERROR_TOO_LARGE,
   AIM_NOT_STABLE,
   COOLDOWN,
+  INVALID_ACTION,
+  REFEREE_INVALID,
+  REFEREE_STALE,
+  REFEREE_BLOCKED,
+  PULSE_BUSY,
+
 };
 
 [[nodiscard]] std::string_view FireRejectReasonName(FireRejectReason reason) noexcept;
@@ -87,6 +93,8 @@ struct FireControlOutput {
   bool command_sink_healthy{false};
   bool auto_fire_enabled{false};
   std::uint64_t talos_heartbeat_ns{0};
+  bool shot_requested{false};  ///< Local intent, never launch truth.
+  bool shot_accepted{false};   ///< New pulse admitted this cycle.
   bool fire_eligible{false};
   int stable_cycles{0};
   FireRejectReason reject_reason{FireRejectReason::TRACK_NOT_CONFIRMED};

@@ -46,7 +46,8 @@ struct ProjectileStatistics {
 
 /** @brief 与采集图像原子同步的仿真真值和累计统计。 */
 struct SimulationFrameData {
-  std::optional<CombatFrameMeta> combat;  ///< 同帧评估与独立裁判采样，仅供诊断。
+  std::optional<CombatFrameMeta>
+      combat;  ///< 同帧评估与独立裁判采样；控制只允许读取显式自身白名单。
   std::optional<ProjectileStatistics> projectile_statistics;  ///< 仿真弹丸累计统计。
   std::vector<GroundTruthTarget> targets;                     ///< 当前机器人真值。
   std::vector<GroundTruthArmor> armors;                       ///< 当前装甲板真值。

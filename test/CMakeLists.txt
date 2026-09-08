@@ -9,3 +9,7 @@ if(BUILD_MAIN AND USE_OPENVINO)
     add_subdirectory(runtime)
     add_subdirectory(web)
 endif()
+
+if(USE_OPENVINO)
+    add_subdirectory(control)
+endif()

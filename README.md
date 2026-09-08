@@ -2,6 +2,9 @@
 
 北京林业大学 RoboMaster 视觉系统。
 
+火控已支持规则策略与同步控制会话，独立核心构建、外部决策接口和裁判失效行为见
+[同步控制核心说明](docs/modules/CONTROL_CORE.md)。默认主程序仍使用规则策略。
+
 项目当前处于架构精简和算法模块重设计阶段。现阶段包含相机 HAL、配置、日志、
 MindVision 实机验收程序，以及基于 OpenVINO 的深圳大学 RobotDetectionModel
 0526 装甲板检测模块和 Foxglove 调试输出。

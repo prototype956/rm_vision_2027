@@ -4,6 +4,7 @@
 #include "hal/camera/i_camera.hpp"
 #include "modules/armor_pnp/armor_pnp_types.hpp"
 #include "runtime/control_runtime.hpp"
+#include "runtime/referee_observation_adapter.hpp"
 #include "runtime/runtime_diagnostics_sink.hpp"
 #include "runtime/vision_pipeline.hpp"
 #include "runtime/vision_tuning.hpp"
@@ -173,7 +174,13 @@ RuntimeRunResult VisionRuntime::Run(const std::function<bool()>& stop_requested)
       if (control_ && packet.camera_model && packet.kinematics) {
         try {
           control_->Update(result.output.prediction, *packet.kinematics, packet.chassis_motion,
-                           packet.gimbal_actuator);
+                           packet.gimbal_actuator,
+                           AdaptRefereeObservation(packet.simulation && packet.simulation->combat
+                                                       ? &*packet.simulation->combat
+                                                       : nullptr,
+                                                   result.output.prediction.source_round_id,
+                                                   result.output.prediction.source_steady_time,
+                                                   std::chrono::steady_clock::now()));
         } catch (const std::exception& error) {
           static_cast<void>(
               supervisor_.Report(RuntimeFaultCode::CONTROL_UPDATE_EXCEPTION, error.what()));

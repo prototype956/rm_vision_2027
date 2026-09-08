@@ -125,7 +125,7 @@ constexpr char K_TRACKING_SCHEMA[] = R"json({
     "pitch_velocity_utilization":{"type":["number","null"]},
     "yaw_acceleration_utilization":{"type":["number","null"]},
     "pitch_acceleration_utilization":{"type":["number","null"]},
-    "control_period_s":{"type":"number"},"deadline_lateness_us":{"type":"number"},
+    "control_compute_time_us":{"type":"number"},"referee_age_s":{"type":["number","null"]},"control_period_s":{"type":"number"},"deadline_lateness_us":{"type":"number"},
     "prediction_age_s":{"type":"number"},"measurement_age_s":{"type":["number","null"]},
     "runtime_actuator_age_s":{"type":["number","null"]},
     "frame_actuator_age_s":{"type":["number","null"]},
@@ -424,14 +424,16 @@ std::string EncodeState(const ControlDebugView& value, std::uint64_t dropped_sam
       "\"reference_horizon_delta_valid\":{},"
       "\"max_reference_horizon_delta_yaw\":{},"
       "\"max_reference_horizon_delta_pitch\":{}}},"
-      "\"fire\":{{\"auto_fire_enabled\":{},\"eligible\":{},\"pulse\":{},\"stable_cycles\":{},"
+      "\"fire\":{{\"shot_requested\":{},\"shot_accepted\":{},\"auto_fire_enabled\":{},\"eligible\":"
+      "{},\"pulse\":{},\"stable_cycles\":{},"
       "\"reject_reason\":\"{}\"}},"
       "\"talos\":{{\"healthy\":{},\"heartbeat_ns\":{},\"external_control_enabled\":{}}},"
       "\"actuator\":{},\"frame_actuator\":{},"
       "\"runtime\":{{\"measurement_fresh\":{},\"measurement_age_s\":{},"
       "\"matched_prior_valid\":{},\"matched_prior_approximate\":{},"
       "\"matched_prior_age_at_capture_s\":{},\"command_publish_succeeded\":{},"
-      "\"control_period_s\":{},\"deadline_lateness_us\":{},\"sink_send_time_us\":{},"
+      "\"control_compute_time_us\":{},\"referee_age_s\":{},\"control_period_s\":{},\"deadline_"
+      "lateness_us\":{},\"sink_send_time_us\":{},"
       "\"runtime_actuator_age_s\":{},\"frame_actuator_age_s\":{},"
       "\"feedback_projection_dt_s\":{},"
       "\"pose_projection_dt_s\":{},\"chassis_motion_valid\":{},"
@@ -502,14 +504,15 @@ std::string EncodeState(const ControlDebugView& value, std::uint64_t dropped_sam
       plan.reference_horizon_delta_valid,
       OptionalNumber(plan.reference_horizon_delta_valid, plan.max_reference_horizon_delta_yaw),
       OptionalNumber(plan.reference_horizon_delta_valid, plan.max_reference_horizon_delta_pitch),
-      value.auto_fire_enabled, value.fire_eligible, command.fire, value.stable_cycles,
-      modules::FireRejectReasonName(value.reject_reason), value.command_sink_healthy,
-      value.talos_heartbeat_ns, value.external_control_enabled,
+      value.shot_requested, value.shot_accepted, value.auto_fire_enabled, value.fire_eligible,
+      command.fire, value.stable_cycles, modules::FireRejectReasonName(value.reject_reason),
+      value.command_sink_healthy, value.talos_heartbeat_ns, value.external_control_enabled,
       EncodeActuator(value.actuator_telemetry),
       value.frame_actuator_telemetry ? EncodeActuator(*value.frame_actuator_telemetry) : "null",
       value.measurement_fresh, OptionalNumber(measured.valid, value.measurement_age_s),
       matched.valid, matched.approximate, OptionalNumber(matched.valid, matched.age_at_capture_s),
-      value.command_publish_succeeded, Number(value.control_period_s),
+      value.command_publish_succeeded, Number(value.control_compute_time_us),
+      Number(value.referee_age_s), Number(value.control_period_s),
       Number(value.deadline_lateness_us), Number(value.sink_send_time_us),
       Number(value.runtime_actuator_age_s), Number(value.frame_actuator_age_s),
       Number(value.feedback_projection_dt_s), Number(value.pose_projection_dt_s),

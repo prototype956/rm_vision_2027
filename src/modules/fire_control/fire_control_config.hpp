@@ -10,6 +10,7 @@ struct FireControlConfig {
   double bullet_speed_mps{25.0};         ///< 弹丸初速度，单位为米每秒。
   double gravity_mps2{9.81};             ///< 弹道模型使用的重力加速度绝对值。
   double command_delay_s{0.015};         ///< 从生成命令到云台开始执行的估计延迟。
+  double max_referee_age_s{0.30};        ///< Maximum sampled referee age, seconds.
   double max_prediction_age_s{0.1};      ///< 接受预测和反馈的最大数据年龄。
   double max_temp_lost_control_s{0.15};  ///< TEMP_LOST 状态仍允许控制外推的最长时间。
   int ballistic_max_iterations{10};      ///< 飞行时间—目标位置定点迭代次数上限。

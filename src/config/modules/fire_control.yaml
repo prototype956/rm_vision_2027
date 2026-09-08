@@ -6,6 +6,7 @@ ballistics:
   max_iterations: 10
   time_tolerance_s: 0.0001
 timing:
+  max_referee_age_s: 0.30 # Sample age limit; engineering default.
   command_delay_s: 0.015
   max_prediction_age_s: 0.1
   max_temp_lost_control_s: 0.15

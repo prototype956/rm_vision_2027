@@ -27,3 +27,5 @@ target_link_libraries(mv-core PUBLIC Threads::Threads)
 
 # 供诊断使用：打印此库包含的源文件
 message(STATUS "    + mv-core (ConfigLoader, Logger)")
+
+set_property(TARGET mv-core PROPERTY POSITION_INDEPENDENT_CODE ON)

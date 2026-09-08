@@ -617,6 +617,8 @@ struct ArmorPredictor::Impl {
   std::chrono::steady_clock::time_point last_receive_time{};
   std::string last_reset_reason;
   std::uint64_t reset_count{0};
+  std::uint64_t track_generation{0};
+  std::optional<std::uint64_t> source_round;
   ManeuverPhase maneuver_phase{ManeuverPhase::IDLE};
   int maneuver_evidence_frames{0};
   double maneuver_evidence_cost{0.0};
@@ -626,20 +628,6 @@ struct ArmorPredictor::Impl {
   double frame_yaw_process_variance_used{0.0};
   std::optional<double> frame_trial_yaw_velocity_update_rad_s;
 };
-
-const char* TrackerStateName(TrackerState state) noexcept {
-  switch (state) {
-    case TrackerState::LOST:
-      return "lost";
-    case TrackerState::DETECTING:
-      return "detecting";
-    case TrackerState::TRACKING:
-      return "tracking";
-    case TrackerState::TEMP_LOST:
-      return "temp_lost";
-  }
-  return "unknown";
-}
 
 void ArmorPredictor::Impl::Reset(std::string reason) {
   tracker_state = TrackerState::LOST;
@@ -691,6 +679,7 @@ void ArmorPredictor::Impl::Initialize(const DetectionObservation& observation,
     Reset("initial_state_invalid");
     return;
   }
+  ++track_generation;
   label = observation.label;
   type = observation.type;
   tracker_state = TrackerState::DETECTING;
@@ -735,6 +724,7 @@ ArmorPredictionResult ArmorPredictor::Impl::Snapshot(const frame::FrameStamp& st
   auto& diagnostics = result.diagnostics;
   output.sequence = stamp.sequence;
   output.source_round_id = stamp.simulation_round_id;
+  output.track_generation = track_generation;
   output.source_capture_timestamp_ns = stamp.capture_timestamp_ns;
   output.source_receive_steady_time = stamp.receive_steady_time;
   if (stamp.capture_steady_time) {
@@ -806,6 +796,11 @@ ArmorPredictionResult ArmorPredictor::Impl::ProcessFrame(
     std::span<const ArmorDetection> detections, std::span<const CornerRefinementOutput> refinements,
     const ArmorPnpOutput& pnp_output, const LightbarDetectorOutput& lightbar_output) {
   const auto START = std::chrono::steady_clock::now();
+  if (source_round && *source_round != stamp.simulation_round_id) {
+    Reset("round_changed");
+    has_timestamp = false;
+  }
+  source_round = stamp.simulation_round_id;
   frame_yaw_process_variance_used = 0.0;
   frame_trial_yaw_velocity_update_rad_s.reset();
   double dt = 0.0;
@@ -1227,31 +1222,6 @@ ArmorPredictionResult ArmorPredictor::ProcessFrame(
     std::span<const ArmorDetection> detections, std::span<const CornerRefinementOutput> refinements,
     const ArmorPnpOutput& pnp_output, const LightbarDetectorOutput& lightbar_output) {
   return impl_->ProcessFrame(stamp, spatial, detections, refinements, pnp_output, lightbar_output);
-}
-
-PredictionHorizon ExtrapolatePrediction(const ArmorPredictionOutput& prediction, double seconds) {
-  if (!std::isfinite(seconds) || seconds < 0.0)
-    throw std::invalid_argument("prediction horizon must be finite and nonnegative");
-  detail::NominalState state;
-  state.position_world = prediction.center_world;
-  state.velocity_world = prediction.velocity_world;
-  state.world_q_car = prediction.orientation_world;
-  state.yaw_velocity_rad_s = prediction.yaw_velocity_rad_s;
-  state.log_radius_1 = std::log(prediction.radii_m[0]);
-  state.log_radius_2 = std::log(prediction.radii_m[1]);
-  state.height_offset_m = prediction.height_offset_m;
-  const auto FUTURE = detail::PredictState(state, seconds);
-  PredictionHorizon horizon;
-  horizon.seconds = seconds;
-  horizon.center_world = FUTURE.position_world;
-  horizon.orientation_world = FUTURE.world_q_car;
-  horizon.yaw = detail::HeadingYaw(FUTURE);
-  for (int slot = 0; slot < 4; ++slot) {
-    horizon.armors[slot] = {.slot = slot,
-                            .world_t_armor = detail::WorldArmorPose(
-                                FUTURE, {.slot = slot, .tilt_rad = prediction.armor_tilt_rad})};
-  }
-  return horizon;
 }
 
 }  // namespace mv::modules

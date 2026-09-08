@@ -15,3 +15,5 @@ target_link_libraries(mv-modules-gimbal-trajectory-planner
 )
 
 message(STATUS "    + mv-modules-gimbal-trajectory-planner (TinyMPC state feedback)")
+
+set_property(TARGET mv-modules-gimbal-trajectory-planner PROPERTY POSITION_INDEPENDENT_CODE ON)

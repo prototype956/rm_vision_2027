@@ -29,10 +29,7 @@ ControlRuntimeImpl::ControlRuntimeImpl(modules::FireControlConfig fire_config,
                                        RuntimeSupervisor& supervisor)
     : PERIOD(std::chrono::duration_cast<std::chrono::steady_clock::duration>(
           std::chrono::duration<double>(planner_config.dt_s))),
-      PLANNER_DT_S(planner_config.dt_s),
-      fire_control_(fire_config, planner_config),
-      feedback_estimator_(planner_config.max_yaw_velocity_rad_s,
-                          planner_config.max_pitch_velocity_rad_s),
+      session_(fire_config, planner_config),
       sink_(std::move(sink)),
       diagnostics_(diagnostics),
       supervisor_(supervisor) {
@@ -61,9 +58,11 @@ void ControlRuntimeImpl::Start() {
 void ControlRuntimeImpl::Update(
     const modules::ArmorPredictionOutput& prediction, const frame::FrameKinematics& kinematics,
     const std::optional<frame::ChassisMotionObservation>& chassis_motion,
-    const std::optional<hal::GimbalActuatorTelemetry>& gimbal_actuator) {
+    const std::optional<hal::GimbalActuatorTelemetry>& gimbal_actuator,
+    const modules::RefereeObservation& referee) {
   auto snapshot = std::make_shared<modules::ControlInputSnapshot>();
   snapshot->prediction = prediction;
+  snapshot->referee = referee;
   // 仿真真值不进入控制快照，只保留同帧云台与枪口外参。
   snapshot->world_t_gimbal = kinematics.world_t_gimbal;
   snapshot->gimbal_t_camera_optical = kinematics.gimbal_t_camera_optical;
@@ -82,74 +81,13 @@ void ControlRuntimeImpl::Stop() noexcept {
   SendStop();
 }
 
-modules::MatchedGimbalCommand ControlRuntimeImpl::MatchCommand(
-    const std::optional<std::uint64_t>& capture_timestamp_ns,
-    const std::optional<hal::GimbalActuatorTelemetry>& actuator) const noexcept {
-  modules::MatchedGimbalCommand match;
-  if (!capture_timestamp_ns)
-    return match;
-  if (actuator && actuator->valid && actuator->consumed_command_timestamp_ns != 0) {
-    for (auto iterator = sent_commands_.rbegin(); iterator != sent_commands_.rend(); ++iterator) {
-      if (iterator->timestamp_ns == actuator->consumed_command_timestamp_ns) {
-        match.valid = iterator->valid;
-        match.approximate = false;
-        match.command = *iterator;
-        match.age_at_capture_s =
-            *capture_timestamp_ns >= iterator->timestamp_ns
-                ? static_cast<double>(*capture_timestamp_ns - iterator->timestamp_ns) * 1.0e-9
-                : 0.0;
-        return match;
-      }
-    }
-  }
-  for (auto iterator = sent_commands_.rbegin(); iterator != sent_commands_.rend(); ++iterator) {
-    if (iterator->timestamp_ns <= *capture_timestamp_ns) {
-      match.valid = iterator->valid;
-      match.approximate = true;
-      match.command = *iterator;
-      match.age_at_capture_s =
-          static_cast<double>(*capture_timestamp_ns - iterator->timestamp_ns) * 1.0e-9;
-      return match;
-    }
-  }
-  return match;
-}
-
-void ControlRuntimeImpl::RememberCommand(const hal::GimbalCommand& command) {
-  sent_commands_.push_back(command);
-  while (!sent_commands_.empty() &&
-         command.timestamp_ns > sent_commands_.front().timestamp_ns + 1'000'000'000ULL) {
-    sent_commands_.pop_front();
-  }
-}
-
-void ControlRuntimeImpl::ClearPublishedProjection(std::string_view reason) noexcept {
-  feedback_estimator_.ClearCommandProjection();
-  fire_control_.ResetFireReadiness();
-  last_successful_trajectory_.clear();
-  control_projection_active_ = false;
-  output_projection_cleared_pending_ = true;
-  if (!output_projection_clear_reason_.empty())
-    output_projection_clear_reason_.push_back(',');
-  output_projection_clear_reason_.append(reason);
-}
-
-void ControlRuntimeImpl::AttachProjectionDiagnostics(modules::FireControlResult& result) {
-  result.diagnostics.output_projection_cleared = output_projection_cleared_pending_;
-  result.diagnostics.output_projection_clear_reason = std::move(output_projection_clear_reason_);
-  output_projection_cleared_pending_ = false;
-  output_projection_clear_reason_.clear();
-}
-
 bool ControlRuntimeImpl::SendStop() noexcept {
   if (!sink_)
     return false;
   hal::GimbalCommand stop;
   stop.timestamp_ns = SystemNowNs();
   const bool SENT = sink_->Send(stop);
-  feedback_estimator_.ClearCommandProjection();
-  last_successful_trajectory_.clear();
-  control_projection_active_ = false;
+  session_.ClearPublishedProjection("runtime_stop");
   return SENT;
 }
 
@@ -169,8 +107,9 @@ void ControlRuntime::Start() {
 void ControlRuntime::Update(const modules::ArmorPredictionOutput& prediction,
                             const frame::FrameKinematics& kinematics,
                             const std::optional<frame::ChassisMotionObservation>& chassis_motion,
-                            const std::optional<hal::GimbalActuatorTelemetry>& gimbal_actuator) {
-  impl_->Update(prediction, kinematics, chassis_motion, gimbal_actuator);
+                            const std::optional<hal::GimbalActuatorTelemetry>& gimbal_actuator,
+                            const modules::RefereeObservation& referee) {
+  impl_->Update(prediction, kinematics, chassis_motion, gimbal_actuator, referee);
 }
 
 void ControlRuntime::Stop() noexcept {

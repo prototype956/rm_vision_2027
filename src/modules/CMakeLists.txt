@@ -1,3 +1,4 @@
+add_subdirectory(prediction_model)
 add_subdirectory(armor_detector)
 add_subdirectory(armor_corner_refiner)
 add_subdirectory(armor_light_detector)

@@ -3,7 +3,7 @@
 #include "frame/frame_types.hpp"
 #include "hal/gimbal/gimbal_types.hpp"
 #include "modules/armor_predictor/armor_prediction_output.hpp"
-#include "modules/fire_control/fire_control_config.hpp"
+#include "modules/fire_control/control_types.hpp"
 #include "modules/gimbal_trajectory_planner/gimbal_trajectory_planner_config.hpp"
 
 #include <memory>
@@ -38,7 +38,8 @@ class ControlRuntime final {
   void Update(const modules::ArmorPredictionOutput& prediction,
               const frame::FrameKinematics& kinematics,
               const std::optional<frame::ChassisMotionObservation>& chassis_motion,
-              const std::optional<hal::GimbalActuatorTelemetry>& gimbal_actuator);
+              const std::optional<hal::GimbalActuatorTelemetry>& gimbal_actuator,
+              const modules::RefereeObservation& referee = {});
   /** @brief 停止并等待控制线程，随后向命令后端发送停止命令。 */
   void Stop() noexcept;
 
