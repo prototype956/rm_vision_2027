@@ -28,6 +28,7 @@
 
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <memory>
 #include <string>
@@ -158,7 +159,11 @@ CameraSelection LoadCameraSelection(const std::filesystem::path& config_root) {
 
 int Run() {
   try {
-    const std::filesystem::path CONFIG_ROOT = CONFIG_FILE_PATH;
+    // Explicit experiment copies can disable recording and pin module configs without editing
+    // the operator's defaults. Model paths remain anchored to the compiled project root.
+    const char* config_override = std::getenv("RM_VISION_CONFIG_ROOT");
+    const std::filesystem::path CONFIG_ROOT =
+        config_override && *config_override ? config_override : CONFIG_FILE_PATH;
     const std::filesystem::path PROJECT_ROOT = PROJECT_ROOT_PATH;
     Logger::Instance().InitFromFile(CONFIG_ROOT / "core/logger.yaml");
     std::signal(SIGINT, HandleStopSignal);

@@ -5,6 +5,7 @@ namespace mv::app {
 /**
  * @brief 启动视觉检测、配置选择的相机、可选调试输出和 Talos 控制运行时。
  *
+ * 可通过 RM_VISION_CONFIG_ROOT 指定独立配置目录；未设置时沿用编译时默认目录。
  * 函数负责初始化配置、打开相机并运行视觉处理循环。OpenCV 窗口与 Foxglove
  * 独立开关；无窗口时可通过 SIGINT/SIGTERM 正常退出并刷新 MCAP。
  *
