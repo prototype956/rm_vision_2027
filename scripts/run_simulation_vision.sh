@@ -6,7 +6,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 VISION_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 WORKSPACE_ROOT="$(dirname -- "${VISION_ROOT}")"
 
-SIMULATOR_ROOT="${SIMULATOR_ROOT:-${WORKSPACE_ROOT}/bevy_robomaster_simulator}"
+# 根据脚本位置定位同级模拟器，不依赖工作区绝对路径或调用时的当前目录。
+SIMULATOR_ROOT="${SIMULATOR_ROOT:-${WORKSPACE_ROOT}/rm_simulator_2027}"
 SIMULATOR_BIN="${SIMULATOR_BIN:-${SIMULATOR_ROOT}/target/release/daedalus}"
 VISION_BIN="${VISION_BIN:-${VISION_ROOT}/build-openvino/bin/mv-vision-main}"
 OPENVINO_SETUP="${OPENVINO_SETUP:-/opt/intel/openvino_2024.0.0/setupvars.sh}"

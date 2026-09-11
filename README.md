@@ -82,6 +82,9 @@ cmake --build build-camera --parallel 4
 ./scripts/run_simulation_vision.sh
 ```
 
+脚本按自身位置定位同级的 `../rm_simulator_2027`，可从任意目录调用。
+整体移动工作区无需修改项目路径；自定义模拟器位置可通过 `SIMULATOR_ROOT` 指定。
+
 脚本会将仿真绑定到 E 核 `8-15`、视觉绑定到 P 核 `0-7`，并在任一程序退出时停止
 另一个程序。也可以按下面的方式分别手动启动：
 
