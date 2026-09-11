@@ -88,7 +88,8 @@ int RunArmorDetectorTest() {
     std::unique_ptr<modules::YoloArmorDetector> detector =
         std::make_unique<modules::YoloArmorDetector>();
     try {
-      const auto DETECTOR_YAML = ConfigLoader::LoadFile(DETECTOR_PATH);
+      const auto DETECTOR_YAML =
+          ConfigLoader::LoadFile(DETECTOR_PATH, modules::ARMOR_DETECTOR_CONFIG_SCHEMA_VERSION);
       detector->Init(modules::ParseArmorDetectorConfig(DETECTOR_YAML, PROJECT_ROOT));
     } catch (const std::exception& error) {
       MV_LOG_ERROR("ArmorDetectorTest", "detector initialization failed: {}", error.what());

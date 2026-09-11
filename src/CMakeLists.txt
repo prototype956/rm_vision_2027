@@ -10,7 +10,7 @@ add_subdirectory(simulation)
 add_subdirectory(frame)
 add_subdirectory(tool)
 
-if(USE_OPENVINO)
+if(USE_ARMOR_DETECTOR)
     add_subdirectory(modules)
 endif()
 

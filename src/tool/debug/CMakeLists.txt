@@ -17,7 +17,7 @@ target_link_libraries(mv-tool-debug
 
 message(STATUS "    + mv-tool-debug (reusable OpenCV debug window)")
 
-if(USE_OPENVINO)
+if(USE_ARMOR_DETECTOR)
     add_library(mv-tool-armor-overlay STATIC
         armor_detection_overlay.cpp
     )

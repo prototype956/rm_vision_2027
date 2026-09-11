@@ -176,7 +176,8 @@ int Run() {
     runtime::VisionPipelineConfig pipeline_config;
     try {
       const auto DETECTOR_YAML =
-          ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_detector.yaml");
+          ConfigLoader::LoadFile(CONFIG_ROOT / "modules/armor_detector.yaml",
+                                 modules::ARMOR_DETECTOR_CONFIG_SCHEMA_VERSION);
       pipeline_config.detector = modules::ParseArmorDetectorConfig(DETECTOR_YAML, PROJECT_ROOT);
     } catch (const std::exception& error) {
       MV_LOG_ERROR("App", "armor detector initialization failed: {}", error.what());

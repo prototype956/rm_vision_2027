@@ -4,7 +4,7 @@
 
 message(STATUS "Configuring third-party dependencies...")
 
-if(USE_OPENVINO)
+if(USE_ARMOR_DETECTOR)
     add_subdirectory(3rdparty/tinympc)
     message(STATUS "  ✓ TinyMPC enabled")
 endif()
@@ -12,13 +12,13 @@ endif()
 # ----------------------------------------------------------------------------
 # Foxglove SDK - WebSocket 与 MCAP 调试输出
 # ----------------------------------------------------------------------------
-if(USE_OPENVINO AND EXISTS "${CMAKE_SOURCE_DIR}/3rdparty/foxglove/CMakeLists.txt")
+if(USE_ARMOR_DETECTOR AND EXISTS "${CMAKE_SOURCE_DIR}/3rdparty/foxglove/CMakeLists.txt")
     add_subdirectory(3rdparty/foxglove)
     message(STATUS "  ✓ Foxglove SDK enabled")
-elseif(USE_OPENVINO)
+elseif(USE_ARMOR_DETECTOR)
     message(FATAL_ERROR "Foxglove SDK directory not found: ${CMAKE_SOURCE_DIR}/3rdparty/foxglove")
 else()
-    message(STATUS "  ⊗ Foxglove SDK disabled with OpenVINO")
+    message(STATUS "  ⊗ Foxglove SDK disabled with armor detector")
 endif()
 
 # ----------------------------------------------------------------------------

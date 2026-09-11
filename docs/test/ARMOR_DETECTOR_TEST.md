@@ -1,7 +1,7 @@
 # YOLO 0526 检测验收
 
 检测模块只保留实机长时验收和离线视频验收两个手动入口，不注册 CTest。模型文件由
-使用者手工管理，正式运行仍会检查 OpenVINO 输入输出契约。
+使用者手工管理，正式运行会检查所选后端的输入输出契约。
 
 ## 前置检查与构建
 
@@ -118,6 +118,30 @@ Foxglove 是该测试的可选调试旁路。`tool/foxglove.yaml` 中 `enabled: 
   --output-dir artifacts/detector_test/benchmark
 ```
 
-程序先预热 100 帧，再统计 1000 帧。计时包含 Letterbox、OpenVINO 推理、解码和
+程序先预热 100 帧，再统计 1000 帧。计时包含 Letterbox、后端推理、解码和
 NMS，不包含视频解码和绘制。完整检测链路 P95 必须小于 `16.7 ms`；不满足门槛时
 根据 `summary.json` 中各阶段 P95 定位，本期不引入异步队列规避单帧延迟。
+
+## NVIDIA / TensorRT 部署验收
+
+本节替代上面的 OpenVINO 环境和构建步骤，测试流程与结果判定保持一致：
+
+```bash
+nvidia-smi
+cmake -S . -B build-tensorrt -DCMAKE_BUILD_TYPE=Release \
+  -DUSE_OPENVINO=OFF -DUSE_TENSORRT=ON -DUSE_MINDVISION_SDK=OFF
+cmake --build build-tensorrt --parallel 4
+./build-tensorrt/bin/mv-armor-detector-video-test --benchmark
+./scripts/run_simulation_vision.sh
+```
+
+自定义 SDK 路径增加 `-DTensorRT_ROOT=/path/to/sdk`；本工作区可用 `.deps/tensorrt/usr`。
+仿真无需 MindVision SDK；实机相机验收需安装对应架构 SDK 并启用 `USE_MINDVISION_SDK`。
+检测配置使用 `schema_version: 2`、`backend: tensorrt`、`device: GPU`，日志应显示
+`tensorrt` 与实际 NVIDIA GPU 名称。用同一权重、视频和阈值对比检测结果与分阶段耗时。
+`inference_ms` 已包含 TensorRT 的数据转换、主机/设备拷贝及同步，不等于纯 GPU kernel 时间。
+
+同时验证 `backend: auto` 在 TensorRT 单后端构建中选中 NVIDIA GPU，显式配置
+`openvino` 时给出未编译错误；错误设备号、错误 I/O 模型与不兼容引擎应在初始化时失败。
+不得将这些失败当作空检测结果。缺少正式 `0526.onnx` 时，仅编译或合成模型测试不能替代
+真实识别、离线性能及 Talos 闭环验收。

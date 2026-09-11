@@ -103,7 +103,9 @@ runtime::VisionFrontendTuningConfig ParseFrontendConfigJson(
   RequireKeys(detector, {"enemy_color", "confidence_threshold", "nms_iou_threshold"},
               "config.detector");
   YAML::Node detector_yaml;
-  detector_yaml["schema_version"] = 1;
+  detector_yaml["schema_version"] = modules::ARMOR_DETECTOR_CONFIG_SCHEMA_VERSION;
+  detector_yaml["backend"] =
+      std::string(modules::ArmorInferenceBackendName(startup.detector.backend));
   detector_yaml["model_path"] = startup.detector.model_path.string();
   detector_yaml["device"] = startup.detector.device;
   detector_yaml["enemy_color"] = detector.at("enemy_color").get<std::string>();

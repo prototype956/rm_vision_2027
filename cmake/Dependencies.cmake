@@ -27,7 +27,7 @@ message(STATUS "  ✓ spdlog found: ${spdlog_VERSION}")
 find_package(yaml-cpp REQUIRED)
 message(STATUS "  ✓ yaml-cpp found")
 
-if(USE_OPENVINO)
+if(USE_ARMOR_DETECTOR)
     # Web 调试服务使用 Beast/Asio 和 JSON，不在运行时下载前端或 C++ 依赖。
     find_package(Boost 1.74 CONFIG REQUIRED COMPONENTS system)
     find_package(nlohmann_json 3.10 REQUIRED)
@@ -54,10 +54,17 @@ message(STATUS "    OpenCV modules: ${OpenCV_LIBS}")
 if(USE_OPENVINO)
     find_package(OpenVINO 2024.0 REQUIRED COMPONENTS Runtime)
     message(STATUS "  ✓ OpenVINO Runtime found: ${OpenVINO_VERSION}")
-    find_package(Ceres 2.0 REQUIRED)
-    message(STATUS "  ✓ Ceres found: ${Ceres_VERSION}")
 else()
     message(STATUS "  ⊗ OpenVINO disabled")
+endif()
+
+if(USE_TENSORRT)
+    find_package(CUDAToolkit REQUIRED)
+    find_package(TensorRT 10 REQUIRED)
+endif()
+if(USE_ARMOR_DETECTOR)
+    find_package(Ceres 2.0 REQUIRED)
+    message(STATUS "  ✓ Ceres found: ${Ceres_VERSION}")
 endif()
 
 # ----------------------------------------------------------------------------

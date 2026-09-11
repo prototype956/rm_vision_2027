@@ -7,6 +7,8 @@
 
 namespace mv::modules {
 
+inline constexpr int ARMOR_DETECTOR_CONFIG_SCHEMA_VERSION = 2;
+
 /**
  * @brief 解析并校验装甲检测器 YAML 配置。
  *

@@ -42,6 +42,7 @@
 # Local caches and editor/OS temporary files
 # =============================================================================
 /.cache/
+/.deps/
 __pycache__/
 *.py[cod]
 /.idea/
@@ -62,6 +63,7 @@ __pycache__/
 # =============================================================================
 /vedio/
 /src/modules/armor_detector/models/*.onnx
+/src/modules/armor_detector/models/*.engine
 
 # Local auxiliary worktrees.
 /.worktrees/

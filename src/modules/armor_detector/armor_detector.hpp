@@ -3,14 +3,20 @@
 #include "modules/armor_detector/armor_detector_output.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 #include <filesystem>
 #include <opencv2/core.hpp>
 
 namespace mv::modules {
+
+/** @brief 推理引擎选择；AUTO 只探测已编译的 GPU 后端，不接受 CPU 回退。 */
+enum class ArmorInferenceBackend : std::uint8_t { AUTO, OPENVINO, TENSORRT };
+[[nodiscard]] std::string_view ArmorInferenceBackendName(ArmorInferenceBackend backend) noexcept;
 
 /**
  * @brief 最近一次 Detect() 的分阶段性能指标。
@@ -20,7 +26,7 @@ namespace mv::modules {
  */
 struct ArmorDetectorDiagnostics {
   double preprocess_ms{0.0};            ///< Letterbox 与缩放耗时。
-  double inference_ms{0.0};             ///< OpenVINO 同步推理耗时。
+  double inference_ms{0.0};             ///< 后端转换、传输与同步推理耗时。
   double postprocess_ms{0.0};           ///< 输出解码、筛选与 NMS 耗时。
   double total_ms{0.0};                 ///< 上述三个阶段的完整链路耗时。
   std::size_t threshold_candidates{0};  ///< 通过 objectness 阈值的原始候选数。
@@ -37,8 +43,9 @@ struct ArmorDetectorResult {
  * @brief 装甲检测器初始化参数。
  */
 struct ArmorDetectorConfig {
-  std::filesystem::path model_path;         ///< 0526 ONNX 模型的绝对路径。
-  std::string device{"GPU"};                ///< OpenVINO GPU 或 GPU.<index> 设备名。
+  ArmorInferenceBackend backend{ArmorInferenceBackend::AUTO};  ///< 引擎选择，初始化后不可修改。
+  std::filesystem::path model_path;  ///< 0526 ONNX；TensorRT 也支持本机生成的 .engine。
+  std::string device{"GPU"};         ///< GPU 或 GPU.<index>；TensorRT 对应 CUDA 设备序号。
   ArmorColor enemy_color{ArmorColor::RED};  ///< 需要保留的敌方装甲颜色。
   float confidence_threshold{0.65F};        ///< objectness 筛选阈值，范围为 (0, 1)。
   float nms_iou_threshold{0.45F};           ///< NMS IoU 阈值，范围为 [0, 1]。
@@ -52,7 +59,7 @@ struct ArmorDetectorRuntimeConfig {
 };
 
 /**
- * @brief 模型、设备或 OpenVINO 编译阶段的初始化异常。
+ * @brief 模型、设备或后端编译阶段的初始化异常。
  */
 class ArmorDetectorInitError : public std::runtime_error {
  public:
@@ -68,7 +75,7 @@ class ArmorDetectorRuntimeError : public std::runtime_error {
 };
 
 /**
- * @brief 基于 OpenVINO 的 RobotDetectionModel 0526 同步装甲检测器。
+ * @brief 支持 OpenVINO/TensorRT 的 RobotDetectionModel 0526 同步装甲检测器。
  *
  * 实例不可拷贝、不可移动且非线程安全。Init() 只能成功调用一次，后续可重复同步
  * 调用 Detect()；Detect() 不修改调用方传入的图像。
@@ -86,7 +93,7 @@ class YoloArmorDetector final {
   /**
    * @brief 加载模型、校验输入输出契约并在指定 GPU 上编译。
    *
-   * 初始化阶段创建并绑定可复用的输入 Tensor 和 InferRequest，同时执行固定次数
+   * 初始化阶段创建并绑定可复用的推理资源，同时执行固定次数
    * 的空白帧预热。CPU、AUTO 和 MULTI 设备均不接受。
    *
    * @param config 已完成字段和值域校验的检测器配置。
@@ -104,7 +111,7 @@ class YoloArmorDetector final {
    * @return 经置信度、敌方颜色、几何有效性和 NMS 筛选后的装甲结果。
    * @throws std::logic_error 检测器尚未初始化。
    * @throws std::invalid_argument 输入图像为空或类型不正确。
-   * @throws ArmorDetectorRuntimeError OpenVINO 推理或后处理失败。
+   * @throws ArmorDetectorRuntimeError 后端推理或后处理失败。
    */
   [[nodiscard]] ArmorDetectorResult Detect(const cv::Mat& bgr_image);
 
@@ -123,7 +130,7 @@ class YoloArmorDetector final {
   [[nodiscard]] bool IsInitialized() const noexcept;
 
  private:
-  struct Impl;                  ///< 隐藏 OpenVINO 类型和运行时资源。
+  struct Impl;                  ///< 隐藏推理后端类型和运行时资源。
   std::unique_ptr<Impl> impl_;  ///< 检测器的唯一实现对象。
 };
 

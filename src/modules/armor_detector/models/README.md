@@ -19,8 +19,8 @@
 本地缺失模型时，从固定提交的兄弟仓库手工复制：
 
 ```bash
-cp /home/nuc/Workspace/RobotDetectionModel/Model/0526.onnx \
-  /home/nuc/Workspace/rm_vision_2027/src/modules/armor_detector/models/0526.onnx
+cp ../RobotDetectionModel/Model/0526.onnx \
+  src/modules/armor_detector/models/0526.onnx
 ```
 
 `0708.onnx` 仅可作为未承诺兼容性的本地备用文件；本期配置和测试都不使用它。
@@ -29,3 +29,7 @@ cp /home/nuc/Workspace/RobotDetectionModel/Model/0526.onnx \
 `/home/nuc/Workspace/sp_vision_25` 的固定提交
 `58c627846b0344a62e780c60fffece4433d0fe53`。两个参考仓库都只用于核对模型协议
 和部署行为，没有加入本项目 CMake、Git 子模块，也没有复制其 C++ 实现。
+
+TensorRT 部署可直接使用相同 ONNX，或在目标 NVIDIA GPU 上生成匹配 TensorRT 版本的
+`0526.engine`，再将检测配置的 `model_path` 指向它。引擎与 ONNX 一样由使用者手工管理，
+不提交 Git。完整后端选择与引擎契约见 [检测模块说明](../../../../docs/modules/ARMOR_DETECTOR.md)。

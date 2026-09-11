@@ -9,7 +9,9 @@ WORKSPACE_ROOT="$(dirname -- "${VISION_ROOT}")"
 # 根据脚本位置定位同级模拟器，不依赖工作区绝对路径或调用时的当前目录。
 SIMULATOR_ROOT="${SIMULATOR_ROOT:-${WORKSPACE_ROOT}/rm_simulator_2027}"
 SIMULATOR_BIN="${SIMULATOR_BIN:-${SIMULATOR_ROOT}/target/release/daedalus}"
-VISION_BIN="${VISION_BIN:-${VISION_ROOT}/build-openvino/bin/mv-vision-main}"
+# 默认运行当前 NVIDIA 部署构建；其他部署可以指定 VISION_BUILD_DIR 或 VISION_BIN。
+VISION_BUILD_DIR="${VISION_BUILD_DIR:-${VISION_ROOT}/build-tensorrt}"
+VISION_BIN="${VISION_BIN:-${VISION_BUILD_DIR}/bin/mv-vision-main}"
 OPENVINO_SETUP="${OPENVINO_SETUP:-/opt/intel/openvino_2024.0.0/setupvars.sh}"
 
 SIMULATOR_CPUSET="${SIMULATOR_CPUSET:-8-15}"
@@ -57,7 +59,6 @@ trap cleanup EXIT INT TERM
 [[ -d "${SIMULATOR_ROOT}/assets" ]] || die "simulator assets directory not found: ${SIMULATOR_ROOT}/assets"
 [[ -x "${SIMULATOR_BIN}" ]] || die "simulator binary not found; build it with: cd '${SIMULATOR_ROOT}' && cargo build --release --no-default-features --features talos"
 [[ -x "${VISION_BIN}" ]] || die "vision binary not found; build the Release target first: ${VISION_BIN}"
-[[ -f "${OPENVINO_SETUP}" ]] || die "OpenVINO setup script not found: ${OPENVINO_SETUP}"
 [[ -f "${MAIN_CONFIG}" ]] || die "vision main config not found: ${MAIN_CONFIG}"
 [[ -f "${TALOS_CONFIG}" ]] || die "Talos camera config not found: ${TALOS_CONFIG}"
 command -v "${RUSTC_BIN}" >/dev/null 2>&1 || die "rustc is required to locate simulator runtime libraries"
@@ -82,16 +83,28 @@ talos_is_ready() {
     [[ "$(stat -c '%y' "${TALOS_META}")" != "${TALOS_META_MTIME_BEFORE}" ]]
 }
 
-# OpenVINO exports library/plugin paths inherited by the vision child process.
-# shellcheck disable=SC1090
-set +u
-source "${OPENVINO_SETUP}"
-set -u
+# 可选 OpenVINO 环境；TensorRT 构建无需安装或加载 OpenVINO。
+if [[ -d "${TensorRT_ROOT:-${VISION_ROOT}/.deps/tensorrt/usr}" ]] &&
+    ldd "${VISION_BIN}" | awk '/libnvinfer/ { found=1 } END { exit !found }'; then
+  # shellcheck disable=SC1091
+  source "${SCRIPT_DIR}/setup_tensorrt.sh"
+fi
+if [[ -f "${OPENVINO_SETUP}" ]] &&
+    ldd "${VISION_BIN}" | awk '/libopenvino/ { found=1 } END { exit !found }'; then
+  # shellcheck disable=SC1090
+  set +u
+  source "${OPENVINO_SETUP}"
+  set -u
+fi
+
+UNRESOLVED_VISION_LIBRARIES="$(ldd "${VISION_BIN}" | awk '/not found/ { print $1 }')"
+[[ -z "${UNRESOLVED_VISION_LIBRARIES}" ]] || die "vision has unresolved shared libraries: ${UNRESOLVED_VISION_LIBRARIES//$'\n'/, }"
 
 # Bevy's dynamic_linking feature keeps both Bevy and Rust's standard library outside the
 # executable. Cargo normally supplies these paths for `cargo run`; direct execution must do so.
 RUST_SYSROOT="$("${RUSTC_BIN}" --print sysroot)"
-RUST_HOST="$("${RUSTC_BIN}" -vV | awk '$1 == "host:" { print $2; exit }')"
+# Read the complete pipe: an early awk exit can SIGPIPE rustc under pipefail.
+RUST_HOST="$("${RUSTC_BIN}" -vV | awk '$1 == "host:" { print $2 }')"
 SIMULATOR_DEPS_DIR="${SIMULATOR_ROOT}/target/release/deps"
 RUST_STD_LIB_DIR="${RUST_SYSROOT}/lib/rustlib/${RUST_HOST}/lib"
 [[ -d "${SIMULATOR_DEPS_DIR}" ]] || die "simulator dependency directory not found: ${SIMULATOR_DEPS_DIR}"

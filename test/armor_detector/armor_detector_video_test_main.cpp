@@ -288,7 +288,8 @@ int Run(int argc, char** argv) {
   const Options OPTIONS = ParseOptions(argc, argv);
   Logger::Instance().InitFromFile(std::filesystem::path(CONFIG_FILE_PATH) / "core/logger.yaml");
 
-  const auto YAML = ConfigLoader::LoadFile(OPTIONS.config_path);
+  const auto YAML =
+      ConfigLoader::LoadFile(OPTIONS.config_path, modules::ARMOR_DETECTOR_CONFIG_SCHEMA_VERSION);
   const auto DETECTOR_CONFIG = modules::ParseArmorDetectorConfig(YAML, PROJECT_ROOT_PATH);
   modules::YoloArmorDetector detector;
   detector.Init(DETECTOR_CONFIG);

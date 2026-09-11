@@ -1,6 +1,6 @@
 # 装甲检测模块
 
-`mv-modules-armor-detector` 使用 OpenVINO 同步执行 RobotDetectionModel `0526.onnx`，
+`mv-modules-armor-detector` 使用 OpenVINO 或 TensorRT 同步执行 RobotDetectionModel `0526.onnx`，
 输出敌方装甲板的二维四角点、颜色、类别、objectness 和轴对齐外接框。本篇描述
 当前实现的公共契约；模型来源与本地放置方式见
 [模型说明](../../src/modules/armor_detector/models/README.md)，实机和离线验收流程见
@@ -12,7 +12,7 @@
 
 - 校验配置、模型输入输出契约和 GPU 执行设备；
 - 将任意正尺寸的 `CV_8UC3` BGR 图像缩放到左上对齐的 `640×640` 画布；
-- 同步执行 OpenVINO 推理；
+- 同步执行选定后端推理；
 - 完成 objectness、颜色、有效区域、几何和 NMS 筛选；
 - 将模型坐标映射并裁剪回调用方输入图像坐标；
 - 提供最近一次成功检测的分阶段耗时。
@@ -23,7 +23,7 @@
 
 ## 模型和运行环境
 
-本期只支持 `0526.onnx`，初始化时严格检查：
+支持 `0526.onnx`；TensorRT 还可加载由该模型生成的 `.engine`，初始化时严格检查：
 
 | 项目 | 固定契约 |
 | --- | --- |
@@ -34,19 +34,34 @@
 | 输出形状 | `[1, 25200, 22]` |
 | 输出类型 | FP32 |
 
-调用方输入为 BGR U8 NHWC 图像。左上 Letterbox 完成后，OpenVINO 预处理执行：
+调用方输入为 BGR U8 NHWC 图像。左上 Letterbox 完成后，两种后端都执行以下预处理：
 
 ```text
 BGR U8 NHWC → RGB → FP16 → /255 → NCHW
 ```
 
-模型使用 `LATENCY` 性能模式和一个复用的 `InferRequest`。固定 `640×640` BGR
-缓冲区与输入 Tensor 在初始化时建立并跨帧复用，初始化完成前使用黑图预热 10 次。
+`backend` 在初始化时选择推理实现：
 
-设备只接受 `GPU` 或 `GPU.<非负整数>`。初始化前要求配置设备出现在 OpenVINO
-可用设备列表中；编译后要求 `EXECUTION_DEVICES` 全部为 `GPU` 或 `GPU.<index>`。
-模块不接受 `CPU`、`AUTO`、`MULTI`，也不会自动回退 CPU。`GPU` 是 OpenVINO
-通用设备名，单 GPU 主机编译后的实际执行设备可能显示为 `GPU.0`。
+- `openvino`：Intel GPU，使用 `LATENCY` 与复用的 `InferRequest`，预处理编译进模型图。
+- `tensorrt`：NVIDIA GPU，使用 TensorRT 10+ 的强类型网络、命名 Tensor 和 `enqueueV3`。
+  主机执行 RGB/NCHW/FP16 转换，复用 CUDA 缓冲区与流，同步返回输出。
+- `auto`：只探测已编译后端，优先 TensorRT 的 CUDA GPU，然后 OpenVINO GPU。
+  显式选择未编译的后端会报告对应 CMake 开关；选定后初始化失败会直接报错。
+
+固定 `640×640` BGR 画布与推理资源跨帧复用，初始化完成前使用黑图预热 10 次。
+TensorRT 在每次推理时绑定配置的 CUDA 设备，允许初始化和后续串行检测在不同线程进行。
+实例仍然不能被并发调用。后端、模型与设备只在初始化时设置，Web 热更新保留这些字段。
+
+`device` 只接受 `GPU` 或 `GPU.<非负整数>`。TensorRT 中 `GPU` 是 CUDA 设备 0，
+`GPU.1` 是设备 1；OpenVINO 则使用同名设备，并核对实际执行设备全部是 GPU。
+不接受 `CPU`、`AUTO`、`MULTI` 设备，也不回退 CPU；`backend: auto` 与设备名 `AUTO` 不同。
+
+TensorRT 从 ONNX 启动时构建引擎（工作区上限 1 GiB），每次启动都会重新构建，耗时可能为数分钟。
+需要缩短启动时间时，可用同版本 SDK 的 `trtexec --onnx=... --stronglyTyped --saveEngine=...`
+在目标 GPU 上生成引擎（TensorRT 11 强类型为默认，省略 `--stronglyTyped`），然后修改 `model_path`。
+引擎须匹配本机 GPU、TensorRT/CUDA 环境及上述固定 I/O 契约，版本或设备变化后应重新生成。
+项目不会自动下载权重或写入引擎缓存。两个后端共享 Letterbox、解码、颜色过滤和 NMS，
+浮点实现差异仍需使用实际权重与同一视频进行部署验收。
 
 ## 二维坐标系契约
 
@@ -252,7 +267,8 @@ const auto& diagnostics = result.diagnostics;
 [`src/config/modules/armor_detector.yaml`](../../src/config/modules/armor_detector.yaml)：
 
 ```yaml
-schema_version: 1
+schema_version: 2
+backend: tensorrt
 model_path: src/modules/armor_detector/models/0526.onnx
 device: GPU
 enemy_color: blue
@@ -262,7 +278,8 @@ nms_iou_threshold: 0.45
 
 | 字段 | 合法值与语义 |
 | --- | --- |
-| `schema_version` | 当前必须为 `1` |
+| `schema_version` | 当前必须为 `2`；旧配置迁移时增加 `backend` |
+| `backend` | `auto`、`openvino` 或 `tensorrt`，初始化后不可热更新 |
 | `model_path` | 非空路径；相对路径按项目根目录解析 |
 | `device` | `GPU` 或 `GPU.<非负整数>` |
 | `enemy_color` | 小写 `red` 或 `blue`，表示需要检测的敌方颜色 |
@@ -280,7 +297,7 @@ nms_iou_threshold: 0.45
 | 初始化 | `ArmorDetectorInitError` | 模型缺失或不可读取、I/O 契约不匹配、GPU 不可见、编译失败、执行设备包含非 GPU |
 | 检测参数 | `std::invalid_argument` | 输入图像为空或不是 `CV_8UC3` |
 | 检测前置状态 | `std::logic_error` | 尚未成功初始化就调用 `Detect()` |
-| 检测运行 | `ArmorDetectorRuntimeError` | OpenVINO 推理失败、输出 Tensor 异常或后处理失败 |
+| 检测运行 | `ArmorDetectorRuntimeError` | 后端推理失败、输出 Tensor 异常或后处理失败 |
 
 推理异常不会触发 CPU 回退。一次运行错误也不等价于“无目标”；只有成功返回的空集合
 表示当前帧没有通过筛选的装甲板。
@@ -293,8 +310,8 @@ nms_iou_threshold: 0.45
 | 字段 | 计时范围 |
 | --- | --- |
 | `preprocess_ms` | Letterbox 参数计算、复用画布清零和 `cv::resize` |
-| `inference_ms` | `InferRequest::infer()`；包含编译进 OpenVINO 图中的 BGR→RGB、FP16 转换和 `/255` |
-| `postprocess_ms` | 输出 Tensor 校验、解码、筛选、坐标映射和 NMS |
+| `inference_ms` | 后端推理与输出校验；包含 BGR→RGB、FP16、`/255`、布局转换及 TensorRT 主机/设备传输和同步 |
+| `postprocess_ms` | 解码、筛选、坐标映射和 NMS |
 | `total_ms` | 上述三个阶段的完整检测链路 |
 | `threshold_candidates` | 通过 objectness 阈值的原始行数，尚未经过颜色和几何筛选 |
 | `kept_detections` | 完成颜色、几何筛选和 NMS 后的结果数 |

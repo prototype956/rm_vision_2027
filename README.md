@@ -6,7 +6,7 @@
 [同步控制核心说明](docs/modules/CONTROL_CORE.md)。默认主程序仍使用规则策略。
 
 项目当前处于架构精简和算法模块重设计阶段。现阶段包含相机 HAL、配置、日志、
-MindVision 实机验收程序，以及基于 OpenVINO 的深圳大学 RobotDetectionModel
+MindVision 实机验收程序，以及支持 OpenVINO/TensorRT 的深圳大学 RobotDetectionModel
 0526 装甲板检测模块和 Foxglove 调试输出。
 
 ## 当前可执行程序
@@ -27,15 +27,16 @@ MindVision 实机验收程序，以及基于 OpenVINO 的深圳大学 RobotDetec
 
 - Linux（推荐 Ubuntu 22.04）
 - GCC 11 或兼容的 C++20 编译器
-- CMake 3.15+
+- CMake 3.18+（TensorRT 构建需要 `FindCUDAToolkit`）
 - OpenCV
 - fmt
 - spdlog
 - yaml-cpp
 - Eigen 3.4
-- OpenVINO Runtime 2024.0（构建主程序和检测模块时需要）
+- 推理后端二选一：Intel GPU 使用 OpenVINO Runtime 2024.0+；NVIDIA GPU 使用 TensorRT 10+ C++ SDK（含 ONNX parser）与匹配的 CUDA Toolkit
+- Boost.System 1.74+、nlohmann/json 3.10+、Ceres 2.0+（完整视觉程序需要）
 - 仓库内 `3rdparty/mindvision` SDK（实机运行需要）
-- 仓库内 `3rdparty/foxglove` SDK（预编译 x86-64 Linux 库与 C++ 封装）
+- 仓库内 `3rdparty/foxglove` SDK（现有头文件匹配 SDK 0.16.6；动态库需要与部署 CPU 架构一致）
 
 Ubuntu 系统依赖示例：
 
@@ -43,24 +44,52 @@ Ubuntu 系统依赖示例：
 sudo apt update
 sudo apt install -y \
     build-essential cmake \
-    libopencv-dev libfmt-dev libspdlog-dev libyaml-cpp-dev libeigen3-dev
+    libopencv-dev libfmt-dev libspdlog-dev libyaml-cpp-dev libeigen3-dev \
+    libboost-system-dev nlohmann-json3-dev libceres-dev
 ```
 
 ## 构建
 
+NVIDIA / ARM64（DGX Spark）的部署配置：
+
+```bash
+cmake -S . -B build-tensorrt -DCMAKE_BUILD_TYPE=Release \
+  -DUSE_OPENVINO=OFF -DUSE_TENSORRT=ON -DUSE_MINDVISION_SDK=OFF
+cmake --build build-tensorrt --parallel 4
+```
+
+如果 TensorRT 解压在自定义位置，增加 `-DTensorRT_ROOT=/path/to/sdk`，该目录下应有
+`include/` 和 `lib/`，也支持 Debian 的 `include/aarch64-linux-gnu`、
+`lib/aarch64-linux-gnu` 布局。系统安装时直接查找系统目录。
+本工作区的本地 SDK 可用 `-DTensorRT_ROOT="$PWD/.deps/tensorrt/usr"`，
+也可先执行 `source scripts/setup_tensorrt.sh`，再配置/运行。该脚本设置 SDK 和动态库路径，
+一键仿真脚本会在使用本地 TensorRT 时自动加载。若 `.deps/vision/usr` 存在，
+该脚本还会加载本地 JSON/Ceres 等公共依赖的 CMake 和动态库搜索路径。
+TensorRT 的头文件、运行库与 ONNX parser 必须版本一致，并匹配 CUDA 和 GPU。
+
+Intel GPU 的构建命令：
+
 ```bash
 source /opt/intel/openvino_2024.0.0/setupvars.sh
-cmake -S /home/nuc/Workspace/rm_vision_2027 \
-  -B /home/nuc/Workspace/rm_vision_2027/build-openvino \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DUSE_OPENVINO=ON
-cmake --build /home/nuc/Workspace/rm_vision_2027/build-openvino --parallel 4
+cmake -S . -B build-openvino -DCMAKE_BUILD_TYPE=Release \
+  -DUSE_OPENVINO=ON -DUSE_TENSORRT=OFF
+cmake --build build-openvino --parallel 4
 ```
+
+编辑器 `.clangd` 默认读取 `build-tensorrt/compile_commands.json`；切换到 Intel 构建时
+同步将其中的 `CompilationDatabase` 改为 `build-openvino/`。
+
+运行前把 `src/config/modules/armor_detector.yaml` 的 `backend` 设为对应的
+`tensorrt` 或 `openvino`。配置版本已升为 `schema_version: 2`，旧配置需增加 `backend`。
+也可同时开启两个 CMake 后端并使用 `backend: auto`：初始化时优先选择可用的
+NVIDIA CUDA GPU，否则选择 OpenVINO GPU；选定后的模型错误不会触发后端切换。
+`auto` 只检查编译进程序的后端，不会安装 SDK 或回退 CPU。
 
 可用选项：
 
 - `BUILD_MAIN=ON|OFF`：是否构建 `mv-vision-main`，默认开启。
-- `USE_OPENVINO=ON|OFF`：是否构建检测模块，默认开启。`BUILD_MAIN=ON` 时不能关闭。
+- `USE_OPENVINO=ON|OFF`：编译 OpenVINO 后端，默认开启。
+- `USE_TENSORRT=ON|OFF`：编译 TensorRT 后端，默认关闭。主程序要求至少开启一个后端。
 - `USE_MINDVISION_SDK=ON|OFF`：是否链接 MindVision SDK，默认开启。关闭后仍可
   编译 Camera HAL，但 MindVision `Open()` 会返回失败。
 
@@ -70,7 +99,7 @@ cmake --build /home/nuc/Workspace/rm_vision_2027/build-openvino --parallel 4
 cmake -S . -B build-camera \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_MAIN=OFF \
-  -DUSE_OPENVINO=OFF
+  -DUSE_OPENVINO=OFF -DUSE_TENSORRT=OFF
 cmake --build build-camera --parallel 4
 ```
 
@@ -84,8 +113,11 @@ cmake --build build-camera --parallel 4
 
 脚本按自身位置定位同级的 `../rm_simulator_2027`，可从任意目录调用。
 整体移动工作区无需修改项目路径；自定义模拟器位置可通过 `SIMULATOR_ROOT` 指定。
+默认运行 `build-tensorrt/bin/mv-vision-main`；Intel 部署可用
+`VISION_BUILD_DIR="$PWD/build-openvino" ./scripts/run_simulation_vision.sh`。
+也可直接指定 `VISION_BIN`。TensorRT 运行不需要 OpenVINO 的 `setupvars.sh`。
 
-脚本会将仿真绑定到 E 核 `8-15`、视觉绑定到 P 核 `0-7`，并在任一程序退出时停止
+脚本默认将仿真绑定到 CPU `8-15`、视觉绑定到 CPU `0-7`（可通过 `SIMULATOR_CPUSET`、`VISION_CPUSET` 调整），并在任一程序退出时停止
 另一个程序。也可以按下面的方式分别手动启动：
 
 ```bash
@@ -103,8 +135,8 @@ taskset -c 0-7 ./build-openvino/bin/mv-vision-main
 ./build-openvino/bin/mv-armor-detector-video-test
 ```
 
-当前登录会话必须具有 `render`、`video` 组，且 OpenVINO 必须能看到 `GPU` 或
-`GPU.<index>`；检测器不会回退 CPU，也不应使用 `sudo` 运行。相机预览按 `Q`、
+Intel GPU 的登录会话需具有 `render`、`video` 组，且 OpenVINO 必须能看到 `GPU` 或
+`GPU.<index>`；NVIDIA 部署应能通过 CUDA 访问配置的 GPU。检测器不会回退 CPU，也不应使用 `sudo` 运行。相机预览按 `Q`、
 `Esc` 或关闭窗口退出。完整实机验收流程见
 [docs/test/CAMERA_TEST.md](docs/test/CAMERA_TEST.md)。
 
@@ -168,7 +200,7 @@ src/config/
 │   │   ├── camera/        # ICamera 及按后端分组的 MindVision/OpenCV 驱动
 │   │   └── serial/        # 空目录，等待重新设计
 │   ├── modules/
-│   │   └── armor_detector/# OpenVINO YOLO 0526 检测模块
+│   │   └── armor_detector/# 双后端 YOLO 0526 检测模块
 │   └── tool/
 │       ├── calibration/   # MindVision 棋盘格内参标定
 │       ├── debug/         # OpenCV 调试窗口与装甲可视化

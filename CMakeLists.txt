@@ -6,7 +6,7 @@
 # 平台支持: Linux only
 # ============================================================================
 
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.18)
 
 project(MiracleVision
     VERSION 2024.2.20
@@ -23,18 +23,23 @@ option(BUILD_MAIN "Build main MiracleVision executable" ON)
 
 # 第三方库选项
 option(USE_MINDVISION_SDK "Enable MindVision Camera SDK (required for real camera)" ON)
-option(USE_OPENVINO "Enable OpenVINO armor detector" ON)
+option(USE_OPENVINO "Enable OpenVINO armor detector backend" ON)
+option(USE_TENSORRT "Enable NVIDIA TensorRT armor detector backend" OFF)
+set(USE_ARMOR_DETECTOR OFF)
+if(USE_OPENVINO OR USE_TENSORRT)
+    set(USE_ARMOR_DETECTOR ON)
+endif()
 
-if(BUILD_MAIN AND NOT USE_OPENVINO)
+if(BUILD_MAIN AND NOT USE_ARMOR_DETECTOR)
     message(FATAL_ERROR
-        "BUILD_MAIN requires USE_OPENVINO=ON. "
-        "Use -DBUILD_MAIN=OFF -DUSE_OPENVINO=OFF for camera-only builds.")
+        "BUILD_MAIN requires USE_OPENVINO=ON or USE_TENSORRT=ON. "
+        "Use -DBUILD_MAIN=OFF -DUSE_OPENVINO=OFF -DUSE_TENSORRT=OFF for camera-only builds.")
 endif()
 
 option(BUILD_CONTROL_CORE_ONLY "Build portable synchronous control core and acceptance programs only" OFF)
 if(BUILD_CONTROL_CORE_ONLY)
-    if(BUILD_MAIN OR USE_OPENVINO OR USE_MINDVISION_SDK)
-        message(FATAL_ERROR "Control-only mode requires BUILD_MAIN=OFF, USE_OPENVINO=OFF, USE_MINDVISION_SDK=OFF")
+    if(BUILD_MAIN OR USE_ARMOR_DETECTOR OR USE_MINDVISION_SDK)
+        message(FATAL_ERROR "Control-only mode requires BUILD_MAIN=OFF, USE_OPENVINO=OFF, USE_TENSORRT=OFF, USE_MINDVISION_SDK=OFF")
     endif()
     set(CMAKE_CXX_STANDARD 20)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -137,7 +142,8 @@ message(STATUS "")
 message(STATUS "Third-party libraries:")
 message(STATUS "  MindVision SDK:     ${USE_MINDVISION_SDK}")
 message(STATUS "  OpenVINO:           ${USE_OPENVINO}")
-message(STATUS "  Foxglove:           ${USE_OPENVINO}")
+message(STATUS "  TensorRT:           ${USE_TENSORRT}")
+message(STATUS "  Foxglove:           ${USE_ARMOR_DETECTOR}")
 message(STATUS "")
 message(STATUS "Output directories:")
 message(STATUS "  Executables:        ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
