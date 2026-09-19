@@ -94,13 +94,10 @@ void EmitBoard(YAML::Emitter& output, const CalibrationSettings& settings) {
 void EmitQualityCriteria(YAML::Emitter& output, const CalibrationSettings& settings) {
   output << YAML::Key << "quality_criteria" << YAML::Value << YAML::BeginMap;
   output << YAML::Key << "min_samples" << YAML::Value << settings.min_samples;
-  output << YAML::Key << "min_sharpness" << YAML::Value << settings.min_sharpness;
   output << YAML::Key << "max_rms_px" << YAML::Value << settings.max_rms_px;
   output << YAML::Key << "max_view_rms_px" << YAML::Value << settings.max_view_rms_px;
   output << YAML::Key << "required_grid_cells" << YAML::Value << 9;
   output << YAML::Key << "min_area_ratio" << YAML::Value << settings.min_area_ratio;
-  output << YAML::Key << "min_tilted_views_per_axis" << YAML::Value << settings.min_tilted_views;
-  output << YAML::Key << "min_tilt_ratio" << YAML::Value << settings.min_tilt_ratio;
   output << YAML::EndMap;
 }
 
@@ -112,9 +109,6 @@ void EmitCoverage(YAML::Emitter& output, const CoverageMetrics& coverage) {
     output << OCCUPIED;
   output << YAML::EndSeq;
   output << YAML::Key << "projected_area_ratio" << YAML::Value << coverage.area_ratio;
-  output << YAML::Key << "horizontal_tilted_views" << YAML::Value
-         << coverage.horizontal_tilted_views;
-  output << YAML::Key << "vertical_tilted_views" << YAML::Value << coverage.vertical_tilted_views;
   output << YAML::EndMap;
 }
 
@@ -145,15 +139,12 @@ CalibrationSettings ParseCalibrationSettings(const YAML::Node& root,
 
   const auto CAPTURE = root["capture"];
   ConfigLoader::RequireMap(CAPTURE, "camera calibration config.capture");
-  ConfigLoader::RejectUnknownKeys(CAPTURE, {"min_samples", "min_sharpness"},
-                                  "camera calibration config.capture");
+  ConfigLoader::RejectUnknownKeys(CAPTURE, {"min_samples"}, "camera calibration config.capture");
 
   const auto QUALITY = root["quality"];
   ConfigLoader::RequireMap(QUALITY, "camera calibration config.quality");
-  ConfigLoader::RejectUnknownKeys(
-      QUALITY,
-      {"max_rms_px", "max_view_rms_px", "min_area_ratio", "min_tilted_views", "min_tilt_ratio"},
-      "camera calibration config.quality");
+  ConfigLoader::RejectUnknownKeys(QUALITY, {"max_rms_px", "max_view_rms_px", "min_area_ratio"},
+                                  "camera calibration config.quality");
 
   CalibrationSettings settings;
   settings.board_columns =
@@ -164,25 +155,18 @@ CalibrationSettings ParseCalibrationSettings(const YAML::Node& root,
       ConfigLoader::Require<double>(BOARD, "square_size_mm", "camera calibration config.board");
   settings.min_samples =
       ConfigLoader::Require<int>(CAPTURE, "min_samples", "camera calibration config.capture");
-  settings.min_sharpness =
-      ConfigLoader::Require<double>(CAPTURE, "min_sharpness", "camera calibration config.capture");
   settings.max_rms_px =
       ConfigLoader::Require<double>(QUALITY, "max_rms_px", "camera calibration config.quality");
   settings.max_view_rms_px = ConfigLoader::Require<double>(QUALITY, "max_view_rms_px",
                                                            "camera calibration config.quality");
   settings.min_area_ratio =
       ConfigLoader::Require<double>(QUALITY, "min_area_ratio", "camera calibration config.quality");
-  settings.min_tilted_views =
-      ConfigLoader::Require<int>(QUALITY, "min_tilted_views", "camera calibration config.quality");
-  settings.min_tilt_ratio =
-      ConfigLoader::Require<double>(QUALITY, "min_tilt_ratio", "camera calibration config.quality");
   const auto OUTPUT_DIR = ConfigLoader::Require<std::string>(root, "output_dir", K_CONFIG_CONTEXT);
   settings.output_dir = ConfigLoader::ResolvePath(project_root, OUTPUT_DIR);
 
   if (settings.board_columns < 2 || settings.board_rows < 2 || settings.square_size_mm <= 0.0 ||
-      settings.min_samples < 3 || settings.min_sharpness < 0.0 || settings.max_rms_px <= 0.0 ||
-      settings.max_view_rms_px <= 0.0 || settings.min_area_ratio < 1.0 ||
-      settings.min_tilted_views < 1 || settings.min_tilt_ratio <= 1.0 || OUTPUT_DIR.empty()) {
+      settings.min_samples < 3 || settings.max_rms_px <= 0.0 || settings.max_view_rms_px <= 0.0 ||
+      settings.min_area_ratio < 1.0 || OUTPUT_DIR.empty()) {
     throw ConfigError("camera calibration config contains an invalid setting");
   }
   return settings;
@@ -207,7 +191,6 @@ FrameObservation CameraCalibrator::Observe(const cv::Mat& bgr_image) const {
 
   FrameObservation observation;
   observation.sharpness = LaplacianVariance(laplacian);
-  observation.sharp_enough = observation.sharpness >= settings_.min_sharpness;
   observation.found = cv::findChessboardCornersSB(
       gray, {settings_.board_columns, settings_.board_rows}, observation.corners,
       cv::CALIB_CB_NORMALIZE_IMAGE | cv::CALIB_CB_EXHAUSTIVE | cv::CALIB_CB_ACCURACY);
@@ -221,7 +204,6 @@ FrameObservation CameraCalibrator::Observe(const cv::Mat& bgr_image) const {
       cv::boundingRect(observation.corners) & cv::Rect(0, 0, image_size_.width, image_size_.height);
   if (BOARD_REGION.area() > 0) {
     observation.sharpness = LaplacianVariance(laplacian(BOARD_REGION));
-    observation.sharp_enough = observation.sharpness >= settings_.min_sharpness;
   }
 
   const int COLUMNS = settings_.board_columns;
@@ -273,8 +255,7 @@ bool CameraCalibrator::AddSample(const FrameObservation& observation,
                                  const std::filesystem::path& image_path) {
   const std::size_t EXPECTED_CORNERS = static_cast<std::size_t>(settings_.board_columns) *
                                        static_cast<std::size_t>(settings_.board_rows);
-  if (!observation.found || !observation.sharp_enough ||
-      observation.corners.size() != EXPECTED_CORNERS || image_path.empty()) {
+  if (!observation.found || observation.corners.size() != EXPECTED_CORNERS || image_path.empty()) {
     return false;
   }
   samples_.push_back({.id = next_sample_id_++,
@@ -306,12 +287,6 @@ CoverageMetrics CameraCalibrator::AnalyzeCoverage(
   for (const auto* sample : samples) {
     minimum_area = std::min(minimum_area, sample->projected_area);
     maximum_area = std::max(maximum_area, sample->projected_area);
-    if (sample->horizontal_tilt_ratio >= settings_.min_tilt_ratio) {
-      ++metrics.horizontal_tilted_views;
-    }
-    if (sample->vertical_tilt_ratio >= settings_.min_tilt_ratio) {
-      ++metrics.vertical_tilted_views;
-    }
     // 使用全部内角点而非棋盘中心统计覆盖，要求观测信息延伸到画面每个区域。
     for (const auto& corner : sample->corners) {
       const int COLUMN = std::clamp(static_cast<int>(static_cast<double>(corner.x) * 3.0 /
@@ -350,12 +325,6 @@ CalibrationResult CameraCalibrator::Solve() const {
   }
   if (result.coverage.area_ratio < settings_.min_area_ratio) {
     result.failures.push_back("projected board area ratio is below min_area_ratio");
-  }
-  if (result.coverage.horizontal_tilted_views < settings_.min_tilted_views) {
-    result.failures.push_back("not enough horizontally tilted views");
-  }
-  if (result.coverage.vertical_tilted_views < settings_.min_tilted_views) {
-    result.failures.push_back("not enough vertically tilted views");
   }
   if (active_samples.size() < 3) {
     return result;

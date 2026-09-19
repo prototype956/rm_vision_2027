@@ -1,6 +1,6 @@
 schema_version: 2
 # auto: prefer an available compiled TensorRT backend, then OpenVINO GPU.
-backend: tensorrt
+backend: openvino
 model_path: src/modules/armor_detector/models/0526.onnx
 device: GPU
 enemy_color: blue

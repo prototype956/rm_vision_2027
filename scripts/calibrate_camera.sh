@@ -5,12 +5,15 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
 
-if [ "$#" -gt 1 ]; then
-  echo "Usage: $0 [build-directory]" >&2
-  exit 2
+if [ "${1:-}" = "--help" ]; then
+  echo "Usage: $0 [build-directory] [capture | solve <capture-directory>]"
+  exit 0
 fi
 
 BUILD_DIR=${1:-"${PROJECT_ROOT}/build-camera"}
+if [ "$#" -gt 0 ]; then
+  shift
+fi
 case "${BUILD_DIR}" in
   /*) ;;
   *) BUILD_DIR="${PROJECT_ROOT}/${BUILD_DIR}" ;;
@@ -25,4 +28,4 @@ if [ ! -x "${CALIBRATION_BIN}" ]; then
   exit 1
 fi
 
-exec "${CALIBRATION_BIN}"
+exec "${CALIBRATION_BIN}" "$@"

@@ -14,7 +14,7 @@ MindVision 实机验收程序，以及支持 OpenVINO/TensorRT 的深圳大学 R
 - `mv-vision-main`：根据配置选择 MindVision 实机或 Talos 仿真相机，同步执行
   YOLO 0526 检测并显示叠加结果。
 - `mv-camera-test`：MindVision 长时间稳定性、重复启停和拔线验收程序。
-- `mv-camera-calibration`：MindVision 棋盘格采样、内参求解和质量验收工具。
+- `mv-camera-calibration`：MindVision 原图采集与离线棋盘格检测、内参求解和质量验收工具。
 - `mv-armor-detector-test`：MindVision、GPU 检测器与可选 Foxglove 输出的长时实机
   验收程序。
 - `mv-armor-detector-video-test`：离线视频检测、可视化、逐帧耗时和性能验收程序。

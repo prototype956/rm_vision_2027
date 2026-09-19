@@ -18,16 +18,13 @@ namespace mv::tool::calibration {
  * @brief 棋盘格采集、求解和质量验收参数。
  */
 struct CalibrationSettings {
-  int board_columns{9};              ///< 棋盘格横向内角点数量。
-  int board_rows{6};                 ///< 棋盘格纵向内角点数量。
+  int board_columns{11};            ///< 棋盘格横向内角点数量。
+  int board_rows{8};                ///< 棋盘格纵向内角点数量。
   double square_size_mm{25.0};       ///< 相邻内角点的实际距离，单位为毫米。
-  int min_samples{20};               ///< 通过质量验收所需的最少有效样本数。
-  double min_sharpness{100.0};       ///< 棋盘区域拉普拉斯方差的接纳下限。
+  int min_samples{20};              ///< 通过质量验收所需的最少有效样本数。
   double max_rms_px{0.5};            ///< 全局重投影 RMS 上限，单位为像素。
   double max_view_rms_px{1.0};       ///< 单视图重投影 RMS 上限，单位为像素。
   double min_area_ratio{2.0};        ///< 最大与最小棋盘投影面积的最小倍率。
-  int min_tilted_views{4};           ///< 每个方向所需的最少倾斜视图数。
-  double min_tilt_ratio{1.15};       ///< 对边长度达到该比值时计为倾斜视图。
   std::filesystem::path output_dir;  ///< 会话输出目录的规范化绝对路径。
 };
 
@@ -36,7 +33,6 @@ struct CalibrationSettings {
  */
 struct FrameObservation {
   bool found{false};                  ///< 是否检测到完整的棋盘内角点。
-  bool sharp_enough{false};           ///< 清晰度是否达到采集阈值。
   double sharpness{0.0};              ///< 棋盘区域的拉普拉斯方差。
   double projected_area{0.0};         ///< 四个最外侧角点围成的像素面积。
   double horizontal_tilt_ratio{1.0};  ///< 左右边长度比，用于衡量水平透视倾斜。
@@ -51,7 +47,7 @@ struct CalibrationSample {
   std::size_t id{0};                  ///< 会话内单调递增且不会复用的样本编号。
   std::filesystem::path image_path;   ///< 相对于会话目录的原图路径。
   bool active{true};                  ///< 是否参与后续求解和质量验收。
-  double sharpness{0.0};              ///< 接纳时记录的棋盘区域清晰度。
+  double sharpness{0.0};              ///< 棋盘区域清晰度，仅用于诊断，不设门限。
   double projected_area{0.0};         ///< 接纳时记录的棋盘投影面积。
   double horizontal_tilt_ratio{1.0};  ///< 接纳时记录的水平倾斜比。
   double vertical_tilt_ratio{1.0};    ///< 接纳时记录的垂直倾斜比。
@@ -65,8 +61,6 @@ struct CoverageMetrics {
   std::array<bool, 9> grid_cells{};  ///< 画面 3x3 网格中是否至少落入一个角点。
   int occupied_grid_cells{0};        ///< grid_cells 中已覆盖的网格数量。
   double area_ratio{0.0};            ///< 最大与最小棋盘投影面积之比。
-  int horizontal_tilted_views{0};    ///< 达到水平倾斜阈值的有效样本数。
-  int vertical_tilted_views{0};      ///< 达到垂直倾斜阈值的有效样本数。
 };
 
 /**
@@ -118,7 +112,7 @@ class CameraCalibrator final {
   [[nodiscard]] FrameObservation Observe(const cv::Mat& bgr_image) const;
   /** @brief 判断观测的位置、尺度和姿态是否与现有有效样本过于接近。 */
   [[nodiscard]] bool IsLikelyDuplicate(const FrameObservation& observation) const;
-  /** @brief 接纳完整且清晰的观测；成功时分配新样本编号并返回 true。 */
+  /** @brief 接纳完整棋盘观测（清晰度仅记录，不参与筛选）；成功时分配新样本编号并返回 true。 */
   bool AddSample(const FrameObservation& observation, const std::filesystem::path& image_path);
   /** @brief 将最近一个有效样本标为排除，返回其编号；无有效样本时返回空。 */
   [[nodiscard]] std::optional<std::size_t> UndoLastSample();
@@ -133,7 +127,7 @@ class CameraCalibrator final {
   [[nodiscard]] std::size_t ActiveSampleCount() const noexcept;
 
  private:
-  /** @brief 汇总指定样本的 3x3 位置、尺度和双向倾斜覆盖情况。 */
+  /** @brief 汇总指定样本的 3x3 位置覆盖和尺度变化情况。 */
   [[nodiscard]] CoverageMetrics AnalyzeCoverage(
       const std::vector<const CalibrationSample*>& samples) const;
 
