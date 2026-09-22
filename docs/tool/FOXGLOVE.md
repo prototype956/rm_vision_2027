@@ -208,7 +208,7 @@ python3 "$MCAP_ANALYZE" frames artifacts/foxglove/example.mcap \
 
 ## 实机 3D 坐标系
 
-串口配置正确且主程序显示 `IMU:ok sync=true` 后，重启使用新编译的主程序，
+串口配置正确且主程序显示 `IMU:ok profile=... sync=true` 后，重启使用新编译的主程序，
 连接 `ws://<NUC-IP>:8765`（本机使用 `ws://127.0.0.1:8765`）。
 
 1. 新增 **3D** 面板，将 **Fixed frame** 和 **Display frame** 都设为 `world`，
@@ -226,7 +226,8 @@ python3 "$MCAP_ANALYZE" frames artifacts/foxglove/example.mcap \
 Talos 帧不在新话题发布 TF，继续使用控制链 `/vision/transforms`，避免两个时间基准
 同时更新相同 child。无需 ROS 或 robot_state_publisher。
 
-当前平移和 IMU 安装旋转是占位值，三个原点重合属于预期；重叠时可分别切换坐标轴显示。
+当前车辆 IMU 名义安装旋转已固定为 `diag(-1,-1,1)`；平移仍为占位值，三个原点重合
+属于预期。重叠时可分别切换坐标轴显示，其他车辆应先选择对应部署 profile。
 这里只显示最终刚体关系，不显示大 yaw、小 yaw、pitch 的独立机械关节，也不增加未经测量的
 IMU/枪口坐标轴。world 是惯性方向、随相机移动原点的近似，不代表导航位置。
 IMU 失效时停止发布新 TF；Foxglove 可能保留最后一帧坐标轴，因此应同时查看 TF 时间是否

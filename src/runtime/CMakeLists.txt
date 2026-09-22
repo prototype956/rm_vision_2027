@@ -7,6 +7,7 @@ add_library(mv-runtime STATIC
     vision_tuning.cpp
     vision_runtime.cpp
     real_frame_geometry.cpp
+    real_geometry_config.cpp
 )
 
 target_include_directories(mv-runtime

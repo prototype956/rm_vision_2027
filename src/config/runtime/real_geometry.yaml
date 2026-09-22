@@ -1,0 +1,11 @@
+schema_version: 1
+# 实机启动时选择车辆安装方案；Talos 使用仿真同帧几何，不读取此配置。
+active_profile: current_vehicle
+profiles:
+  current_vehicle:
+    # 路径均相对配置根目录（默认 src/config），不相对本文件。
+    imu_config: hal/imu/serial.yaml
+    camera_intrinsics: hal/camera/intrinsics.yaml
+    extrinsics: hal/imu/extrinsics.yaml
+# 部署其他车辆时新增同结构条目并切换 active_profile。
+# 同兵种不同安装也应单独配置；未标定车辆不能直接复用 current_vehicle 的安装矩阵。

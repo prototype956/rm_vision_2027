@@ -13,6 +13,16 @@ struct GimbalExtrinsics {
   RigidTransform gimbal_t_muzzle;                  ///< 枪口系到云台系的安装变换。
 };
 
+/**
+ * @brief 把 IMU 解算机体系角速度转换到云台前、左、上坐标系，单位保持 rad/s。
+ * @param imu_angular_velocity 原始机体系角速度；不能传入已经转换过的云台角速度。
+ * @param extrinsics 已校验的固定安装外参，与姿态转换使用同一个 R_GI。
+ */
+[[nodiscard]] inline Vector3 ResolveGimbalAngularVelocity(
+    const Vector3& imu_angular_velocity, const GimbalExtrinsics& extrinsics) noexcept {
+  return extrinsics.gimbal_q_imu * imu_angular_velocity;
+}
+
 /** @brief 检查矩阵是否为有限、正交且行列式为 +1 的三维旋转矩阵。 */
 [[nodiscard]] inline bool IsRotationMatrix(const Eigen::Matrix3d& rotation) noexcept {
   return rotation.allFinite() &&

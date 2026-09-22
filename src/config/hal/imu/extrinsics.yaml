@@ -1,8 +1,10 @@
 schema_version: 1
-# 仅联通流程；不是实测外参。最终 pitch 刚体系：X 前、Y 左、Z 上。
+# 最终 pitch 刚体系：X 前、Y 左、Z 上。相机/枪口仍为占位，故保留 placeholder。
 placeholder: true
-# 行主序旋转矩阵，child -> gimbal；IMU 的单位矩阵必须后续确认/替换。
-gimbal_r_imu: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+# 行主序旋转矩阵，child -> gimbal。
+# 2026-09-22 单轴实验（1790080270511235、1790080827626598）确认的名义 IMU 轴向：
+# X 后、Y 右、Z 上。大致水平实验仅确认轴向，不把约 0.92 度的拟合偏差固化为精确外参。
+gimbal_r_imu: [-1, 0, 0, 0, -1, 0, 0, 0, 1]
 gimbal_r_camera: [0, 0, 1, -1, 0, 0, 0, -1, 0]
 gimbal_t_camera_m: [0, 0, 0]
 gimbal_r_muzzle: [1, 0, 0, 0, 1, 0, 0, 0, 1]

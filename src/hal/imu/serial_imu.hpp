@@ -36,7 +36,7 @@ struct ImuHealth {
   double offset_us{0};
   double rtt_us{-1};
   double sample_age_ms{-1};
-  geometry::Vector3 gyro_rad_s{geometry::Vector3::Zero()};
+  geometry::Vector3 gyro_rad_s{geometry::Vector3::Zero()};  ///< 原始 IMU 解算机体系，未应用安装旋转。
   std::string reason{"not_started"};
 };
 

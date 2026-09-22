@@ -4,6 +4,7 @@
 #include "geometry/gimbal_geometry.hpp"
 #include "hal/camera/i_camera.hpp"
 #include "hal/imu/serial_imu.hpp"
+#include "runtime/real_geometry_config.hpp"
 
 #include <filesystem>
 #include <string>
@@ -18,10 +19,9 @@ class RealFrameGeometry final {
   [[nodiscard]] const std::string& Status() const noexcept { return status_; }
 
  private:
+  RealGeometryConfig config_;  ///< 先校验部署外参，再启动串口接收。
   hal::SerialImu imu_;
   frame::CameraModel camera_model_;
-  geometry::GimbalExtrinsics extrinsics_;  ///< 纯几何安装模型，不持有硬件或运行状态。
-  bool placeholder_{true};
   bool camera_matches_{false};
   std::uint64_t generation_{0};
   std::chrono::steady_clock::time_point last_log_{};
