@@ -15,6 +15,7 @@ struct MindVisionConfig {
   bool auto_exposure{false};
   int exposure_us{5000};
   int grab_timeout_ms{100};
+  double time_offset_ms{0};  ///< 软件映射采集时间的加性修正。
 };
 
 /**

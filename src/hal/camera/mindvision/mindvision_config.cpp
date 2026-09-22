@@ -3,6 +3,7 @@
 #include "core/config.hpp"
 
 #include <string>
+#include <cmath>
 
 namespace mv::hal::detail {
 
@@ -54,9 +55,13 @@ MindVisionConfig ParseMindVisionConfig(const YAML::Node& root) {
 
   const auto CAPTURE = root["capture"];
   ConfigLoader::RequireMap(CAPTURE, "MindVision camera config.capture");
-  ConfigLoader::RejectUnknownKeys(CAPTURE, {"timeout_ms"}, "MindVision camera config.capture");
+  ConfigLoader::RejectUnknownKeys(CAPTURE, {"timeout_ms", "time_offset_ms"}, "MindVision camera config.capture");
   config.grab_timeout_ms =
       ConfigLoader::Require<int>(CAPTURE, "timeout_ms", "MindVision camera config.capture");
+
+  if (CAPTURE["time_offset_ms"]) config.time_offset_ms = CAPTURE["time_offset_ms"].as<double>();
+  if (!std::isfinite(config.time_offset_ms) || std::abs(config.time_offset_ms) > 1000)
+    throw ConfigError("camera time_offset_ms must be finite and within +/-1000 ms");
 
   if (config.device_index < 0 || config.width <= 0 || config.height <= 0 ||
       config.exposure_us <= 0 || config.grab_timeout_ms <= 0) {

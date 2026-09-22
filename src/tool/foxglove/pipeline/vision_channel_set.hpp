@@ -22,6 +22,7 @@ enum class VisionTopic {
   LIGHTBAR_ANNOTATIONS,  ///< 独立灯条原始、预测及关联标注。
   LIGHTBAR_STATS,        ///< 灯条检测与融合性能 JSON。
   DEBUG_STATS,           ///< 调试发布流水线性能 JSON。
+  REAL_TRANSFORMS,       ///< 实机采集时刻 world -> gimbal -> camera_optical。
   CALIBRATION,           ///< 相机内参与畸变参数。
   FRUSTUM,               ///< camera_optical 下的三维视锥。
   GROUND_TRUTH,          ///< world 下的仿真三维真值。
@@ -54,6 +55,7 @@ struct ChannelIds {
   std::uint64_t lightbar_annotations{0};  ///< 灯条标注频道 ID。
   std::uint64_t lightbar_stats{0};        ///< 灯条检测与融合指标频道 ID。
   std::uint64_t debug_stats{0};           ///< 调试流水线指标频道 ID。
+  std::uint64_t real_transforms{0};       ///< 实机 TF 频道 ID。
   std::uint64_t calibration{0};           ///< 相机标定频道 ID。
   std::uint64_t frustum{0};               ///< 三维视锥频道 ID。
   std::uint64_t ground_truth{0};          ///< 三维真值频道 ID。
@@ -88,7 +90,7 @@ struct ChannelPublishError {
 struct ChannelPublishResult {
   bool attempted{false};                         ///< 是否至少调用了一个频道的 log()。
   bool success{true};                            ///< 所有已尝试频道是否均成功。
-  std::array<ChannelPublishError, 28> errors{};  ///< 每个固定话题最多记录一个错误。
+  std::array<ChannelPublishError, 29> errors{};  ///< 每个固定话题最多记录一个错误。
   std::size_t error_count{0};                    ///< errors 中的有效元素数量。
 };
 
@@ -125,6 +127,7 @@ class VisionChannelSet final {
       lightbar_annotations_;                                ///< 独立灯条标注频道。
   std::unique_ptr<::foxglove::RawChannel> lightbar_stats_;  ///< 灯条检测与融合指标频道。
   std::unique_ptr<::foxglove::RawChannel> debug_stats_;     ///< 调试流水线指标频道。
+  std::unique_ptr<::foxglove::schemas::FrameTransformsChannel> real_transforms_;  ///< 实机 TF。
   std::unique_ptr<::foxglove::schemas::CameraCalibrationChannel> calibration_;  ///< 标定频道。
   std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> frustum_;  ///< 三维视锥频道。
   std::unique_ptr<::foxglove::schemas::SceneUpdateChannel> ground_truth_;  ///< 仿真真值频道。

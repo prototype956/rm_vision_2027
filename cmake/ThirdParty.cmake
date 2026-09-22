@@ -1,5 +1,5 @@
 # ============================================================================
-# Repository-provided third-party dependencies
+# 仓库提供的第三方依赖
 # ============================================================================
 
 message(STATUS "Configuring third-party dependencies...")

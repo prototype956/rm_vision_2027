@@ -1,4 +1,5 @@
 #include "runtime/vision_runtime.hpp"
+#include "runtime/real_frame_geometry.hpp"
 
 #include "core/logger.hpp"
 #include "hal/camera/i_camera.hpp"
@@ -104,7 +105,7 @@ VisionRuntime::VisionRuntime(hal::ICamera& camera, VisionPipeline& pipeline,
                              IRuntimeDiagnosticsSink* diagnostics,
                              tool::simulation_evaluation::SimulationEvaluator* evaluator,
                              RuntimeSupervisor& supervisor,
-                             VisionTuningMailbox* tuning_mailbox) noexcept
+                             VisionTuningMailbox* tuning_mailbox, RealFrameGeometry* real_geometry) noexcept
     : camera_(camera),
       pipeline_(pipeline),
       control_(control),
@@ -112,7 +113,7 @@ VisionRuntime::VisionRuntime(hal::ICamera& camera, VisionPipeline& pipeline,
       diagnostics_(diagnostics),
       evaluator_(evaluator),
       supervisor_(supervisor),
-      tuning_mailbox_(tuning_mailbox) {}
+      tuning_mailbox_(tuning_mailbox), real_geometry_(real_geometry) {}
 
 RuntimeRunResult VisionRuntime::Run(const std::function<bool()>& stop_requested) {
   const auto STOP_WITH_TERMINAL = [this](RuntimeTerminationReason fallback) {
@@ -157,8 +158,10 @@ RuntimeRunResult VisionRuntime::Run(const std::function<bool()>& stop_requested)
       }
       VisionFrameResult result;
       try {
+        if (real_geometry_) real_geometry_->Attach(packet);
         const auto SPATIAL = frame::MakeSpatialFrameView(packet);
         result = pipeline_.Process({.capture = packet.capture, .spatial = SPATIAL});
+        if (real_geometry_) result.diagnostics.real_geometry_status = real_geometry_->Status();
       } catch (const std::exception& error) {
         static_cast<void>(
             supervisor_.Report(RuntimeFaultCode::VISION_PIPELINE_EXCEPTION, error.what()));
@@ -247,6 +250,9 @@ RuntimeRunResult VisionRuntime::Run(const std::function<bool()>& stop_requested)
         try {
           cv::Mat debug_image = packet.capture.image.clone();
           DrawDetections(debug_image, result.output.detections, result.diagnostics.detector);
+          if (!result.diagnostics.real_geometry_status.empty())
+            cv::putText(debug_image, result.diagnostics.real_geometry_status, {10, 54},
+                        cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 200, 255), 1, cv::LINE_AA);
           window_->Show(debug_image);
         } catch (const std::exception& error) {
           window_operation_failed = true;

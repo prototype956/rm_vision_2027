@@ -24,6 +24,7 @@ VisionDebugPipeline::VisionDebugPipeline(const Config& config, runtime::Foxglove
       session_.RegisterLiveChannel(live_channel_ids_.lightbar_annotations);
       session_.RegisterLiveChannel(live_channel_ids_.lightbar_stats);
       session_.RegisterLiveChannel(live_channel_ids_.debug_stats);
+      session_.RegisterLiveChannel(live_channel_ids_.real_transforms);
       session_.RegisterLiveChannel(live_channel_ids_.calibration);
       session_.RegisterLiveChannel(live_channel_ids_.frustum);
       session_.RegisterLiveChannel(live_channel_ids_.ground_truth);
@@ -93,6 +94,7 @@ TopicDemand VisionDebugPipeline::LiveDemand() const noexcept {
           session_.Subscription(live_channel_ids_.lightbar_annotations).subscribers > 0,
       .lightbar_stats = session_.Subscription(live_channel_ids_.lightbar_stats).subscribers > 0,
       .debug_stats = session_.Subscription(live_channel_ids_.debug_stats).subscribers > 0,
+      .real_transforms = session_.Subscription(live_channel_ids_.real_transforms).subscribers > 0,
       .calibration = session_.Subscription(live_channel_ids_.calibration).subscribers > 0,
       .frustum = session_.Subscription(live_channel_ids_.frustum).subscribers > 0,
       .ground_truth = session_.Subscription(live_channel_ids_.ground_truth).subscribers > 0,
@@ -208,6 +210,7 @@ void VisionDebugPipeline::ProcessFrame(const VisionDebugFrame& frame) {
                                                             .lightbar_annotations = true,
                                                             .lightbar_stats = true,
                                                             .debug_stats = true,
+                                                            .real_transforms = true,
                                                             .calibration = true,
                                                             .frustum = true,
                                                             .ground_truth = true,

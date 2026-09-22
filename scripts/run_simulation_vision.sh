@@ -69,8 +69,8 @@ TALOS_META="$(awk '$1 == "meta_path:" { print $2; exit }' "${TALOS_CONFIG}")"
 TALOS_IMAGE_POOL="$(awk '$1 == "image_pool_path:" { print $2; exit }' "${TALOS_CONFIG}")"
 [[ -n "${TALOS_META}" && -n "${TALOS_IMAGE_POOL}" ]] || die "Talos shared-memory paths are missing in ${TALOS_CONFIG}"
 
-# Talos uses persistent mmap-backed files. Remember the old metadata timestamp so a
-# previous run cannot make the launcher report ready before this simulator publishes.
+# Talos 使用持久化的 mmap 文件；记录旧元数据时间戳，
+# 防止启动器在本次仿真发布数据前，将上次运行的文件误判为已就绪。
 TALOS_META_MTIME_BEFORE=""
 if [[ -e "${TALOS_META}" ]]; then
   TALOS_META_MTIME_BEFORE="$(stat -c '%y' "${TALOS_META}")"
@@ -100,10 +100,10 @@ fi
 UNRESOLVED_VISION_LIBRARIES="$(ldd "${VISION_BIN}" | awk '/not found/ { print $1 }')"
 [[ -z "${UNRESOLVED_VISION_LIBRARIES}" ]] || die "vision has unresolved shared libraries: ${UNRESOLVED_VISION_LIBRARIES//$'\n'/, }"
 
-# Bevy's dynamic_linking feature keeps both Bevy and Rust's standard library outside the
-# executable. Cargo normally supplies these paths for `cargo run`; direct execution must do so.
+# Bevy 的 dynamic_linking 功能将 Bevy 和 Rust 标准库置于可执行文件之外。
+# cargo run 通常会提供这些库路径；直接运行时需要显式配置。
 RUST_SYSROOT="$("${RUSTC_BIN}" --print sysroot)"
-# Read the complete pipe: an early awk exit can SIGPIPE rustc under pipefail.
+# 完整读取管道；启用 pipefail 时，awk 提前退出可能使 rustc 收到 SIGPIPE。
 RUST_HOST="$("${RUSTC_BIN}" -vV | awk '$1 == "host:" { print $2 }')"
 SIMULATOR_DEPS_DIR="${SIMULATOR_ROOT}/target/release/deps"
 RUST_STD_LIB_DIR="${RUST_SYSROOT}/lib/rustlib/${RUST_HOST}/lib"
@@ -119,8 +119,8 @@ echo "[launcher] vision:    CPUs ${VISION_CPUSET}"
 
 (
   cd -- "${SIMULATOR_ROOT}"
-  # A directly executed Bevy binary otherwise resolves assets relative to target/release.
-  # Point it at the repository root so AssetPlugin finds ${SIMULATOR_ROOT}/assets.
+  # 直接运行 Bevy 二进制时，默认相对于 target/release 查找资源。
+  # 将资源根路径指向仓库根目录，使 AssetPlugin 找到 ${SIMULATOR_ROOT}/assets。
   export BEVY_ASSET_ROOT="${SIMULATOR_ROOT}"
   export LD_LIBRARY_PATH="${SIMULATOR_LD_LIBRARY_PATH}"
   exec taskset -c "${SIMULATOR_CPUSET}" nice -n "${SIMULATOR_NICE}" "${SIMULATOR_BIN}"

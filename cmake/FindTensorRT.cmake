@@ -1,5 +1,5 @@
-# TensorRT C++ SDK: supports distribution multiarch layouts and NVIDIA tar archives.
-# Use -DTensorRT_ROOT=/path/to/sdk for a local, non-system installation.
+# TensorRT C++ SDK 查找：支持发行版的多架构目录布局和 NVIDIA 压缩包。
+# 对于非系统安装的本地 SDK，使用 -DTensorRT_ROOT=/path/to/sdk 指定路径。
 find_path(TensorRT_INCLUDE_DIR NvInfer.h
     HINTS ${TensorRT_ROOT} ENV TensorRT_ROOT
     PATH_SUFFIXES include include/${CMAKE_LIBRARY_ARCHITECTURE})
@@ -17,7 +17,7 @@ if(TensorRT_INCLUDE_DIR AND EXISTS "${TensorRT_INCLUDE_DIR}/NvInferVersion.h")
     foreach(_part MAJOR MINOR PATCH)
         string(REGEX MATCH "#define[ \t]+NV_TENSORRT_${_part}[ \t]+([A-Za-z0-9_]+)" _match "${_trt_version_header}")
         set(_value "${CMAKE_MATCH_1}")
-        # NVIDIA packages may alias these to TRT_*_ENTERPRISE instead of numeric literals.
+        # NVIDIA 软件包可能将这些值定义为 TRT_*_ENTERPRISE 别名，而非数字字面量。
         if(NOT _value MATCHES "^[0-9]+$")
             string(REGEX MATCH "#define[ \t]+${_value}[ \t]+([0-9]+)" _match "${_trt_version_header}")
             set(_value "${CMAKE_MATCH_1}")

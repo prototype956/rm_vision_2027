@@ -6,7 +6,7 @@
 #include <optional>
 namespace mv::modules {
 using ControlStepResult = FireControlResult;
-/** @brief Synchronous single-owner control chain. Step/AcknowledgePublication must alternate. */
+/** @brief 单一调用方拥有的同步控制链；Step 与 AcknowledgePublication 必须交替调用。 */
 class ControlSession final {
  public:
   ControlSession(FireControlConfig config, GimbalTrajectoryPlannerConfig planner);
@@ -26,8 +26,9 @@ class ControlSession final {
                                                  std::chrono::steady_clock::time_point now,
                                                  std::uint64_t command_timestamp_ns,
                                                  const ControlPolicy& policy);
-  /** @brief A send acknowledgement is not a launch confirmation. Rejects duplicate/stale
-   * acknowledgements. */
+  /**
+   * @brief 确认发送结果，拒绝重复或过期确认；发送成功不代表实际发射。
+   */
   void AcknowledgePublication(ControlStepResult& result, bool succeeded,
                               std::chrono::steady_clock::time_point now);
   void ClearPublishedProjection(std::string_view reason) noexcept;

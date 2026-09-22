@@ -4,7 +4,7 @@
 
 #include <cmath>
 namespace mv::runtime {
-/** @brief Whitelist sampled self data. Simulation and monotonic epochs are never subtracted. */
+/** @brief 按白名单提取己方采样数据；禁止直接对仿真时钟与单调时钟作差。 */
 [[nodiscard]] inline modules::RefereeObservation AdaptRefereeObservation(
     const simulation::CombatFrameMeta* combat, std::uint64_t round,
     std::optional<std::chrono::steady_clock::time_point> frame_time,

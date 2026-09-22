@@ -1,7 +1,7 @@
 #pragma once
 #include "modules/fire_control/control_types.hpp"
 namespace mv::modules {
-/** @brief Legacy target selection and firing heuristics; one instance per control session. */
+/** @brief 沿用既有的目标选择与开火启发式规则，每个控制会话独占一个实例。 */
 class RulePolicy final {
  public:
   explicit RulePolicy(FireControlConfig config) : config_(config) {}

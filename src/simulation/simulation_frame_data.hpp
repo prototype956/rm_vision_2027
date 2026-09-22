@@ -33,7 +33,7 @@ struct GroundTruthArmor {
   double width_m{0.0};
   double height_m{0.0};
   geometry::RigidTransform world_t_armor;
-  std::array<geometry::Vector3, 4> corners_world{};  ///< TL/TR/BR/BL。
+  std::array<geometry::Vector3, 4> corners_world{};  ///< 角点顺序：左上、右上、右下、左下（TL/TR/BR/BL）。
 };
 
 /** @brief 与仿真图像同帧采样的弹丸累计统计。 */

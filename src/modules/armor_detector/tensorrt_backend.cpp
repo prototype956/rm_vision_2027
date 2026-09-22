@@ -30,12 +30,12 @@ void CheckCuda(cudaError_t status, const char* operation) {
 class TensorRtLogger final : public nvinfer1::ILogger {
  public:
   void log(Severity severity, const char* message) noexcept override {
-    // TensorRT invokes this noexcept callback from internal threads as well.
+    // TensorRT 内部线程也会调用此 noexcept 回调。
     try {
       if (severity <= Severity::kWARNING)
         MV_LOG_WARN("TensorRT", "{}", message);
     } catch (...) {
-      // Fallback does not allocate or unwind through the TensorRT ABI.
+      // 回退路径不分配内存，也不允许异常越过 TensorRT ABI 边界。
       std::fputs("TensorRT logger failed: ", stderr);
       std::fputs(message, stderr);
       std::fputc('\n', stderr);
@@ -44,8 +44,8 @@ class TensorRtLogger final : public nvinfer1::ILogger {
 };
 
 std::shared_ptr<TensorRtLogger> GetTensorRtLogger() {
-  // TensorRT registers one process-wide logger. Sharing ownership keeps it alive even
-  // when the first detector is destroyed before another detector or a static runtime.
+  // TensorRT 注册进程级日志器；通过共享所有权，保证首个检测器先于其他检测器
+  // 或静态运行时销毁时，日志器仍然有效。
   static const auto LOGGER = std::make_shared<TensorRtLogger>();
   return LOGGER;
 }
@@ -64,7 +64,7 @@ bool HasShape(const nvinfer1::Dims& shape, const std::array<int, 4>& expected, i
 class TensorRtBackend final : public ArmorInferenceBackend {
  public:
   ~TensorRtBackend() override {
-    // Init can throw after any allocation; release resources on their owning device.
+    // Init 在任意资源分配后都可能抛出异常；必须在资源所属设备上完成释放。
     if (device_index_ < 0)
       return;
     (void)cudaSetDevice(device_index_);
@@ -105,7 +105,7 @@ class TensorRtBackend final : public ArmorInferenceBackend {
       std::unique_ptr<nvinfer1::IBuilder> builder(nvinfer1::createInferBuilder(*logger_));
       if (!builder)
         throw ArmorDetectorInitError("could not create TensorRT builder");
-        // TensorRT 11 makes strongly typed networks the default and removes this flag.
+        // TensorRT 11 默认使用强类型网络，并移除了此标志。
 #if NV_TENSORRT_MAJOR < 11
       constexpr auto FLAGS =
           1U << static_cast<unsigned>(nvinfer1::NetworkDefinitionCreationFlag::kSTRONGLY_TYPED);
@@ -121,7 +121,7 @@ class TensorRtBackend final : public ArmorInferenceBackend {
                                  static_cast<int>(nvinfer1::ILogger::Severity::kWARNING))) {
         throw ArmorDetectorInitError("TensorRT could not parse ONNX; see TensorRT log");
       }
-      // Reject dynamic/wrong contracts before spending time building CUDA tactics.
+      // 在构建 CUDA 执行策略前，先拒绝动态形状或不符合接口约定的模型。
       if (network->getNbInputs() != 1 || network->getNbOutputs() != 1 ||
           std::string_view(network->getInput(0)->getName()) != K_INPUT_NAME ||
           std::string_view(network->getOutput(0)->getName()) != K_OUTPUT_NAME ||
@@ -168,7 +168,7 @@ class TensorRtBackend final : public ArmorInferenceBackend {
 
   std::span<const float> Infer() override {
     CheckCuda(cudaSetDevice(device_index_), "select CUDA device for inference");
-    // Same contract as OpenVINO: NHWC BGR U8 -> NCHW RGB FP16, normalized by 255.
+    // 与 OpenVINO 采用相同约定：NHWC BGR U8 转为 NCHW RGB FP16，并除以 255 归一化。
     for (int row = 0; row < K_MODEL_HEIGHT; ++row) {
       const auto* pixels = input_image_.ptr<cv::Vec3b>(row);
       for (int col = 0; col < K_MODEL_WIDTH; ++col) {
@@ -192,8 +192,8 @@ class TensorRtBackend final : public ArmorInferenceBackend {
           "copy TensorRT output");
       CheckCuda(cudaStreamSynchronize(stream_), "synchronize TensorRT inference");
     } catch (...) {
-      // A failed enqueue/copy can leave earlier operations pending. Do not let the next
-      // Detect overwrite host buffers until those operations have finished.
+      // 入队或复制失败后，先前操作仍可能尚未完成；必须等其结束，
+      // 才能允许下一次 Detect 覆盖主机缓冲区。
       (void)cudaStreamSynchronize(stream_);
       throw;
     }
@@ -224,7 +224,7 @@ class TensorRtBackend final : public ArmorInferenceBackend {
     }
   }
 
-  // Logger outlives all TensorRT objects; context is destroyed before engine/runtime.
+  // 日志器生命周期长于所有 TensorRT 对象；上下文先于引擎和运行时销毁。
   std::shared_ptr<TensorRtLogger> logger_{GetTensorRtLogger()};
   std::unique_ptr<nvinfer1::IRuntime> runtime_;
   std::unique_ptr<nvinfer1::ICudaEngine> engine_;

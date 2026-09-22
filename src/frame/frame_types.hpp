@@ -18,6 +18,8 @@ struct FrameStamp {
   std::optional<std::chrono::steady_clock::time_point>
       capture_steady_time;  ///< 数据源采集时刻映射到本机单调时钟。
   std::optional<std::uint64_t> capture_timestamp_ns;  ///< 数据源采集 Unix epoch 纳秒时间。
+  std::optional<std::uint64_t> sensor_timestamp_us;  ///< 相机设备相对时间，非 Unix epoch。
+  bool capture_time_estimated{false};  ///< 软件映射的采集时间，不代表硬件曝光同步。
   std::uint64_t sequence{0};               ///< 本次数据源 Open() 后递增的帧序号。
   std::uint64_t source_invalid_frames{0};  ///< 数据源累计拒绝的无效帧数。
 };

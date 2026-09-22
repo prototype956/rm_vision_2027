@@ -1,0 +1,9 @@
+schema_version: 1
+# 仅联通流程；不是实测外参。最终 pitch 刚体系：X 前、Y 左、Z 上。
+placeholder: true
+# 行主序旋转矩阵，child -> gimbal；IMU 的单位矩阵必须后续确认/替换。
+gimbal_r_imu: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+gimbal_r_camera: [0, 0, 1, -1, 0, 0, 0, -1, 0]
+gimbal_t_camera_m: [0, 0, 0]
+gimbal_r_muzzle: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+gimbal_t_muzzle_m: [0, 0, 0]

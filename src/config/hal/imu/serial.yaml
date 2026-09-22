@@ -1,0 +1,12 @@
+schema_version: 1
+enabled: true
+# 必须填写实际 USB 转串口路径，推荐 /dev/serial/by-id/...；空值仅运行检测。
+device: "/dev/ttyUSB0"
+baud: 460800
+startup_sync_ms: 100
+sync_ms: 1000
+timeout_ms: 3000
+cache_ms: 2000
+max_gap_ms: 20
+wait_ms: 10
+

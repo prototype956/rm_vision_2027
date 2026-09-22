@@ -1,5 +1,5 @@
 schema_version: 2
-# auto: prefer an available compiled TensorRT backend, then OpenVINO GPU.
+# auto：优先选择已编译且可用的 TensorRT 后端，其次选择 OpenVINO GPU。
 backend: openvino
 model_path: src/modules/armor_detector/models/0526.onnx
 device: GPU

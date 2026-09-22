@@ -25,6 +25,8 @@ PASS/FAIL 判定。
 - `/vision/lightbars/annotations`：独立灯条原始/去重/拒绝/接受状态及预测灯条。
 - `/vision/lightbars/stats`：实际阈值、轮廓筛选、检测耗时、融合计数和安全回退状态。
 - `/vision/debug/stats`：采集时间、空间元数据状态、JPEG 耗时、发布延迟及调试丢帧统计。
+- `/vision/camera/transforms`：实机图像采集时刻的 `foxglove.FrameTransforms`，发布
+  `world -> gimbal -> camera_optical`；只在该帧具有有效平台运动学时发送。
 - `/vision/transforms`：控制时刻的 `world -> gimbal -> camera_optical` 两级短时外推 TF。
 - `/vision/camera/calibration`：与当前图像同帧的针孔内参和畸变参数。
 - `/vision/camera/frustum`：位于 `camera_optical` 下、深度 1 米的相机视锥。
@@ -202,3 +204,32 @@ python3 "$MCAP_ANALYZE" frames artifacts/foxglove/example.mcap \
 `frames` 默认抽取 6 帧且最多 50 帧。抽帧、叠加图和 manifest 默认写入
 `/tmp/mcap-analysis/`。所有命令只读源 MCAP；禁止用该工作流执行 `add`、`filter`、
 `compress`、`recover` 等改写操作。
+
+
+## 实机 3D 坐标系
+
+串口配置正确且主程序显示 `IMU:ok sync=true` 后，重启使用新编译的主程序，
+连接 `ws://<NUC-IP>:8765`（本机使用 `ws://127.0.0.1:8765`）。
+
+1. 新增 **3D** 面板，将 **Fixed frame** 和 **Display frame** 都设为 `world`，
+   以固定观察方向查看云台旋转，避免视角跟随相机一起旋转。
+2. 在 **Transforms** 中启用 `world`、`gimbal`、`camera_optical` 的显示，打开 **Labels**；
+   **Axis scale** 可从 0.2 开始调整。红、绿、蓝轴分别表示 X、Y、Z。
+3. 在 **Topics** 中启用 `/vision/camera/frustum`，观察相机朝向和视场。
+4. 可另加 **Transform Tree** 检查父子关系，或用 **Raw Messages** 查看
+   `/vision/camera/transforms` 的时间、平移和四元数。
+
+实机 TF、视锥、图像等同帧消息共用采集时间；没有采集时间的源才回退接收时间。
+采集单调时间通过固定时钟锚点转换为消息 epoch 时间。实机相机时间仍为软件估计。
+新 TF 跟随视觉调试队列的 `image.max_fps` 限流（默认 20 Hz），不是原始 200 Hz IMU 流。
+实时订阅与已启用的 MCAP 录制均包含该话题；无需额外开启录制。
+Talos 帧不在新话题发布 TF，继续使用控制链 `/vision/transforms`，避免两个时间基准
+同时更新相同 child。无需 ROS 或 robot_state_publisher。
+
+当前平移和 IMU 安装旋转是占位值，三个原点重合属于预期；重叠时可分别切换坐标轴显示。
+这里只显示最终刚体关系，不显示大 yaw、小 yaw、pitch 的独立机械关节，也不增加未经测量的
+IMU/枪口坐标轴。world 是惯性方向、随相机移动原点的近似，不代表导航位置。
+IMU 失效时停止发布新 TF；Foxglove 可能保留最后一帧坐标轴，因此应同时查看 TF 时间是否
+持续更新以及主程序 IMU 状态，不能仅凭画面存在判断链路在线。
+
+面板选项参考 [Foxglove 3D 官方说明](https://docs.foxglove.dev/docs/visualization/panels/3d)。

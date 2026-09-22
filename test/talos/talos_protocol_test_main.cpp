@@ -78,7 +78,7 @@ int main() {
     region.header.version = 6;
     Require(!camera.Open(config), "camera accepted v6");
     Require(!sink.Open(sink_config), "sink accepted v6");
-    // A real v6 file is smaller than v7: version diagnostics must precede size diagnostics.
+    // 实际 v6 文件小于 v7；必须先检查版本，再检查文件大小。
     TemporaryMapping old_metadata(18816);
     *static_cast<ipc::ShmHeader*>(old_metadata.Address()) = region.header;
     config.meta_path = old_metadata.Path();
@@ -120,7 +120,7 @@ int main() {
     frame.combat.round_started_ns = 100'000'000;
     frame.combat.sim_time_ns = 250'000'000;
     frame.combat.referee_sample_ns = 200'000'000;
-    // Publish only after camera Open(), which discards any earlier queued frame.
+    // 仅在相机 Open() 后发布；Open() 会丢弃此前排队的帧。
     region.frame.slots[0] = frame;
     __atomic_store_n(&region.frame.state, ipc::K_FLAG_NEW, __ATOMIC_RELEASE);
     mv::frame::FramePacket packet;
@@ -140,7 +140,7 @@ int main() {
     Require(wire.source_round_id == 2 && wire.source_frame_sequence == 7 &&
                 wire.source_capture_timestamp_ns == frame.capture_timestamp_ns,
             "command source provenance lost");
-    // A sample from another round must reject the entire packet.
+    // 样本来自其他回合时，必须拒绝整个数据包。
     frame.frame_sequence++;
     frame.capture_timestamp_ns++;
     frame.camera_info.timestamp_ns = frame.capture_timestamp_ns;

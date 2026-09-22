@@ -47,6 +47,7 @@ class LatestPreview final {
     std::vector<modules::ArmorDetection> detections;
     modules::ArmorDetectorDiagnostics detector;
     std::uint64_t sequence{0};
+    std::string geometry_status;
   };
 
   void WorkerLoop() noexcept;

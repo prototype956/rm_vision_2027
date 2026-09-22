@@ -1,4 +1,4 @@
-# Requires simulator Talos IPC v7; combat telemetry: docs/test/talos_combat.md.
+# 需要仿真器支持 Talos IPC v7；战斗遥测说明见 docs/test/talos_combat.md。
 schema_version: 1
 shared_memory:
   meta_path: /tmp/talos_ipc_meta

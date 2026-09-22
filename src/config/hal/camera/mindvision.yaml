@@ -17,3 +17,4 @@ exposure:
 
 capture:
   timeout_ms: 100
+  time_offset_ms: 0  # 加到软件映射的采集时刻；曝光相位待实机确认。

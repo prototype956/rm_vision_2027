@@ -21,6 +21,7 @@ namespace mv::runtime {
 class ControlRuntime;
 class IRuntimeDiagnosticsSink;
 class VisionPipeline;
+class RealFrameGeometry;
 class VisionTuningMailbox;
 
 /** @brief 驱动相机、单帧感知流水线、调试输出和控制快照交接。 */
@@ -30,7 +31,8 @@ class VisionRuntime final {
                 tool::DebugWindow* window, IRuntimeDiagnosticsSink* diagnostics,
                 tool::simulation_evaluation::SimulationEvaluator* evaluator,
                 RuntimeSupervisor& supervisor,
-                VisionTuningMailbox* tuning_mailbox = nullptr) noexcept;
+                VisionTuningMailbox* tuning_mailbox = nullptr,
+                RealFrameGeometry* real_geometry = nullptr) noexcept;
 
   /**
    * @brief 持续处理相机帧，直到收到停止请求、窗口退出或运行时故障。
@@ -48,6 +50,7 @@ class VisionRuntime final {
   tool::simulation_evaluation::SimulationEvaluator* evaluator_{nullptr};
   RuntimeSupervisor& supervisor_;
   VisionTuningMailbox* tuning_mailbox_{nullptr};
+  RealFrameGeometry* real_geometry_{nullptr};
 };
 
 }  // namespace mv::runtime

@@ -7,11 +7,13 @@
 #include "modules/armor_predictor/armor_prediction_types.hpp"
 
 #include <vector>
+#include <string>
 
 namespace mv::runtime {
 
 /** @brief 当前帧只交给评估、日志、窗口和可视化的诊断数据。 */
 struct VisionFrameDiagnostics {
+  std::string real_geometry_status;  ///< 实机同步及占位外参诊断，不参与算法。
   modules::ArmorDetectorDiagnostics detector;
   std::vector<modules::CornerRefinementDiagnostics> refinements;
   modules::LightbarDetectorDiagnostics lightbars;

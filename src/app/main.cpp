@@ -17,6 +17,7 @@
 #include "runtime/runtime_supervisor.hpp"
 #include "runtime/vision_pipeline.hpp"
 #include "runtime/vision_runtime.hpp"
+#include "runtime/real_frame_geometry.hpp"
 #include "runtime/vision_tuning.hpp"
 #include "tool/debug/debug_window.hpp"
 #include "tool/foxglove/foxglove_config.hpp"
@@ -159,8 +160,8 @@ CameraSelection LoadCameraSelection(const std::filesystem::path& config_root) {
 
 int Run() {
   try {
-    // Explicit experiment copies can disable recording and pin module configs without editing
-    // the operator's defaults. Model paths remain anchored to the compiled project root.
+    // 使用独立实验配置副本关闭录制或固定模块参数，不修改用户默认配置。
+    // 模型路径始终相对于编译时确定的项目根目录解析。
     const char* config_override = std::getenv("RM_VISION_CONFIG_ROOT");
     const std::filesystem::path CONFIG_ROOT =
         config_override && *config_override ? config_override : CONFIG_FILE_PATH;
@@ -350,9 +351,13 @@ int Run() {
       MV_LOG_INFO("Control", "Talos 100 Hz trajectory planning and fire control started");
     }
 
+    std::unique_ptr<runtime::RealFrameGeometry> real_geometry;
+    if (CAMERA_SELECTION.backend == "mindvision")
+      real_geometry = std::make_unique<runtime::RealFrameGeometry>(CONFIG_ROOT, camera->Info());
+
     runtime::VisionRuntime vision_runtime(*camera, *pipeline, control_runtime.get(), window.get(),
                                           diagnostics_sink, simulation_evaluator.get(), supervisor,
-                                          &tuning_mailbox);
+                                          &tuning_mailbox, real_geometry.get());
     return runtime::RuntimeExitCode(
         vision_runtime.Run([] { return g_stop_requested != 0; }).reason);
   } catch (const std::exception& error) {

@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <mutex>
+#include <deque>
 #include <string>
 #include <utility>
 #include <vector>
@@ -70,6 +71,10 @@ struct MindVisionDevice::Impl {
   bool handle_valid{false};
   bool streaming{false};
   uint64_t sequence{0};
+  bool clock_started{false};
+  std::uint32_t last_tick{0};
+  std::uint64_t extended_tick{0};
+  std::deque<std::pair<double, double>> clock_offsets;
   CameraInfo info{};
   MindVisionConfig config{};
   bool timeout_active{false};
@@ -231,6 +236,8 @@ struct MindVisionDevice::Impl {
     }
     streaming = true;
     sequence = 0;
+    clock_started = false;
+    clock_offsets.clear();
     info.device_name = std::string(device_info.acProductName) + " sn=" + device_info.acSn;
     info.sensor_width = capability.sResolutionRange.iWidthMax;
     info.sensor_height = capability.sResolutionRange.iHeightMax;
@@ -334,6 +341,32 @@ GrabStatus MindVisionDevice::Grab(frame::FramePacket& packet) {
     return RESULT;
   }
 
+  const auto RECEIVE_TIME = std::chrono::steady_clock::now();
+  // SDK 时间戳单位为 0.1 ms；SDK 未明确其对应的曝光阶段。
+  const auto TICK = static_cast<std::uint32_t>(frame_head.uiTimeStamp);
+  const auto DELTA = static_cast<std::uint32_t>(TICK - impl_->last_tick);
+  const double RECEIVE_US = std::chrono::duration<double, std::micro>(
+      RECEIVE_TIME.time_since_epoch()).count();
+  bool clock_valid = true;
+  if (!impl_->clock_started || DELTA > 100000U || DELTA == 0) {
+    impl_->clock_offsets.clear();
+    impl_->extended_tick = TICK;
+    clock_valid = false;
+  } else {
+    impl_->extended_tick += DELTA;
+  }
+  impl_->clock_started = true;
+  impl_->last_tick = TICK;
+  const double DEVICE_US = static_cast<double>(impl_->extended_tick) * 100.0;
+  impl_->clock_offsets.emplace_back(RECEIVE_US, RECEIVE_US - DEVICE_US);
+  while (impl_->clock_offsets.size() > 2048 ||
+         RECEIVE_US - impl_->clock_offsets.front().first > 10000000.0)
+    impl_->clock_offsets.pop_front();
+  const auto BEST = std::min_element(impl_->clock_offsets.begin(), impl_->clock_offsets.end(),
+      [](const auto& a, const auto& b) { return a.second < b.second; });
+  const double ESTIMATED_US = DEVICE_US + BEST->second + impl_->config.time_offset_ms * 1000.0;
+  clock_valid = clock_valid && impl_->clock_offsets.size() >= 8;
+
   impl_->LogRecovery();
   RawBufferLease raw_buffer_lease(impl_->camera_handle, raw_buffer);
   GrabStatus frame_status = GrabStatus::OK;
@@ -367,7 +400,14 @@ GrabStatus MindVisionDevice::Grab(frame::FramePacket& packet) {
 
   packet = {};
   packet.capture.image = std::move(image);
-  packet.capture.stamp.receive_steady_time = std::chrono::steady_clock::now();
+  packet.capture.stamp.receive_steady_time = RECEIVE_TIME;
+  packet.capture.stamp.sensor_timestamp_us = impl_->extended_tick * 100U;
+  packet.capture.stamp.capture_time_estimated = true;
+  if (clock_valid) {
+    packet.capture.stamp.capture_steady_time = std::chrono::steady_clock::time_point(
+        std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double, std::micro>(ESTIMATED_US)));
+  }
   packet.capture.stamp.sequence = impl_->sequence++;
   return GrabStatus::OK;
 #endif

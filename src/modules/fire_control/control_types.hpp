@@ -75,7 +75,7 @@ struct ArmorImpactSnapshot {
   BallisticSolution ballistic;       ///< 弹道目标、飞行时间及其准确预测时域。
 };
 
-/** @brief Deployment-visible sampled referee data; no evaluation counters. */
+/** @brief 部署端可见的裁判采样数据，不包含评估计数器。 */
 struct RefereeObservation {
   bool valid{false};
   bool alive{false};
@@ -87,7 +87,7 @@ struct RefereeObservation {
   double heat_limit{0.0};
   double cooling_per_second{0.0};
   std::uint64_t sample_sequence{0};
-  std::uint64_t sample_time_ns{0};  ///< Source simulation clock, metadata only.
+  std::uint64_t sample_time_ns{0};  ///< 数据源仿真时钟，仅作为元数据。
   double age_at_receive_s{0.0};
   std::chrono::steady_clock::time_point received_at{};
 };
@@ -96,7 +96,7 @@ struct RefereeObservation {
                                                    std::chrono::steady_clock::time_point now,
                                                    double max_age_s) noexcept;
 
-/** @brief Version 1 actions: 0 wait; 1+2*i track; 2+2*i request one shot. */
+/** @brief 版本 1 动作编码：0 表示等待，1+2*i 表示跟踪，2+2*i 表示请求单发。 */
 struct PolicyDecision {
   int action{0};
   [[nodiscard]] bool Valid() const noexcept { return action >= 0 && action <= 8; }
@@ -172,7 +172,7 @@ struct FireControlDiagnostics {
   double target_linear_speed_mps{0.0};
   double target_spin_rate_rad_s{0.0};
   double control_compute_time_us{
-      0.0};  ///< Step and publication bookkeeping, excluding transport send.
+      0.0};  ///< 控制步进及发布状态维护，不包含传输发送。
   double referee_age_s{0.0};
   double control_period_s{0.0};
   double deadline_lateness_us{0.0};
@@ -191,13 +191,13 @@ struct FireControlDiagnostics {
 struct FireControlResult {
   std::uint64_t cycle_id{0};
   const void* session_owner{
-      nullptr};  ///< Process-local acknowledgement identity; not an observation.
+      nullptr};  ///< 进程内确认标识，不属于观测数据。
   std::optional<PolicyDecision> decision;
   FireControlOutput output;
   FireControlDiagnostics diagnostics;
 };
 
-/** @brief Unnormalized semantic observation, world Z-up; angles rad, distances m, ages s. */
+/** @brief 未归一化的语义观测；world 的 Z 轴向上，角度单位为弧度、距离为米、年龄为秒。 */
 struct PolicyObservation {
   static constexpr std::uint32_t VERSION = 1;
   ArmorPredictionOutput estimate;

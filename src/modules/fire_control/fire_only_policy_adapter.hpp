@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cmath>
 namespace mv::modules {
-/** @brief Fire-only ablation: the rule selector runs every cycle, even for no-shot decisions. */
+/** @brief 仅开火决策消融：每个周期都运行规则选择器，包括不发射的周期。 */
 class FireOnlyPolicyAdapter final {
  public:
   explicit FireOnlyPolicyAdapter(FireControlConfig config) : config_(config), rule_(config) {}
@@ -36,7 +36,8 @@ class FireOnlyPolicyAdapter final {
                          observation.feedback, now, diagnostics);
     return {SLOT < 0 ? 0 : 1 + 2 * SLOT + int(fire)};
   }
-  /** @brief Bind the action mask to the selected rule slot; WAIT is only available without a slot.
+  /**
+   * @brief 将动作掩码绑定到规则选中的槽位；仅在无选中槽位时允许 WAIT。
    */
   static void RestrictMask(PolicyObservation& observation, PolicyDecision choice) noexcept {
     const auto PREVIOUS = observation.action_mask;

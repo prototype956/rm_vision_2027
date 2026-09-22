@@ -45,7 +45,7 @@ std::string EncodeDebugStats(const VisionDebugFrame& frame,
 
 bool TopicDemand::Any() const noexcept {
   return image || armor_annotations || armor_stats || lightbar_annotations || lightbar_stats ||
-         debug_stats || calibration || frustum || ground_truth || projectile_stats ||
+         debug_stats || real_transforms || calibration || frustum || ground_truth || projectile_stats ||
          referee_state || combat_evaluation || projection_annotations || pnp_estimates ||
          pnp_raw_corners || pnp_final_corners || pnp_reprojection || pnp_error_vectors ||
          corner_refiner_axes || corner_refiner_candidates || pnp_stats || prediction_scene ||
@@ -61,6 +61,7 @@ TopicDemand Merge(TopicDemand left, TopicDemand right) noexcept {
       .lightbar_annotations = left.lightbar_annotations || right.lightbar_annotations,
       .lightbar_stats = left.lightbar_stats || right.lightbar_stats,
       .debug_stats = left.debug_stats || right.debug_stats,
+      .real_transforms = left.real_transforms || right.real_transforms,
       .calibration = left.calibration || right.calibration,
       .frustum = left.frustum || right.frustum,
       .ground_truth = left.ground_truth || right.ground_truth,
@@ -107,7 +108,8 @@ PreparedFrame VisionMessageEncoder::Encode(
   const auto* prediction_evaluation =
       frame.simulation_evaluation ? &frame.simulation_evaluation->prediction : nullptr;
   // 实机帧没有 epoch 时间时，用固定双时钟锚点换算，避免运行中系统校时造成时间跳变。
-  const auto SYSTEM_TIME = system_anchor_ + (stamp.receive_steady_time - steady_anchor_);
+  const auto CAPTURE_TIME = stamp.capture_steady_time.value_or(stamp.receive_steady_time);
+  const auto SYSTEM_TIME = system_anchor_ + (CAPTURE_TIME - steady_anchor_);
   const auto FALLBACK_EPOCH_COUNT =
       std::chrono::duration_cast<std::chrono::nanoseconds>(SYSTEM_TIME.time_since_epoch()).count();
   // Talos 等仿真源优先保留原始采集 epoch，使图像、TF 和真值与仿真快照严格同帧。
@@ -141,6 +143,10 @@ PreparedFrame VisionMessageEncoder::Encode(
     result.lightbar_stats_json = armor_light_detector::EncodeStats(
         frame.diagnostics.lightbars, frame.diagnostics.prediction, stamp.sequence, TIMESTAMP);
   }
+  // 实机没有控制运行时，因此在视觉链发布同帧 TF。Talos 仍由控制链独占发布，
+  // 防止同一个 child 被图像时刻和控制预测时刻交替覆盖。无有效 IMU 时不伪造 TF。
+  if (demand.real_transforms && packet.kinematics && !packet.simulation)
+    result.real_transforms = spatial::EncodeTransforms(*packet.kinematics, TIMESTAMP);
   if (packet.camera_model && demand.calibration)
     result.calibration = spatial::EncodeCalibration(*packet.camera_model, TIMESTAMP);
   if (packet.camera_model && demand.frustum)

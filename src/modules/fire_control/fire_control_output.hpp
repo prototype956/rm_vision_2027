@@ -93,8 +93,8 @@ struct FireControlOutput {
   bool command_sink_healthy{false};
   bool auto_fire_enabled{false};
   std::uint64_t talos_heartbeat_ns{0};
-  bool shot_requested{false};  ///< Local intent, never launch truth.
-  bool shot_accepted{false};   ///< New pulse admitted this cycle.
+  bool shot_requested{false};  ///< 本地控制意图，不代表实际发射真值。
+  bool shot_accepted{false};   ///< 本周期获准的新发射脉冲。
   bool fire_eligible{false};
   int stable_cycles{0};
   FireRejectReason reject_reason{FireRejectReason::TRACK_NOT_CONFIRMED};

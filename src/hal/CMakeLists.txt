@@ -2,9 +2,11 @@
 # mv-hal — 硬件抽象层（Hardware Abstraction Layer）
 # ============================================================================
 #
-# 当前只构建相机 HAL。serial/ 仅保留为空目录，等待重新设计。
+# 相机、串口姿态与云台 HAL。
 
 message(STATUS "  Configuring HAL modules...")
 
+add_subdirectory(serial)
+add_subdirectory(imu)
 add_subdirectory(camera)
 add_subdirectory(gimbal)

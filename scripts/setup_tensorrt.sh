@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Source this file to use a workspace-local TensorRT SDK without sudo.
-# Override TensorRT_ROOT to use a different SDK prefix (containing include/ and lib/).
+# 使用 source 加载此文件，即可使用工作区内的 TensorRT SDK，无需 sudo。
+# 可通过 TensorRT_ROOT 指定其他 SDK 根目录，该目录应包含 include/ 和 lib/。
 
 RM_TENSORRT_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 export TensorRT_ROOT="${TensorRT_ROOT:-${RM_TENSORRT_SCRIPT_DIR}/../.deps/tensorrt/usr}"
@@ -18,7 +18,7 @@ if [[ -z "${RM_TENSORRT_LIB_DIR}" ]]; then
 fi
 
 export LD_LIBRARY_PATH="${RM_TENSORRT_LIB_DIR}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-# Optional common C++ dependencies installed in the same workspace (JSON/Ceres, etc.).
+# 可选：加载安装在同一工作区中的通用 C++ 依赖，如 JSON、Ceres。
 RM_VISION_DEPS_ROOT="${RM_TENSORRT_SCRIPT_DIR}/../.deps/vision/usr"
 if [[ -d "${RM_VISION_DEPS_ROOT}" ]]; then
   export CMAKE_PREFIX_PATH="${RM_VISION_DEPS_ROOT}${CMAKE_PREFIX_PATH:+:${CMAKE_PREFIX_PATH}}"

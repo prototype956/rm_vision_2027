@@ -6,6 +6,7 @@ add_library(mv-runtime STATIC
     vision_pipeline.cpp
     vision_tuning.cpp
     vision_runtime.cpp
+    real_frame_geometry.cpp
 )
 
 target_include_directories(mv-runtime
@@ -15,6 +16,7 @@ target_include_directories(mv-runtime
 
 target_link_libraries(mv-runtime
     PUBLIC
+        mv-hal-imu
         mv-hal-camera
         mv-hal-gimbal
         mv-frame-core

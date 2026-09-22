@@ -25,9 +25,9 @@ class FireControl final {
                                        std::uint64_t command_timestamp_ns,
                                        std::optional<PolicyDecision> decision = std::nullopt,
                                        const ControlPolicy& policy = {});
-  /** @brief Reset all state at a new episode, including mechanical interval. */
+  /** @brief 新回合开始时重置全部状态，包括机械发射间隔。 */
   void Reset();
-  /** @brief Estimate-only candidate observation; does not advance control state. */
+  /** @brief 仅估算候选观测，不推进控制状态。 */
   [[nodiscard]] PolicyObservation Observe(const ControlInputSnapshot& input,
                                           const hal::GimbalFeedback& feedback,
                                           std::chrono::steady_clock::time_point now) const;

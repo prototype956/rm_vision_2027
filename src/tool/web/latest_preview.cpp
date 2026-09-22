@@ -64,7 +64,8 @@ void LatestPreview::Push(const frame::FramePacket& packet, const runtime::Vision
     PendingFrame frame{.image = packet.capture.image,
                        .detections = output.detections,
                        .detector = diagnostics.detector,
-                       .sequence = packet.capture.stamp.sequence};
+                       .sequence = packet.capture.stamp.sequence,
+                       .geometry_status = diagnostics.real_geometry_status};
     if (pending_) {
       ++overwritten_frames_;
     }
@@ -112,6 +113,9 @@ void LatestPreview::WorkerLoop() noexcept {
                                     frame->detector.total_ms);
       cv::putText(image, TEXT, {10, 28}, cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2,
                   cv::LINE_AA);
+      if (!frame->geometry_status.empty())
+        cv::putText(image, frame->geometry_status, {10, 54}, cv::FONT_HERSHEY_SIMPLEX,
+                    0.5, cv::Scalar(0, 200, 255), 1, cv::LINE_AA);
       std::vector<unsigned char> encoded;
       if (!cv::imencode(".jpg", image, encoded, {cv::IMWRITE_JPEG_QUALITY, config_.jpeg_quality})) {
         throw std::runtime_error("OpenCV JPEG encoder returned false");

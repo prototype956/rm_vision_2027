@@ -4,7 +4,7 @@ find_package(spdlog REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(Eigen3 3.4 REQUIRED NO_MODULE)
 find_package(OpenCV REQUIRED COMPONENTS core)
-# Existing differentiable motion model uses Ceres Jet headers, not the detector/runtime.
+# 现有可微运动模型使用 Ceres Jet 头文件，不依赖检测器或运行时。
 find_package(Ceres 2.0 REQUIRED)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 add_subdirectory(src/core)
