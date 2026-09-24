@@ -205,11 +205,14 @@ struct PolicyObservation {
   RefereeObservation referee;
   std::optional<frame::ChassisMotionObservation> chassis_motion;
   std::array<BallisticSolution, 4> candidates{};
+  std::array<double, 4> facing_now_rad{};  ///< 水平面上外法线到板指向炮口的有符号角，+Z 为正。
+  std::array<double, 4> facing_impact_rad{};  ///< 在各候选弹道的准确命中时域上计算的同定义角。
   std::array<bool, 9> action_mask{};
   double prediction_age_s{0.0};
   double feedback_age_s{0.0};
   double referee_age_s{0.0};
   int previous_slot{-1};
+  double selected_slot_age_s{0.0};  ///< 当前槽位已持续时间；无槽位时为零，不包含仿真真值。
   std::optional<double> since_request_s;
 };
 

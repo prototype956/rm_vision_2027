@@ -123,6 +123,8 @@ void FireControl::Reset() {
 void FireControl::ResetSelection() noexcept {
   rule_.ResetSelection();
   external_slot_ = -1;
+  timed_slot_ = -1;
+  selected_since_.reset();
   ResetFireReadiness();
 }
 
@@ -368,6 +370,10 @@ FireControlResult FireControl::Step(const ControlInputSnapshot& input,
                             feedback, now, diagnostics.armor_selection);
   }
   output.selected_slot = slot;
+  if (slot != timed_slot_) {
+    timed_slot_ = slot;
+    selected_since_ = slot >= 0 ? std::optional(now) : std::nullopt;
+  }
   if (diagnostics.armor_selection.switched) {
     RequestPlannerRebase("armor_slot_switched");
     rule_.ResetFireReadiness();

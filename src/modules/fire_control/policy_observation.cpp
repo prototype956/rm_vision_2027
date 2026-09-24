@@ -51,6 +51,8 @@ PolicyObservation FireControl::Observe(const ControlInputSnapshot& input,
   o.referee = input.referee;
   o.chassis_motion = input.chassis_motion;
   o.previous_slot = external_mode_ ? external_slot_ : rule_.SelectedSlot();
+  if (o.previous_slot >= 0 && selected_since_)
+    o.selected_slot_age_s = std::chrono::duration<double>(now - *selected_since_).count();
   if (last_fire_start_)
     o.since_request_s = std::chrono::duration<double>(now - *last_fire_start_).count();
   const auto SOURCE = input.prediction.source_steady_time
@@ -90,11 +92,24 @@ PolicyObservation FireControl::Observe(const ControlInputSnapshot& input,
       (!last_fire_start_ ||
        std::chrono::duration<double>(now - *last_fire_start_).count() >= config_.fire_interval_s) &&
       (!pulse_until_ || now >= *pulse_until_);
+  const auto CURRENT = ExtrapolatePrediction(input.prediction, o.prediction_age_s);
+  // 装甲局部 +Z 是外法线；所有方向取世界系水平投影，绕 +Z 的叉积确定符号。
+  const auto FACING = [&MUZZLE](const PredictedArmorPose& armor) {
+    const geometry::Vector3 NORMAL = armor.world_t_armor.rotation * geometry::Vector3::UnitZ();
+    const geometry::Vector3 TO_MUZZLE = MUZZLE.translation - armor.world_t_armor.translation;
+    return std::atan2(NORMAL.x() * TO_MUZZLE.y() - NORMAL.y() * TO_MUZZLE.x(),
+                      NORMAL.x() * TO_MUZZLE.x() + NORMAL.y() * TO_MUZZLE.y());
+  };
   for (int i = 0; i < 4; ++i) {
     o.candidates[i] =
         SolveBallistic(input, i, MUZZLE, o.prediction_age_s + config_.command_delay_s);
     o.action_mask[1 + 2 * i] = o.candidates[i].valid;
     o.action_mask[2 + 2 * i] = o.candidates[i].valid && FIRE;
+    if (o.candidates[i].valid) {
+      o.facing_now_rad[i] = FACING(CURRENT.armors[i]);
+      o.facing_impact_rad[i] = FACING(
+          ExtrapolatePrediction(input.prediction, o.candidates[i].prediction_horizon_s).armors[i]);
+    }
   }
   return o;
 }

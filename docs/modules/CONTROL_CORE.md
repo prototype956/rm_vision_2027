@@ -82,3 +82,16 @@ cmake --build build-control-core --parallel 4
 Foxglove `/vision/control/state` 包含本地请求/接受、`runtime.referee_age_s` 及
 `runtime.control_compute_time_us`。后者计入同步计算、快照复制与发布结果处理，排除 Send；
 线程调度迟到、周期长度和计算耗时分开统计，完整闭环验收必须确认外部控制确实开启。
+
+## RL 联合选板观测
+
+`PolicyObservation` 追加四个槽位的 `facing_now_rad`、`facing_impact_rad` 及
+`selected_slot_age_s`。朝向角是在世界系水平面内，从装甲外法线（装甲局部 +Z）转到
+装甲指向炮口方向的有符号角，绕世界 +Z 为正；当前时域使用 prediction_age，命中时域使用
+对应 `BallisticSolution.prediction_horizon_s`。无效候选填零，均不依赖仿真真值。
+槽位持续时间在首次选择、切板、模式/目标复位时重置，不改变原选板和脉冲逻辑。
+
+`rm_vision_rl` 的联合模式每 10 ms 直接给出九动作，绕过 `FireOnlyPolicyAdapter`；
+50–100 ms 随机射击机会由 Python 共用策略适配器门控，不改变核心控制周期。
+核心保持全部估计和执行合法性检查；切板或无新请求本身不取消已接受的外部策略脉冲。
+RL 的 v1 两动作观测忽略新增字段，v2 联合观测编码为每帧 107 个特征。

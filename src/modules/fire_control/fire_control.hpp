@@ -53,6 +53,8 @@ class FireControl final {
   RulePolicy rule_;
   int external_slot_{-1};
   bool external_mode_{false};
+  int timed_slot_{-1};  ///< 用于记录实际选板持续时间，不参与选择和开火门控。
+  std::optional<std::chrono::steady_clock::time_point> selected_since_;
   std::optional<std::uint64_t> round_;
   std::uint64_t generation_{0};
   FireControlConfig config_;                 ///< 不可变火控参数。
