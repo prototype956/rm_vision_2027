@@ -1,0 +1,21 @@
+schema_version: 1
+
+# 采集程序从 Talos 共享内存读取仿真器发布的原始 BGR8 图像和同帧空间真值。
+backend: talos
+
+expected:
+  width: 1280
+  height: 720
+  pixel_format: bgr8
+
+# CALIB.glb 纹理为 11x8 方格，对应 10x7 个内角点；方格标注尺寸为 15 mm。
+# 该尺寸尚未按模型缩放和 UV 映射复核；求解前须确认实际物理间距。
+board:
+  pattern_cols: 10
+  pattern_rows: 7
+  square_size_mm: 15.0
+
+solve:
+  min_samples: 3
+
+output_dir: artifacts/extrinsic_calibration

@@ -111,8 +111,9 @@ cmake --build build-camera --parallel 4
 ./scripts/run_simulation_vision.sh
 ```
 
-脚本按自身位置定位同级的 `../rm_simulator_2027`，可从任意目录调用。
-整体移动工作区无需修改项目路径；自定义模拟器位置可通过 `SIMULATOR_ROOT` 指定。
+脚本按自身位置优先定位同级的 `../bevy_robomaster_simulator`，并兼容旧的
+`../rm_simulator_2027` 路径，可从任意目录调用。整体移动工作区无需修改项目路径；
+自定义模拟器位置可通过 `SIMULATOR_ROOT` 指定。
 默认运行 `build-tensorrt/bin/mv-vision-main`；Intel 部署可用
 `VISION_BUILD_DIR="$PWD/build-openvino" ./scripts/run_simulation_vision.sh`。
 也可直接指定 `VISION_BIN`。TensorRT 运行不需要 OpenVINO 的 `setupvars.sh`。
@@ -130,10 +131,15 @@ taskset -c 0-7 ./build-openvino/bin/mv-vision-main
 
 ```bash
 ./build-openvino/bin/mv-camera-test
-./scripts/calibrate_camera.sh build-openvino
+./scripts/calibrate_camera.sh
 ./build-openvino/bin/mv-armor-detector-test
 ./build-openvino/bin/mv-armor-detector-video-test
 ```
+
+`scripts/calibrate_camera.sh` 无参数时进入统一标定菜单，可选择相机内参采集/解算、仿真
+外参采集/解算、Foxglove 三维验收和 IMU 轴向采集。内参和外参解算会自动列出
+`artifacts/` 下已有数据目录，按最新修改时间排序供选择。原有带构建目录和模式参数的命令
+继续保留，适合自动化调用。
 
 Intel GPU 的登录会话需具有 `render`、`video` 组，且 OpenVINO 必须能看到 `GPU` 或
 `GPU.<index>`；NVIDIA 部署应能通过 CUDA 访问配置的 GPU。检测器不会回退 CPU，也不应使用 `sudo` 运行。相机预览按 `Q`、
@@ -150,6 +156,9 @@ Foxglove 连接、话题与 MCAP 使用方法见
 [`docs/modules/COORDINATE_SYSTEMS.md`](docs/modules/COORDINATE_SYSTEMS.md)。
 相机内参标定流程见
 [`docs/tool/CAMERA_CALIBRATION.md`](docs/tool/CAMERA_CALIBRATION.md)。
+仿真外参标定的原图与同帧真值采集见
+[`docs/tool/EXTRINSIC_CALIBRATION.md`](docs/tool/EXTRINSIC_CALIBRATION.md)。
+采集会话的离线棋盘检测、手眼求解和真值误差报告也由同一文档说明。
 检测模块的接口、模型协议、二维坐标系和后处理契约见
 [`docs/modules/ARMOR_DETECTOR.md`](docs/modules/ARMOR_DETECTOR.md)。
 

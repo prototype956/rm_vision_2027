@@ -7,7 +7,14 @@ VISION_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 WORKSPACE_ROOT="$(dirname -- "${VISION_ROOT}")"
 
 # 根据脚本位置定位同级模拟器，不依赖工作区绝对路径或调用时的当前目录。
-SIMULATOR_ROOT="${SIMULATOR_ROOT:-${WORKSPACE_ROOT}/rm_simulator_2027}"
+# 新版仿真器仓库名为 bevy_robomaster_simulator；保留旧路径作为兼容回退。
+if [[ -z "${SIMULATOR_ROOT:-}" ]]; then
+  if [[ -d "${WORKSPACE_ROOT}/bevy_robomaster_simulator" ]]; then
+    SIMULATOR_ROOT="${WORKSPACE_ROOT}/bevy_robomaster_simulator"
+  else
+    SIMULATOR_ROOT="${WORKSPACE_ROOT}/rm_simulator_2027"
+  fi
+fi
 SIMULATOR_BIN="${SIMULATOR_BIN:-${SIMULATOR_ROOT}/target/release/daedalus}"
 # 默认运行当前 NVIDIA 部署构建；其他部署可以指定 VISION_BUILD_DIR 或 VISION_BIN。
 VISION_BUILD_DIR="${VISION_BUILD_DIR:-${VISION_ROOT}/build-tensorrt}"
@@ -63,8 +70,10 @@ trap cleanup EXIT INT TERM
 [[ -f "${TALOS_CONFIG}" ]] || die "Talos camera config not found: ${TALOS_CONFIG}"
 command -v "${RUSTC_BIN}" >/dev/null 2>&1 || die "rustc is required to locate simulator runtime libraries"
 
-CAMERA_BACKEND="$(awk '$1 == "backend:" { print $2; exit }' "${MAIN_CONFIG}")"
-[[ "${CAMERA_BACKEND}" == "talos" ]] || die "set camera.backend to talos in ${MAIN_CONFIG} before starting simulation"
+if [[ "${SKIP_CAMERA_BACKEND_CHECK:-0}" != "1" ]]; then
+  CAMERA_BACKEND="$(awk '$1 == "backend:" { print $2; exit }' "${MAIN_CONFIG}")"
+  [[ "${CAMERA_BACKEND}" == "talos" ]] || die "set camera.backend to talos in ${MAIN_CONFIG} before starting simulation"
+fi
 TALOS_META="$(awk '$1 == "meta_path:" { print $2; exit }' "${TALOS_CONFIG}")"
 TALOS_IMAGE_POOL="$(awk '$1 == "image_pool_path:" { print $2; exit }' "${TALOS_CONFIG}")"
 [[ -n "${TALOS_META}" && -n "${TALOS_IMAGE_POOL}" ]] || die "Talos shared-memory paths are missing in ${TALOS_CONFIG}"

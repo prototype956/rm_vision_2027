@@ -9,23 +9,9 @@
 对应 12x9 个黑白格；
 实物尺寸不同时，先修改 `src/config/tool/camera_calibration.yaml`。
 
-## 标定板打印
-
-仓库仍提供旧版 9x6 内角点的 A4 横向矢量文件（与当前 11x8 默认配置不同，
-若使用此文件，必须将配置改回 9x6、25 mm）：
-
-[`assets/calibration_board_9x6_25mm_A4.pdf`](assets/calibration_board_9x6_25mm_A4.pdf)
-
-打印时必须选择“实际大小”或“100%”，禁止“适合页面”“缩小超大页面”等自动缩放。
-打印后先测量页面底部的校验线，长度应为 100 mm，再抽查棋盘方格边长应为 25 mm；
-尺寸不正确时不能用于标定。建议使用哑光纸，并将成品平整粘贴到硬质板材上，避免反光、
-翘曲、气泡和拉伸。
-
-需要重新生成 PDF 时运行：
-
-```bash
-./scripts/generate_calibration_board.sh
-```
+标定板需要由使用者自行准备，并在使用前实测方格尺寸。打印时选择“实际大小”或“100%”，
+禁止“适合页面”“缩小超大页面”等自动缩放；建议使用哑光纸，并将棋盘平整粘贴到硬质板材上，
+避免反光、翘曲、气泡和拉伸。仓库不再提供标定板生成脚本或预生成 PDF。
 
 ## 构建与启动
 
@@ -39,11 +25,25 @@ cmake -S . -B build-camera \
 cmake --build build-camera --parallel 4 --target mv-camera-calibration
 ```
 
-启动默认 `build-camera` 中的程序：
+推荐从统一标定入口启动：
 
 ```bash
 ./scripts/calibrate_camera.sh
 ```
+
+菜单功能为：
+
+```text
+1. 相机内参采集
+2. 仿真外参采集
+3. 相机内参解算
+4. 仿真外参解算
+5. 仿真外参 Foxglove 三维验收
+6. IMU 轴向数据采集
+```
+
+选择内参解算时，脚本会从 `artifacts/camera_calibration/` 列出已有采集目录，按最新修改时间
+倒序显示，选择编号即可开始解算，不需要手动复制路径。
 
 使用其他构建目录：
 
@@ -53,9 +53,26 @@ cmake --build build-camera --parallel 4 --target mv-camera-calibration
 
 脚本不会自动构建，也不会调用 `sudo`。
 
+同一个脚本也提供仿真外参采集入口。它会启动 Talos 仿真器，并将采集程序连接到
+共享内存；不会修改 `src/config/app/main.yaml`：
+
+```bash
+./scripts/calibrate_camera.sh build-openvino simulation
+```
+
+如果仿真器不在仓库同级的 `../bevy_robomaster_simulator`，设置其路径：
+
+```bash
+SIMULATOR_ROOT=/path/to/bevy_robomaster_simulator \
+  ./scripts/calibrate_camera.sh build-openvino simulation
+```
+
+该模式保存的是仿真外参采集会话，详见
+[`EXTRINSIC_CALIBRATION.md`](EXTRINSIC_CALIBRATION.md)。
+
 ## 先采集，再离线解算
 
-启动命令默认进入采集模式，也可显式指定：
+也可以使用显式命令进入采集模式：
 
 ```bash
 ./scripts/calibrate_camera.sh build-openvino capture
