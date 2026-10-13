@@ -6,6 +6,7 @@ namespace mv::modules {
 
 /** @brief 火控弹道、时延、装甲选择、不确定性和开火门控参数。 */
 struct FireControlConfig {
+  bool test_bypass_referee{false};  ///< Temporary bench mode: skip referee gates only.
   bool auto_fire{false};                 ///< 是否允许输出 fire=true 的自动开火脉冲。
   double bullet_speed_mps{25.0};         ///< 弹丸初速度，单位为米每秒。
   double gravity_mps2{9.81};             ///< 弹道模型使用的重力加速度绝对值。
@@ -13,6 +14,7 @@ struct FireControlConfig {
   double max_referee_age_s{0.30};        ///< 裁判采样允许的最大年龄，单位为秒。
   double max_prediction_age_s{0.1};      ///< 接受预测和反馈的最大数据年龄。
   double max_temp_lost_control_s{0.15};  ///< TEMP_LOST 状态仍允许控制外推的最长时间。
+  double friction_hold_s{1.0};  ///< Last visible aim target to friction-wheel stop, steady seconds.
   int ballistic_max_iterations{10};      ///< 飞行时间—目标位置定点迭代次数上限。
   double ballistic_time_tolerance_s{1.0e-4};   ///< 判定飞行时间收敛的相邻迭代差。
   double armor_enter_angle_rad{1.0471975512};  ///< 新装甲进入候选集的最大观察角。

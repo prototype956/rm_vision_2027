@@ -123,7 +123,10 @@ struct RuntimeSupervisor::Impl {
       } else if (RULE.component == RuntimeComponent::COMMAND_SINK) {
         const auto START =
             component.has_healthy_observation ? component.last_healthy : component.fault.first_seen;
-        if (now - START >= policy.command_sink_unhealthy_timeout) {
+        // The serial worker owns reconnect attempts. Keep requesting stop while
+        // it recovers; camera failures and control exceptions still terminate.
+        if (!policy.command_sink_wait_for_recovery &&
+            now - START >= policy.command_sink_unhealthy_timeout) {
           decision.request_safe_stop = true;
           decision.termination = RuntimeTerminationReason::CONTROL_FAILURE;
         }

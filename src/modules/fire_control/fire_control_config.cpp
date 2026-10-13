@@ -12,7 +12,7 @@ FireControlConfig ParseFireControlConfig(const YAML::Node& root) {
   constexpr char CONTEXT[] = "fire control config";
   ConfigLoader::RejectUnknownKeys(root,
                                   {"schema_version", "enabled", "ballistics", "timing", "selection",
-                                   "uncertainty", "fire_window", "pulse"},
+                                   "uncertainty", "fire_window", "pulse", "test_bypass_referee"},
                                   CONTEXT);
   if (ConfigLoader::Require<int>(root, "schema_version", CONTEXT) != 1) {
     throw ConfigError("fire control config schema_version must be 1");
@@ -28,7 +28,8 @@ FireControlConfig ParseFireControlConfig(const YAML::Node& root) {
       "fire control config.ballistics");
   ConfigLoader::RejectUnknownKeys(
       TIMING,
-      {"command_delay_s", "max_prediction_age_s", "max_temp_lost_control_s", "max_referee_age_s"},
+      {"command_delay_s", "max_prediction_age_s", "max_temp_lost_control_s", "max_referee_age_s",
+       "friction_hold_s"},
       "fire control config.timing");
   ConfigLoader::RejectUnknownKeys(
       SELECTION,
@@ -44,6 +45,8 @@ FireControlConfig ParseFireControlConfig(const YAML::Node& root) {
 
   constexpr double DEG = std::numbers::pi / 180.0;
   FireControlConfig config;
+  if (root["test_bypass_referee"])
+    config.test_bypass_referee = ConfigLoader::Require<bool>(root, "test_bypass_referee", CONTEXT);
   config.auto_fire = ConfigLoader::Require<bool>(root, "enabled", CONTEXT);
   config.bullet_speed_mps = ConfigLoader::Require<double>(BALLISTICS, "bullet_speed_mps", CONTEXT);
   config.gravity_mps2 = ConfigLoader::Require<double>(BALLISTICS, "gravity_mps2", CONTEXT);
@@ -58,6 +61,8 @@ FireControlConfig ParseFireControlConfig(const YAML::Node& root) {
       ConfigLoader::Require<double>(TIMING, "max_temp_lost_control_s", CONTEXT);
   if (TIMING["max_referee_age_s"])
     config.max_referee_age_s = ConfigLoader::Require<double>(TIMING, "max_referee_age_s", CONTEXT);
+  if (TIMING["friction_hold_s"])
+    config.friction_hold_s = ConfigLoader::Require<double>(TIMING, "friction_hold_s", CONTEXT);
   config.armor_enter_angle_rad =
       ConfigLoader::Require<double>(SELECTION, "enter_angle_deg", CONTEXT) * DEG;
   config.armor_leave_angle_rad =
@@ -79,6 +84,8 @@ FireControlConfig ParseFireControlConfig(const YAML::Node& root) {
   config.fire_pulse_width_s = ConfigLoader::Require<double>(PULSE, "width_s", CONTEXT);
 
   const bool VALID =
+      std::isfinite(config.friction_hold_s) && config.friction_hold_s >= 0.0 &&
+      config.friction_hold_s <= 10.0 &&
       std::isfinite(config.max_referee_age_s) && config.max_referee_age_s > 0.0 &&
       config.bullet_speed_mps > 0.0 && config.gravity_mps2 > 0.0 &&
       config.ballistic_max_iterations > 0 && config.ballistic_time_tolerance_s > 0.0 &&

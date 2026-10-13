@@ -24,7 +24,7 @@ namespace mv::runtime {
 class ControlRuntimeImpl final {
  public:
   ControlRuntimeImpl(modules::FireControlConfig fire_config,
-                     modules::GimbalTrajectoryPlannerConfig planner_config,
+                     modules::GimbalControlConfig planner_config,
                      std::unique_ptr<hal::IGimbalCommandSink> sink,
                      IRuntimeDiagnosticsSink* diagnostics, RuntimeSupervisor& supervisor);
   ~ControlRuntimeImpl();

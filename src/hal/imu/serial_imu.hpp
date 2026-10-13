@@ -22,6 +22,7 @@ struct SerialImuConfig {
   int cache_ms{2000};
   int max_gap_ms{20};
   int wait_ms{10};
+  bool require_calibration_sample{false};  ///< 手眼采集时拒绝普通 ATTITUDE 帧。
 };
 SerialImuConfig ParseSerialImuConfig(const YAML::Node& root);
 
@@ -36,8 +37,23 @@ struct ImuHealth {
   double offset_us{0};
   double rtt_us{-1};
   double sample_age_ms{-1};
+  double receive_age_ms{-1};
+  double attitude_receive_age_ms{-1};
+  double sample_progress_age_ms{-1};  ///< Age since a new valid sample was received.
+  std::uint32_t packet_sequence{0};
+  std::uint32_t sample_sequence{0};
+  std::uint64_t duplicate_samples{0};
   geometry::Vector3 gyro_rad_s{geometry::Vector3::Zero()};  ///< 原始 IMU 解算机体系，未应用安装旋转。
   std::string reason{"not_started"};
+};
+
+/** @brief 最近一帧通过校验的原始 IMU 状态，时间已映射到上位机时钟。 */
+struct ImuObservation {
+  geometry::Quaternion world_q_imu{geometry::Quaternion::Identity()};
+  geometry::Vector3 gyro_rad_s{geometry::Vector3::Zero()};
+  std::chrono::steady_clock::time_point steady_time{};
+  std::uint64_t system_timestamp_ns{0};
+  std::uint32_t sample_sequence{0};
 };
 
 /** @brief 消费串口链路的姿态消息，维护 IMU 缓存并按图像时刻插值，不进行外推。 */
@@ -50,6 +66,11 @@ class SerialImu final {
   [[nodiscard]] std::optional<geometry::Quaternion> At(
       std::chrono::steady_clock::time_point time);
   [[nodiscard]] ImuHealth Health() const;
+  [[nodiscard]] std::optional<ImuObservation> Latest() const;
+
+  /** @brief latest-wins 发布双轴速率命令；串口仍由 ControllerLink 单线程独占。 */
+  bool QueueGimbalCommand(float yaw_rate_rad_s, float pitch_rate_rad_s,
+                          bool enabled, bool fire, bool friction = false) noexcept;
 
  private:
   struct Impl;

@@ -2,16 +2,12 @@
 
 #include "core/logger.hpp"
 #include "hal/camera/mindvision/mindvision_camera.hpp"
+#include "tool/calibration/calibration_io.hpp"
 #include "tool/debug/debug_window.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <csignal>
-#include <ctime>
-#include <iomanip>
-#include <sstream>
 #include <string>
-#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -30,49 +26,6 @@ volatile std::sig_atomic_t g_stop_requested = 0;
 
 void HandleStopSignal(int) noexcept {
   g_stop_requested = 1;
-}
-
-std::string SessionTimestamp() {
-  const auto NOW = std::chrono::system_clock::now();
-  const std::time_t TIME = std::chrono::system_clock::to_time_t(NOW);
-  std::tm local_time{};
-  localtime_r(&TIME, &local_time);
-  std::ostringstream stream;
-  stream << std::put_time(&local_time, "%Y%m%d_%H%M%S");
-  return stream.str();
-}
-
-std::filesystem::path CreateSessionDirectory(const std::filesystem::path& output_root) {
-  std::filesystem::create_directories(output_root);
-  const std::string BASE_NAME = SessionTimestamp();
-  // 同一秒内重复启动时追加编号，避免覆盖已有样本和验收记录。
-  for (int suffix = 0; suffix < 1000; ++suffix) {
-    const std::string NAME = suffix == 0 ? BASE_NAME : fmt::format("{}_{:02d}", BASE_NAME, suffix);
-    auto session_dir = output_root / NAME;
-    std::error_code error;
-    if (std::filesystem::create_directory(session_dir, error)) {
-      return session_dir;
-    }
-    if (error && error != std::errc::file_exists) {
-      throw std::filesystem::filesystem_error("cannot create calibration session", session_dir,
-                                              error);
-    }
-  }
-  throw std::runtime_error("cannot allocate a unique calibration session directory");
-}
-
-void DrawText(cv::Mat& image, const std::vector<std::string>& lines,
-              const cv::Scalar& color = {0, 255, 0}) {
-  int y = 28;
-  for (const auto& line : lines) {
-    cv::putText(image, line, {14, y}, cv::FONT_HERSHEY_SIMPLEX, 0.58, {0, 0, 0}, 3, cv::LINE_AA);
-    cv::putText(image, line, {14, y}, cv::FONT_HERSHEY_SIMPLEX, 0.58, color, 1, cv::LINE_AA);
-    y += 25;
-  }
-}
-
-bool IsKey(int key, char lower, char upper) {
-  return key == lower || key == upper;
 }
 
 }  // namespace
@@ -135,10 +88,7 @@ int CalibrationApplication::Run() {
     if (EVENT.key == K_SPACE_KEY || IsKey(EVENT.key, 's', 'S')) {
       const auto IMAGE_PATH = SESSION_DIR / "images" /
                               fmt::format("sample_{:04d}.png", next_image_id);
-      if (!cv::imwrite(IMAGE_PATH.string(), packet.capture.image,
-                       {cv::IMWRITE_PNG_COMPRESSION, 3})) {
-        throw std::runtime_error("cannot save image: " + IMAGE_PATH.string());
-      }
+      SaveCalibrationImage(IMAGE_PATH, packet.capture.image);
       ++next_image_id;
       images.push_back(IMAGE_PATH);
       last_message = "saved " + IMAGE_PATH.filename().string();

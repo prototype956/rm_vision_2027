@@ -8,10 +8,10 @@
 先停止占用同一串口的视觉主程序及串口调试软件。在项目根目录运行：
 
 ```bash
-bash scripts/capture_imu_axes.sh /dev/ttyUSB0
+./scripts/calibrate_camera.sh imu-axis capture /dev/ttyUSB0
 ```
 
-设备参数以实机为准，可以使用 `/dev/serial/by-id/...`。脚本用 C++20 编译器独立构建到
+设备参数以实机为准，可以使用 `/dev/serial/by-id/...`。统一入口优先使用已构建程序，找不到时用 C++20 编译器独立构建到
 `build-imu-axis/`，不需要 OpenVINO。完整 CMake 构建中也有 `mv-imu-axis-capture` 目标。
 第二个可选参数指定一个尚不存在的输出目录；默认创建 `artifacts/imu_axis/<时间戳>/`。
 单次最多 600 秒，输入 `q` 回车或 Ctrl+C 结束并保存。未收到可接纳帧时返回码为 2。

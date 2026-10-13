@@ -1,6 +1,6 @@
-#include "modules/gimbal_trajectory_planner/gimbal_trajectory_planner.hpp"
+#include "modules/gimbal_control/mpc/mpc_trajectory_planner.hpp"
 
-#include "modules/gimbal_trajectory_planner/detail/tinympc_workspace.hpp"
+#include "modules/gimbal_control/mpc/detail/tinympc_workspace.hpp"
 #include "tinympc/tiny_api.hpp"
 
 #include <algorithm>
@@ -38,14 +38,14 @@ struct AxisNormalization {
   double acceleration{1.0};
 };
 
-AxisNormalization MakeNormalization(const GimbalTrajectoryPlannerConfig& config,
-                                    double max_velocity, double max_acceleration) noexcept {
+AxisNormalization MakeNormalization(const MpcTrajectoryPlannerConfig& config, double max_velocity,
+                                    double max_acceleration) noexcept {
   return {.angle = config.normalization_angle_scale_rad,
           .velocity = max_velocity,
           .acceleration = max_acceleration};
 }
 
-SolverPtr MakeSolver(const GimbalTrajectoryPlannerConfig& config,
+SolverPtr MakeSolver(const MpcTrajectoryPlannerConfig& config,
                      const AxisNormalization& normalization, const std::array<double, 2>& q,
                      double r) {
   // 物理空间双积分模型经尺度变换后，在归一化坐标中保持相同离散动力学。
@@ -119,62 +119,8 @@ GimbalTrajectoryAxis FailedAxes(bool yaw_solved, bool pitch_solved) noexcept {
 
 }  // namespace
 
-std::string_view GimbalTrajectoryFailureReasonName(GimbalTrajectoryFailureReason reason) noexcept {
-  switch (reason) {
-    case GimbalTrajectoryFailureReason::NONE:
-      return "none";
-    case GimbalTrajectoryFailureReason::INVALID_FEEDBACK:
-      return "invalid_feedback";
-    case GimbalTrajectoryFailureReason::INVALID_REFERENCE_SIZE:
-      return "invalid_reference_size";
-    case GimbalTrajectoryFailureReason::NONFINITE_REFERENCE:
-      return "nonfinite_reference";
-    case GimbalTrajectoryFailureReason::YAW_SOLVER_FAILED:
-      return "yaw_solver_failed";
-    case GimbalTrajectoryFailureReason::PITCH_SOLVER_FAILED:
-      return "pitch_solver_failed";
-    case GimbalTrajectoryFailureReason::BOTH_SOLVERS_FAILED:
-      return "both_solvers_failed";
-    case GimbalTrajectoryFailureReason::NONFINITE_SOLUTION:
-      return "nonfinite_solution";
-    case GimbalTrajectoryFailureReason::VELOCITY_LIMIT_VIOLATION:
-      return "velocity_limit_violation";
-    case GimbalTrajectoryFailureReason::ACCELERATION_LIMIT_VIOLATION:
-      return "acceleration_limit_violation";
-  }
-  return "unknown";
-}
-
-std::string_view GimbalTrajectoryAxisName(GimbalTrajectoryAxis axis) noexcept {
-  switch (axis) {
-    case GimbalTrajectoryAxis::NONE:
-      return "none";
-    case GimbalTrajectoryAxis::YAW:
-      return "yaw";
-    case GimbalTrajectoryAxis::PITCH:
-      return "pitch";
-    case GimbalTrajectoryAxis::BOTH:
-      return "both";
-  }
-  return "unknown";
-}
-
-std::string_view GimbalWarmStartActionName(GimbalWarmStartAction action) noexcept {
-  switch (action) {
-    case GimbalWarmStartAction::NONE:
-      return "none";
-    case GimbalWarmStartAction::SHIFT:
-      return "shift";
-    case GimbalWarmStartAction::REBASE:
-      return "rebase";
-    case GimbalWarmStartAction::SHIFT_AFTER_FAILURE:
-      return "shift_after_failure";
-  }
-  return "unknown";
-}
-
-struct GimbalTrajectoryPlanner::Impl {
-  explicit Impl(GimbalTrajectoryPlannerConfig value)
+struct MpcTrajectoryPlanner::Impl {
+  explicit Impl(MpcTrajectoryPlannerConfig value)
       : config(value),
         yaw_normalization(MakeNormalization(config, config.max_yaw_velocity_rad_s,
                                             config.max_yaw_acceleration_rad_s2)),
@@ -183,7 +129,7 @@ struct GimbalTrajectoryPlanner::Impl {
         yaw_solver(MakeSolver(config, yaw_normalization, config.q_yaw, config.r_yaw)),
         pitch_solver(MakeSolver(config, pitch_normalization, config.q_pitch, config.r_pitch)) {}
 
-  GimbalTrajectoryPlannerConfig config;             ///< 不可变规划器参数。
+  MpcTrajectoryPlannerConfig config;                ///< 不可变规划器参数。
   AxisNormalization yaw_normalization;              ///< 偏航轴物理量尺度。
   AxisNormalization pitch_normalization;            ///< 俯仰轴物理量尺度。
   SolverPtr yaw_solver{nullptr, &DestroySolver};    ///< 偏航双积分 TinyMPC 求解器。
@@ -196,20 +142,19 @@ struct GimbalTrajectoryPlanner::Impl {
   std::vector<AimReferencePoint> previous_reference;  ///< 上周期参考，用于跃变诊断。
 };
 
-GimbalTrajectoryPlanner::GimbalTrajectoryPlanner(GimbalTrajectoryPlannerConfig config)
+MpcTrajectoryPlanner::MpcTrajectoryPlanner(MpcTrajectoryPlannerConfig config)
     : impl_(std::make_unique<Impl>(config)) {}
 
-GimbalTrajectoryPlanner::~GimbalTrajectoryPlanner() = default;
-GimbalTrajectoryPlanner::GimbalTrajectoryPlanner(GimbalTrajectoryPlanner&&) noexcept = default;
-GimbalTrajectoryPlanner& GimbalTrajectoryPlanner::operator=(GimbalTrajectoryPlanner&&) noexcept =
-    default;
+MpcTrajectoryPlanner::~MpcTrajectoryPlanner() = default;
+MpcTrajectoryPlanner::MpcTrajectoryPlanner(MpcTrajectoryPlanner&&) noexcept = default;
+MpcTrajectoryPlanner& MpcTrajectoryPlanner::operator=(MpcTrajectoryPlanner&&) noexcept = default;
 
-void GimbalTrajectoryPlanner::RequestWarmStartRebase() noexcept {
+void MpcTrajectoryPlanner::RequestWarmStartRebase() noexcept {
   impl_->rebase_requested = true;
 }
 
-GimbalTrajectoryResult GimbalTrajectoryPlanner::Plan(const hal::GimbalFeedback& feedback,
-                                                     std::span<const AimReferencePoint> reference) {
+GimbalTrajectoryResult MpcTrajectoryPlanner::Plan(const hal::GimbalFeedback& feedback,
+                                                  std::span<const AimReferencePoint> reference) {
   GimbalTrajectoryResult result;
   auto& output = result.output;
   auto& diagnostics = result.diagnostics;
@@ -218,7 +163,8 @@ GimbalTrajectoryResult GimbalTrajectoryPlanner::Plan(const hal::GimbalFeedback& 
     diagnostics.failure_axis = GimbalTrajectoryAxis::BOTH;
     return result;
   }
-  if (reference.size() != static_cast<std::size_t>(impl_->config.horizon_steps)) {
+  if (reference.size() < 2 ||
+      reference.size() != static_cast<std::size_t>(impl_->config.horizon_steps)) {
     diagnostics.failure_reason = GimbalTrajectoryFailureReason::INVALID_REFERENCE_SIZE;
     diagnostics.failure_axis = GimbalTrajectoryAxis::BOTH;
     return result;
@@ -416,7 +362,7 @@ GimbalTrajectoryResult GimbalTrajectoryPlanner::Plan(const hal::GimbalFeedback& 
   return result;
 }
 
-const GimbalTrajectoryPlannerConfig& GimbalTrajectoryPlanner::Config() const noexcept {
+const MpcTrajectoryPlannerConfig& MpcTrajectoryPlanner::Config() const noexcept {
   return impl_->config;
 }
 

@@ -4,7 +4,7 @@
 #include "hal/gimbal/gimbal_types.hpp"
 #include "modules/armor_predictor/armor_prediction_output.hpp"
 #include "modules/fire_control/control_types.hpp"
-#include "modules/gimbal_trajectory_planner/gimbal_trajectory_planner_config.hpp"
+#include "modules/gimbal_control/gimbal_control_config.hpp"
 
 #include <memory>
 
@@ -22,7 +22,7 @@ class RuntimeSupervisor;
 class ControlRuntime final {
  public:
   ControlRuntime(modules::FireControlConfig fire_config,
-                 modules::GimbalTrajectoryPlannerConfig planner_config,
+                 modules::GimbalControlConfig planner_config,
                  std::unique_ptr<hal::IGimbalCommandSink> sink,
                  IRuntimeDiagnosticsSink* diagnostics, RuntimeSupervisor& supervisor);
   ~ControlRuntime();

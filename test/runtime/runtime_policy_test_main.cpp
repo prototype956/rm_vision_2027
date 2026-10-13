@@ -59,6 +59,28 @@ optional_components:
   bool valid = Check(
       POLICY.camera_no_valid_frame_timeout == 2s && POLICY.command_sink_unhealthy_timeout == 1s,
       "runtime policy parser must preserve configured timeouts");
+  valid &= Check(!POLICY.command_sink_wait_for_recovery,
+                 "old configs retain terminal command timeout behavior");
+  auto reconnect_config = YAML::Load(R"(
+schema_version: 1
+camera:
+  no_valid_frame_timeout_ms: 2000
+control:
+  command_sink_unhealthy_timeout_ms: 1000
+  command_sink_wait_for_recovery: true
+optional_components:
+  evaluation_disable_after_consecutive_errors: 1
+  debug_window_disable_after_consecutive_errors: 1
+)");
+  valid &= Check(mv::runtime::ParseRuntimeErrorPolicy(reconnect_config)
+                     .command_sink_wait_for_recovery,
+                 "reconnect policy must parse explicitly");
+  reconnect_config["control"]["command_sink_wait_for_recovery"] = "invalid";
+  try {
+    static_cast<void>(mv::runtime::ParseRuntimeErrorPolicy(reconnect_config));
+    valid &= Check(false, "reconnect policy must reject invalid boolean values");
+  } catch (const std::exception&) {
+  }
   try {
     static_cast<void>(mv::runtime::ParseRuntimeErrorPolicy(YAML::Load(R"(
 schema_version: 1
@@ -225,12 +247,68 @@ bool TestControlRuntimeSendsStop() {
   return valid;
 }
 
+bool TestPersistentCommandRecovery() {
+  mv::runtime::RuntimeErrorPolicy policy;
+  policy.command_sink_wait_for_recovery = true;
+  mv::runtime::RuntimeSupervisor supervisor(policy);
+  const auto START = Clock::time_point(20s);
+  supervisor.RecoverAt(mv::runtime::RuntimeComponent::COMMAND_SINK, START);
+  bool valid = true;
+  for (const auto DELAY : {10ms, 1000ms, 3000ms, 3600000ms}) {
+    const auto DECISION = supervisor.ReportAt(
+        mv::runtime::RuntimeFaultCode::COMMAND_SINK_UNHEALTHY, "stale feedback", START + DELAY);
+    valid &= Check(DECISION.request_safe_stop && !DECISION.termination,
+                   "persistent outage must always stop without terminating in recovery mode");
+  }
+  const auto SEND_FAILURE = supervisor.ReportAt(
+      mv::runtime::RuntimeFaultCode::COMMAND_SEND_FAILED, "disconnected", START + 3600001ms);
+  valid &= Check(SEND_FAILURE.request_safe_stop && !SEND_FAILURE.termination,
+                 "send failure must share recovery policy");
+  supervisor.RecoverAt(mv::runtime::RuntimeComponent::COMMAND_SINK, START + 3600002ms);
+  valid &= Check(!supervisor.TerminalResult() &&
+                     supervisor.Snapshot().overall == mv::runtime::RuntimeHealthState::HEALTHY,
+                 "late reconnection must clear degradation without restarting the process");
+  valid &= Check(supervisor.Report(mv::runtime::RuntimeFaultCode::CONTROL_THREAD_EXCEPTION)
+                     .termination.has_value(),
+                 "reconnect policy must not suppress control thread exceptions");
+  return valid;
+}
+
+bool TestControlRuntimeWaitsForRecovery() {
+  mv::runtime::RuntimeErrorPolicy policy;
+  policy.command_sink_unhealthy_timeout = 30ms;
+  policy.command_sink_wait_for_recovery = true;
+  mv::runtime::RuntimeSupervisor supervisor(policy);
+  auto fake = std::make_unique<FakeCommandSink>();
+  auto* observed = fake.get();
+  observed->healthy.store(false);
+  observed->send_succeeds.store(false);
+  mv::runtime::ControlRuntime control({}, {}, std::move(fake), nullptr, supervisor);
+  control.Start();
+  std::this_thread::sleep_for(150ms);
+  const int STOPS = observed->invalid_stop_count.load();
+  bool valid = Check(!supervisor.TerminalResult() && STOPS > 0,
+                     "control loop must keep sending stop beyond the terminal timeout");
+  observed->healthy.store(true);
+  observed->send_succeeds.store(true);
+  const auto DEADLINE = Clock::now() + 500ms;
+  while (supervisor.Snapshot().overall != mv::runtime::RuntimeHealthState::HEALTHY &&
+         Clock::now() < DEADLINE)
+    std::this_thread::sleep_for(2ms);
+  valid &= Check(supervisor.Snapshot().overall == mv::runtime::RuntimeHealthState::HEALTHY &&
+                     observed->send_count.load() > STOPS,
+                 "same control loop must recover and continue publishing after outage");
+  control.Stop();
+  return valid;
+}
+
 }  // namespace
 
 int main() {
   const bool PASSED = TestPolicyParsing() && TestCameraTimeoutAndRecovery() &&
                       TestImmediateAndLatchedFailures() && TestOptionalComponentsAndExitCodes() &&
-                      TestCommandRecovery() && TestControlRuntimeSendsStop();
+                      TestCommandRecovery() && TestControlRuntimeSendsStop() &&
+                      TestPersistentCommandRecovery() && TestControlRuntimeWaitsForRecovery();
   if (!PASSED)
     return EXIT_FAILURE;
   std::cout << "runtime policy acceptance passed\n";

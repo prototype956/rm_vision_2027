@@ -3,6 +3,9 @@ camera:
   no_valid_frame_timeout_ms: 2000
 control:
   command_sink_unhealthy_timeout_ms: 1000
+  # Stop outputs immediately, but keep the process alive for serial hot-plug/recovery.
+  # The timeout above applies only when this option is false.
+  command_sink_wait_for_recovery: true
 optional_components:
   evaluation_disable_after_consecutive_errors: 1
   debug_window_disable_after_consecutive_errors: 1

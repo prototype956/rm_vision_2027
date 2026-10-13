@@ -1,5 +1,7 @@
 #pragma once
 
+#include "modules/gimbal_control/gimbal_reference_timing.hpp"
+
 #include <array>
 
 #include <yaml-cpp/yaml.h>
@@ -7,7 +9,8 @@
 namespace mv::modules {
 
 /** @brief 双轴云台 TinyMPC 离散模型、约束、代价和 ADMM 求解参数。 */
-struct GimbalTrajectoryPlannerConfig {
+struct MpcTrajectoryPlannerConfig {
+  bool operator==(const MpcTrajectoryPlannerConfig&) const = default;
   double dt_s{0.01};                 ///< 相邻离散状态之间的时间间隔，单位为秒。
   int horizon_steps{50};             ///< 每轴状态参考和输出轨迹的离散点数。
   double command_lookahead_s{0.05};  ///< 从轨迹起点选取正式命令的期望前视时间。
@@ -29,10 +32,10 @@ struct GimbalTrajectoryPlannerConfig {
 /**
  * @brief 解析并严格校验云台轨迹规划器 YAML 配置。
  * @param root 轨迹规划器配置根节点。
- * @return 可直接构造 GimbalTrajectoryPlanner 的类型化配置。
+ * @return 可直接构造 MpcTrajectoryPlanner 的类型化配置。
  * @throws ConfigError 字段缺失、类型错误、存在未知键或值域非法。
  */
-[[nodiscard]] GimbalTrajectoryPlannerConfig ParseGimbalTrajectoryPlannerConfig(
-    const YAML::Node& root);
+[[nodiscard]] MpcTrajectoryPlannerConfig ParseMpcTrajectoryPlannerConfig(
+    const YAML::Node& root, GimbalReferenceTiming timing = {});
 
 }  // namespace mv::modules

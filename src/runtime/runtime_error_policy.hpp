@@ -10,6 +10,7 @@ namespace mv::runtime {
 struct RuntimeErrorPolicy {
   std::chrono::milliseconds camera_no_valid_frame_timeout{2000};
   std::chrono::milliseconds command_sink_unhealthy_timeout{1000};
+  bool command_sink_wait_for_recovery{false};  ///< Keep safe-stop active without terminating.
   int evaluation_disable_after_consecutive_errors{1};
   int debug_window_disable_after_consecutive_errors{1};
 };

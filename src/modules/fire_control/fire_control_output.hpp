@@ -2,7 +2,8 @@
 
 #include "hal/gimbal/gimbal_types.hpp"
 #include "modules/armor_predictor/armor_prediction_output.hpp"
-#include "modules/gimbal_trajectory_planner/gimbal_trajectory_output.hpp"
+#include "modules/gimbal_control/gimbal_control_config.hpp"
+#include "modules/gimbal_control/gimbal_trajectory_output.hpp"
 
 #include <cstdint>
 #include <string_view>
@@ -41,7 +42,7 @@ enum class FireRejectReason {
 [[nodiscard]] std::string_view FireRejectReasonName(FireRejectReason reason) noexcept;
 
 /** @brief 最终交给云台命令后端的指令来源。 */
-enum class GimbalCommandSource { MPC, TRAJECTORY_FALLBACK, STOP };
+enum class GimbalCommandSource { MPC, TRAJECTORY_FALLBACK, STOP, PID };
 
 [[nodiscard]] std::string_view GimbalCommandSourceName(GimbalCommandSource source) noexcept;
 
@@ -59,6 +60,7 @@ struct BallisticSolution {
 
 /** @brief 控制运行时与 HAL 消费的单周期正式火控输出。 */
 struct FireControlOutput {
+  GimbalControlMode control_mode{GimbalControlMode::MPC};
   std::uint64_t source_sequence{0};
   std::optional<std::uint64_t> source_capture_timestamp_ns;
   std::uint64_t command_timestamp_ns{0};

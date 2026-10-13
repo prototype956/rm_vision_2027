@@ -28,11 +28,11 @@ RuntimeDecision ControlRuntimeImpl::ObserveCommandChannel(
     bool sink_healthy, bool send_succeeded, std::chrono::steady_clock::time_point now) noexcept {
   if (!sink_healthy) {
     return supervisor_.ReportAt(RuntimeFaultCode::COMMAND_SINK_UNHEALTHY,
-                                "Talos command heartbeat is unhealthy", now);
+                                "gimbal command heartbeat is unhealthy", now);
   }
   if (!send_succeeded) {
     return supervisor_.ReportAt(RuntimeFaultCode::COMMAND_SEND_FAILED,
-                                "Talos command publication failed", now);
+                                "gimbal command publication failed", now);
   }
   supervisor_.RecoverAt(RuntimeComponent::COMMAND_SINK, now);
   return {};
@@ -65,11 +65,12 @@ void ControlRuntimeImpl::ProcessSnapshot(
   if (++state.control_cycles % 100 == 0) {
     MV_LOG_INFO("Control",
                 "seq={} tracker={} slot={} command={} fire={} reject={} "
-                "age(pred/fb)={:.1f}/{:.1f}ms mpc={} iter={}/{} solve={:.1f}us",
+                "age(pred/fb)={:.1f}/{:.1f}ms mode={} plan={} iter={}/{} solve={:.1f}us",
                 output.source_sequence, modules::TrackerStateName(output.tracker_state),
                 output.selected_slot, output.command.valid, output.command.fire,
                 modules::FireRejectReasonName(output.reject_reason),
-                output.prediction_age_s * 1.0e3, output.feedback_age_s * 1.0e3, output.plan.valid,
+                output.prediction_age_s * 1.0e3, output.feedback_age_s * 1.0e3,
+                modules::GimbalControlModeName(output.control_mode), output.plan.valid,
                 diagnostics.plan.yaw_iterations, diagnostics.plan.pitch_iterations,
                 diagnostics.plan.solve_time_us);
   }

@@ -14,7 +14,7 @@ target_include_directories(mv-modules-fire-control PUBLIC
 
 target_link_libraries(mv-modules-fire-control
     PUBLIC mv-core mv-hal-gimbal mv-prediction-model
-           mv-modules-gimbal-trajectory-planner Eigen3::Eigen
+           mv-modules-gimbal-control Eigen3::Eigen
     PRIVATE yaml-cpp
 )
 

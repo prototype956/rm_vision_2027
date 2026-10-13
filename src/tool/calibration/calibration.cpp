@@ -97,7 +97,6 @@ void EmitQualityCriteria(YAML::Emitter& output, const CalibrationSettings& setti
   output << YAML::Key << "max_rms_px" << YAML::Value << settings.max_rms_px;
   output << YAML::Key << "max_view_rms_px" << YAML::Value << settings.max_view_rms_px;
   output << YAML::Key << "required_grid_cells" << YAML::Value << 9;
-  output << YAML::Key << "min_area_ratio" << YAML::Value << settings.min_area_ratio;
   output << YAML::EndMap;
 }
 
@@ -143,7 +142,7 @@ CalibrationSettings ParseCalibrationSettings(const YAML::Node& root,
 
   const auto QUALITY = root["quality"];
   ConfigLoader::RequireMap(QUALITY, "camera calibration config.quality");
-  ConfigLoader::RejectUnknownKeys(QUALITY, {"max_rms_px", "max_view_rms_px", "min_area_ratio"},
+  ConfigLoader::RejectUnknownKeys(QUALITY, {"max_rms_px", "max_view_rms_px"},
                                   "camera calibration config.quality");
 
   CalibrationSettings settings;
@@ -159,14 +158,12 @@ CalibrationSettings ParseCalibrationSettings(const YAML::Node& root,
       ConfigLoader::Require<double>(QUALITY, "max_rms_px", "camera calibration config.quality");
   settings.max_view_rms_px = ConfigLoader::Require<double>(QUALITY, "max_view_rms_px",
                                                            "camera calibration config.quality");
-  settings.min_area_ratio =
-      ConfigLoader::Require<double>(QUALITY, "min_area_ratio", "camera calibration config.quality");
   const auto OUTPUT_DIR = ConfigLoader::Require<std::string>(root, "output_dir", K_CONFIG_CONTEXT);
   settings.output_dir = ConfigLoader::ResolvePath(project_root, OUTPUT_DIR);
 
   if (settings.board_columns < 2 || settings.board_rows < 2 || settings.square_size_mm <= 0.0 ||
       settings.min_samples < 3 || settings.max_rms_px <= 0.0 || settings.max_view_rms_px <= 0.0 ||
-      settings.min_area_ratio < 1.0 || OUTPUT_DIR.empty()) {
+      OUTPUT_DIR.empty()) {
     throw ConfigError("camera calibration config contains an invalid setting");
   }
   return settings;
@@ -322,9 +319,6 @@ CalibrationResult CameraCalibrator::Solve() const {
   }
   if (result.coverage.occupied_grid_cells < 9) {
     result.failures.push_back("chessboard corners do not cover all 3x3 image cells");
-  }
-  if (result.coverage.area_ratio < settings_.min_area_ratio) {
-    result.failures.push_back("projected board area ratio is below min_area_ratio");
   }
   if (active_samples.size() < 3) {
     return result;

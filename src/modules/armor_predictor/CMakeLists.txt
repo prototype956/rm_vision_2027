@@ -1,3 +1,5 @@
+include(${CMAKE_CURRENT_SOURCE_DIR}/PredictionModel.cmake)
+
 add_library(mv-modules-armor-predictor STATIC
     armor_predictor.cpp
     armor_predictor_config.cpp

@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <iostream>
 
+#include <filesystem>
 #include <numbers>
 using namespace mv;
 int main(int argc, char** argv) {
@@ -11,8 +12,8 @@ int main(int argc, char** argv) {
     return 2;
   const auto F =
       modules::ParseFireControlConfig(YAML::LoadFile(std::string(argv[1]) + "/fire_control.yaml"));
-  const auto P = modules::ParseGimbalTrajectoryPlannerConfig(
-      YAML::LoadFile(std::string(argv[1]) + "/gimbal_trajectory_planner.yaml"));
+  const auto P =
+      modules::LoadGimbalControlConfig(std::filesystem::path(argv[1]).parent_path(), "talos");
   std::cout << std::setprecision(17);
   for (int scene = 0; scene < 8; ++scene) {
     modules::FireControl control(F, P);

@@ -24,7 +24,6 @@ struct CalibrationSettings {
   int min_samples{20};              ///< 通过质量验收所需的最少有效样本数。
   double max_rms_px{0.5};            ///< 全局重投影 RMS 上限，单位为像素。
   double max_view_rms_px{1.0};       ///< 单视图重投影 RMS 上限，单位为像素。
-  double min_area_ratio{2.0};        ///< 最大与最小棋盘投影面积的最小倍率。
   std::filesystem::path output_dir;  ///< 会话输出目录的规范化绝对路径。
 };
 
@@ -60,7 +59,7 @@ struct CalibrationSample {
 struct CoverageMetrics {
   std::array<bool, 9> grid_cells{};  ///< 画面 3x3 网格中是否至少落入一个角点。
   int occupied_grid_cells{0};        ///< grid_cells 中已覆盖的网格数量。
-  double area_ratio{0.0};            ///< 最大与最小棋盘投影面积之比。
+  double area_ratio{0.0};            ///< 最大与最小棋盘投影面积之比，仅作诊断，不参与验收。
 };
 
 /**

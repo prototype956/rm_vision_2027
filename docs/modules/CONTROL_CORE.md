@@ -82,3 +82,10 @@ cmake --build build-control-core --parallel 4
 Foxglove `/vision/control/state` 包含本地请求/接受、`runtime.referee_age_s` 及
 `runtime.control_compute_time_us`。后者计入同步计算、快照复制与发布结果处理，排除 Send；
 线程调度迟到、周期长度和计算耗时分开统计，完整闭环验收必须确认外部控制确实开启。
+
+## PID / MPC 模块分离
+
+火控继续负责选板、弹道、参考生成及开火门控，`GimbalReferencePlanner` 按启动模式
+组织 PID 直接参考或 MPC 轨迹。PID 和 MPC 来源都缓存成功发布的参考序列，沿用短时
+丢目标回退。实机速率控制在发送阶段使用直接 IMU 反馈；Talos 保留角度接口。
+配置、热更新及算法目录见 [云台控制](GIMBAL_CONTROL.md)。

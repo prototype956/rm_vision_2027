@@ -188,6 +188,23 @@ constexpr char K_TRACKING_SCHEMA[] = R"json({
     "yaw_solver_max_residual":{"type":"number"},
     "pitch_solver_max_residual":{"type":"number"},
     "actuator_valid":{"type":"boolean"},"actuator_mode":{"type":"string"},
+    "control_mode":{"type":"string"},
+    "serial_pid_active":{"type":"boolean"},
+    "friction_requested":{"type":"boolean"},
+    "friction_queued":{"type":"boolean"},
+    "feeder_queued":{"type":"boolean"},
+    "pid_yaw_error_rad":{"type":["number","null"]},
+    "pid_yaw_p":{"type":["number","null"]},
+    "pid_yaw_i":{"type":["number","null"]},
+    "pid_yaw_d":{"type":["number","null"]},
+    "pid_yaw_integral_weight":{"type":["number","null"]},
+    "pid_yaw_rate_command":{"type":["number","null"]},
+    "pid_pitch_error_rad":{"type":["number","null"]},
+    "pid_pitch_p":{"type":["number","null"]},
+    "pid_pitch_i":{"type":["number","null"]},
+    "pid_pitch_d":{"type":["number","null"]},
+    "pid_pitch_integral_weight":{"type":["number","null"]},
+    "pid_pitch_rate_command":{"type":["number","null"]},
     "actuator_command_valid":{"type":"boolean"},
     "actuator_saturation_flags":{"type":"integer"},
     "actuator_target_yaw":{"type":["number","null"]},
@@ -669,6 +686,12 @@ std::string EncodeTracking(const ControlDebugView& value) {
       "\"command_consumption_latency_s\":{},"
       "\"consumed_command_timestamp_ns\":{},\"consumed_at_timestamp_ns\":{},"
       "\"matched_prior_approximate\":{},"
+      "\"control_mode\":\"{}\",\"serial_pid_active\":{},"
+      "\"friction_requested\":{},\"friction_queued\":{},\"feeder_queued\":{},"
+      "\"pid_yaw_error_rad\":{},\"pid_yaw_p\":{},\"pid_yaw_i\":{},\"pid_yaw_d\":{},"
+      "\"pid_yaw_integral_weight\":{},\"pid_yaw_rate_command\":{},"
+      "\"pid_pitch_error_rad\":{},\"pid_pitch_p\":{},\"pid_pitch_i\":{},\"pid_pitch_d\":{},"
+      "\"pid_pitch_integral_weight\":{},\"pid_pitch_rate_command\":{},"
       "\"mpc_failure_reason\":\"{}\",\"mpc_failure_axis\":\"{}\","
       "\"mpc_failure_index\":{},\"yaw_solver_iterations\":{},"
       "\"pitch_solver_iterations\":{},\"yaw_solver_max_residual\":{},"
@@ -793,7 +816,24 @@ std::string EncodeTracking(const ControlDebugView& value) {
           : "null",
       actuator.consumed_at_timestamp_ns != 0 ? std::to_string(actuator.consumed_at_timestamp_ns)
                                              : "null",
-      value.matched_prior_command.approximate,
+      value.matched_prior_command.approximate, modules::GimbalControlModeName(value.control_mode),
+      ACTUATOR_VALID && actuator.serial_pid_active, value.command.friction_wheel,
+      ACTUATOR_VALID && actuator.serial_friction_queued,
+      ACTUATOR_VALID && actuator.serial_feeder_queued,
+      OptionalNumber(ACTUATOR_VALID && actuator.serial_pid_active, actuator.yaw_pid.error_rad),
+      OptionalNumber(ACTUATOR_VALID && actuator.serial_pid_active, actuator.yaw_pid.p),
+      OptionalNumber(ACTUATOR_VALID && actuator.serial_pid_active, actuator.yaw_pid.i),
+      OptionalNumber(ACTUATOR_VALID && actuator.serial_pid_active, actuator.yaw_pid.d),
+      OptionalNumber(ACTUATOR_VALID && actuator.serial_pid_active,
+                     actuator.yaw_pid.integral_weight),
+      OptionalNumber(ACTUATOR_VALID && actuator.serial_pid_active, actuator.yaw_pid.rate_command),
+      OptionalNumber(ACTUATOR_VALID && actuator.serial_pid_active, actuator.pitch_pid.error_rad),
+      OptionalNumber(ACTUATOR_VALID && actuator.serial_pid_active, actuator.pitch_pid.p),
+      OptionalNumber(ACTUATOR_VALID && actuator.serial_pid_active, actuator.pitch_pid.i),
+      OptionalNumber(ACTUATOR_VALID && actuator.serial_pid_active, actuator.pitch_pid.d),
+      OptionalNumber(ACTUATOR_VALID && actuator.serial_pid_active,
+                     actuator.pitch_pid.integral_weight),
+      OptionalNumber(ACTUATOR_VALID && actuator.serial_pid_active, actuator.pitch_pid.rate_command),
       modules::GimbalTrajectoryFailureReasonName(value.plan.failure_reason),
       modules::GimbalTrajectoryAxisName(value.plan.failure_axis), value.plan.failure_index,
       value.plan.yaw_iterations, value.plan.pitch_iterations,

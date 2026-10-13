@@ -3,14 +3,14 @@
 #include "modules/fire_control/rule_policy.hpp"
 namespace mv::modules {
 /**
- * @brief 根据目标预测和云台反馈完成装甲选择、弹道解算、MPC 规划与开火门控。
+ * @brief 根据目标预测和云台反馈完成装甲选择、弹道解算、参考组织与轨迹规划与开火门控。
  *
  * 实例保存槽位滞回、开火脉冲和求解器 warm-start 状态，应由同一控制序列串行调用。
  */
 class FireControl final {
  public:
   /** @brief 保存已校验的火控和轨迹规划配置，并创建空控制状态。 */
-  FireControl(FireControlConfig config, GimbalTrajectoryPlannerConfig planner_config);
+  FireControl(FireControlConfig config, GimbalControlConfig planner_config);
 
   /**
    * @brief 运行一个控制周期并生成云台目标、开火建议及完整诊断。
@@ -41,7 +41,7 @@ class FireControl final {
   [[nodiscard]] BallisticSolution SolveBallistic(const ControlInputSnapshot& input, int slot,
                                                  const geometry::RigidTransform& world_t_muzzle,
                                                  double base_horizon_s) const;
-  /** @brief 在 MPC 各离散时刻求解弹道角，并用中心差分生成速度参考。 */
+  /** @brief 在公共参考各离散时刻求解弹道角，并用中心差分生成速度参考。 */
   [[nodiscard]] std::vector<AimReferencePoint> BuildReference(
       const ControlInputSnapshot& input, int slot, const geometry::RigidTransform& world_t_muzzle,
       double prediction_age_s, BallisticSolution& current, double yaw_anchor) const;
@@ -56,7 +56,7 @@ class FireControl final {
   std::optional<std::uint64_t> round_;
   std::uint64_t generation_{0};
   FireControlConfig config_;                 ///< 不可变火控参数。
-  GimbalTrajectoryPlanner planner_;          ///< 双轴 MPC 轨迹规划器及 warm-start 状态。
+  GimbalReferencePlanner planner_;           ///< 按模式组织参考及 MPC warm-start 状态。
   std::optional<ArmorLabel> tracked_label_;  ///< 上周期目标标签，用于检测目标变化。
   std::optional<geometry::ArmorType> tracked_type_;  ///< 上周期装甲尺寸。
   std::optional<std::chrono::steady_clock::time_point> last_fire_start_;  ///< 最近脉冲起始时刻。

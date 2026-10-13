@@ -9,9 +9,9 @@
 1. 烧录云台工程，确认 USART1 与 USB 转串口相连，参数为 460800、8N1。
 2. 在 `src/config/hal/imu/serial.yaml` 中设置实际 `device`，推荐稳定的 `/dev/serial/by-id/...`。
    空路径或 `enabled: false` 保留图像检测，不提供空间数据。不要同时启动其他串口读取程序。
-3. `hal/camera/intrinsics.yaml` 已复制 20260919_214820 标定值，要求 1280×720、ROI `(0,152)`。
+3. `hal/camera/intrinsics.yaml` 已复制最新 `20260926_161918` 标定值，要求 1280×720、ROI `(0,152)`。
 4. `hal/imu/extrinsics.yaml` 中 IMU 名义安装旋转已确认为 `diag(-1,-1,1)`。
-   相机、枪口外参仍未标定，`placeholder: true` 保留；不能据此评价整体定位精度。
+   相机外参已由 2026-10-10 手眼标定结果替换；枪口外参仍未标定，因此 `placeholder: true` 保留。
 5. `hal/camera/mindvision.yaml` 的 `capture.time_offset_ms` 默认 0，是加到估计采集时刻的修正，
    正数表示更晚、负数更早。SDK `uiTimeStamp` 单位为 0.1 ms，初始 8 帧后建立软件映射。
    映射取最近 10 秒（最多 2048 帧）的最小接收延迟，尚未补偿 USB 最小传输延迟或曝光相位。
@@ -43,8 +43,8 @@ cmake --build build-openvino --parallel 4
 
 断连、MCU 重启和无效数据时，应保留图像检测并失去空间结果，恢复后重新建轨。
 同端口 PC 调参仍由同一个串口拥有者发送；不要让两个进程竞争读取串口。
-完成 IMU 轴向确认及外参测量后，才能验证转动云台时固定目标的方向稳定性。
-相机绕双 yaw 的位置变化本轮没有补偿，不能要求目标惯性系位置完全不动。
+当前车辆的 IMU 轴向和相机外参已经确认，可用固定目标检查小 yaw/pitch 转动时的世界系稳定性。
+大 yaw/底盘平移没有进入本阶段模型；涉及这些自由度时不能要求目标惯性系位置完全不动。
 
 
 ## Foxglove 实机坐标轴
@@ -52,7 +52,21 @@ cmake --build build-openvino --parallel 4
 新主程序在 `/vision/camera/transforms` 发布同帧实机 TF，3D 面板以 `world` 为参考，
 启用 Transforms 坐标轴与 `/vision/camera/frustum` 视锥。
 具体设置及占位外参限制见 [Foxglove 实机 3D 坐标系](../tool/FOXGLOVE.md#实机-3d-坐标系)。
-本轮仅验证编译通过；用户实机确认 TF 持续更新，云台转动时相机视锥同步转动。
+2026-10-10 用户实机确认 TF 持续更新，云台转动时相机视锥同步转动；固定目标在小 yaw/pitch
+转动时保持在同一惯性位置且无明显抖动。
+
+## 2026-10-10 当前车辆验收记录
+
+- 下位机由用户完成 Keil 编译与手动烧录；主程序和标定工具在本仓库重新构建。
+- 姿态接收约 200 Hz，`IMU:ok`、`sync=true`；观测到样本年龄约 4–11 ms、同步 RTT 约 2.0–2.6 ms、CRC 错误 0、传输丢帧 0。
+- 外参采集会话：`artifacts/camera_calibration/extrinsics/20261010_154217`；求解：`solutions/20261010_154858`。
+- 30/30 样本接纳；PARK 求解的 PnP 重投影 RMS 为 0.109290 px、固定板位置一致性 RMS 为 0.012819 m、旋转一致性 RMS 为 0.497539°。
+- 最大位置残差为 0.026761 m，最大旋转残差为 1.104592°，平移约束条件数为 2.249189。
+- 已部署候选中的 `gimbal_r_camera` 与 `gimbal_t_camera_m`；部署前配置保存在求解目录的 `deployment_before.yaml`。
+- 验收记录：`logs/2026-10-10_16-08-27.log`；MCAP：`artifacts/foxglove/miraclevision_20261010_160830_59419.mcap`，程序正常停止并完成文件封口。
+
+本记录表示相机—云台外参和第一阶段姿态/PnP 链路通过当前实机检查；不表示枪口外参、弹道、
+底盘平移或导航世界坐标已完成。
 
 
 ## 源码位置
@@ -100,6 +114,20 @@ profile、内外参路径和 IMU 安装四元数；更换 profile 后重启程�
 Talos 分支使用仿真提供的同帧几何，不读取此实机 profile。
 
 当前固定的 `diag(-1,-1,1)` 来自实验 1790080270511235 与 1790080827626598。
-其作用是统一轴向，不表示相机/枪口已完成标定，不能据此清除整体占位标记。
+相机外参已完成标定和实机检查；枪口仍未标定，因此不能清除整体占位标记。
 配置回归后需用户实机确认：水平左转时 `gyro_gimbal_rad_s.z > 0`，抬头时
 `gyro_gimbal_rad_s.y < 0`，Foxglove 云台及相机坐标轴随动作正确变化。
+
+
+## 相机外参工具
+
+现在可在固定大 yaw 的前提下，使用现有标定工具的 `extrinsics-capture` /
+`extrinsics-solve` 模式标定相机到小 yaw/pitch 云台的安装变换。
+采集与人工审核步骤、结果含义见 [单 yaw 外参标定](../tool/CAMERA_CALIBRATION.md#单-yaw-相机外参标定)。
+工具生成的候选文件不自动应用。当前车辆的 2026-10-10 候选已人工部署并完成实机验收；
+其他车辆仍须单独完成审核和部署，所有未标定外参继续保留占位标记。
+
+
+标定及 IMU 工具现统一由 `scripts/calibrate_camera.sh` 分组菜单启动；实机手眼在主项 `2`，
+IMU 轴向/漂移在主项 `4`。完整入口与配置说明见
+[标定与 IMU 工具](../tool/CALIBRATION.md)。

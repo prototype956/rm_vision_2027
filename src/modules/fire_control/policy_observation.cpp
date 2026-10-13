@@ -85,8 +85,9 @@ PolicyObservation FireControl::Observe(const ControlInputSnapshot& input,
     return o;
   const bool FIRE =
       config_.auto_fire && input.external_control_enabled && STATE == TrackerState::TRACKING &&
-      RefereeRejectReason(input.referee, now, config_.max_referee_age_s) ==
-          FireRejectReason::NONE &&
+      (config_.test_bypass_referee ||
+       RefereeRejectReason(input.referee, now, config_.max_referee_age_s) ==
+           FireRejectReason::NONE) &&
       (!last_fire_start_ ||
        std::chrono::duration<double>(now - *last_fire_start_).count() >= config_.fire_interval_s) &&
       (!pulse_until_ || now >= *pulse_until_);

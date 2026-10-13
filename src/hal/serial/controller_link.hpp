@@ -28,6 +28,8 @@ struct ControllerLinkState {
   double rate_hz{0};          ///< 姿态消息接收频率，不代表载荷有效性。
   double offset_us{0};        ///< 上位机单调时间减去 MCU 单调时间。
   double rtt_us{-1};
+  double last_receive_us{0};  ///< Last CRC/session-valid frame, host steady microseconds.
+  double last_attitude_receive_us{0};  ///< Last attitude envelope, not necessarily a new sample.
   std::string reason{"not_started"};
 };
 
@@ -43,7 +45,7 @@ struct ControllerFrame {
  * @brief 独占串口与收发线程，负责分帧、会话、时间同步及断线重连。
  *
  * 回调在构造期间或收发线程中串行执行，不得销毁链路本身；消费方负责其数据的并发保护。
- * 空帧回调用于传播状态；收到消息时返回 false 可请求重建会话。
+ * 空帧回调用于传播状态；空帧返回 false 请求重新连接，消息回调返回 false 重建会话。
  * 析构等待回调和收发线程结束，回调不得向收发线程抛出异常。
  */
 class ControllerLink final {
@@ -55,6 +57,10 @@ class ControllerLink final {
   ~ControllerLink();
   ControllerLink(const ControllerLink&) = delete;
   ControllerLink& operator=(const ControllerLink&) = delete;
+
+  /** @brief 发布最新双轴速率命令；真正的串口写入仍只发生在链路线程。 */
+  bool QueueGimbalCommand(float yaw_rate_rad_s, float pitch_rate_rad_s,
+                          bool enabled, bool fire, bool friction = false) noexcept;
 
  private:
   struct Impl;

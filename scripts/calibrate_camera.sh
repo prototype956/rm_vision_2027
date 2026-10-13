@@ -4,33 +4,52 @@ set -Eeuo pipefail
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
-ARTIFACTS_ROOT="${PROJECT_ROOT}/artifacts"
+cd "$PROJECT_ROOT"
+config_root="${RM_VISION_CONFIG_ROOT:-${PROJECT_ROOT}/src/config}"
+[[ "$config_root" = /* ]] || config_root="${PROJECT_ROOT}/${config_root}"
+export RM_VISION_CONFIG_ROOT="$config_root"
 SELECTED_PATH=""
+explicit_build_dir=""
 
+# Public commands are validated before resolving/building any executable.
 print_help() {
   cat <<EOF
-Usage:
+用法:
   $0
-  $0 [build-directory] [capture | solve <capture-directory>]
-  $0 [build-directory] simulation
+  $0 [--build-dir DIR] <功能组> <动作> [参数]
 
-Without arguments, start the interactive calibration menu:
-  1  camera intrinsic capture
-  2  simulator extrinsic capture
-  3  camera intrinsic solve
-  4  simulator extrinsic solve
-  5  Foxglove extrinsic visualization
-  6  IMU axis capture
+功能组:
+  intrinsic             capture | solve SESSION
+  real-extrinsics       capture | solve SESSION
+  simulation-extrinsics capture | solve SESSION | visualize SOLUTION [--once]
+  imu-axis              capture [DEVICE [NEW_OUTPUT_DIRECTORY]]
+  imu-drift             capture [--device DEVICE] [--duration SECONDS]
+                        [--note TEXT] [--motor-state STATE] [--thermal-state STATE]
+                        analyze SESSION
 
-The explicit command form is kept for automation. The simulation mode starts
-the Talos simulator and launches mv-extrinsic-calibration. Set SIMULATOR_ROOT
-when the simulator is not in ../bevy_robomaster_simulator relative to this
-repository.
-
-Build directory overrides:
-  BUILD_DIR=/path/to/build          camera and explicit command selection
-  VISION_BUILD_DIR=/path/to/build   simulator/extrinsic menu selection
+无参数进入标定与 IMU 菜单；<功能组> --help 查看分组用法。
+--build-dir 指定的目录必须包含所需程序，不回退到其他构建。
+未指定时按 BUILD_DIR、仿真 VISION_BUILD_DIR 和可用构建目录查找；
+IMU 程序未找到时独立编译，不需要相机 SDK、OpenCV 或 OpenVINO。
+菜单需要 Python 3 和 PyYAML。RM_VISION_CONFIG_ROOT 选择配置根目录，
+相对路径按项目根目录解析；IMU 使用当前车辆 profile。
+仿真采集自动启动 Talos，SIMULATOR_ROOT 可指定仿真器目录。
+旧的“构建目录 + 动作”和 simulation 等命令形式已移除。
 EOF
+}
+
+print_group_help() {
+  case "$1" in
+    intrinsic|real-extrinsics) echo "用法: $0 [--build-dir DIR] $1 capture | solve SESSION" ;;
+    simulation-extrinsics)
+      echo "用法: $0 [--build-dir DIR] $1 capture | solve SESSION | visualize SOLUTION [--once]" ;;
+    imu-axis) echo "用法: $0 [--build-dir DIR] imu-axis capture [DEVICE [NEW_OUTPUT_DIRECTORY]]" ;;
+    imu-drift)
+      echo "用法: $0 [--build-dir DIR] imu-drift capture [--device DEVICE] [--duration SECONDS]"
+      echo "      [--note TEXT] [--motor-state STATE] [--thermal-state STATE]"
+      echo "      $0 [--build-dir DIR] imu-drift analyze SESSION"
+      echo "默认采集 900 秒，电机与冷/热机状态为 unspecified。" ;;
+  esac
 }
 
 absolute_path() {
@@ -46,6 +65,15 @@ resolve_build_dir() {
   local candidate
   local -a candidates=()
 
+  if [[ -n "$explicit_build_dir" ]]; then
+    candidate=$(absolute_path "$explicit_build_dir")
+    if [[ -x "${candidate}/bin/${binary}" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    echo "指定构建目录缺少可执行程序: ${candidate}/bin/${binary}" >&2
+    return 1
+  fi
   if [[ -n "${BUILD_DIR:-}" ]]; then
     candidates+=("${BUILD_DIR}")
   fi
@@ -93,196 +121,209 @@ run_tool_from_menu() {
   pause_menu
 }
 
-camera_binary_or_report() {
-  local build_dir
-  if ! build_dir=$(resolve_build_dir camera mv-camera-calibration); then
-    echo "未找到 mv-camera-calibration。请先构建 build-camera 或 build-openvino。" >&2
-    echo "  cmake --build build-camera --parallel 4 --target mv-camera-calibration" >&2
-    return 1
-  fi
-  printf '%s/bin/mv-camera-calibration\n' "$build_dir"
-}
-
-extrinsic_binary_or_report() {
-  local build_dir
-  if ! build_dir=$(resolve_build_dir extrinsic mv-extrinsic-calibration); then
-    echo "未找到 mv-extrinsic-calibration。请先构建 build-openvino 或 build-tensorrt。" >&2
-    echo "  cmake --build build-openvino --parallel 4 --target mv-extrinsic-calibration" >&2
-    return 1
-  fi
-  printf '%s/bin/mv-extrinsic-calibration\n' "$build_dir"
-}
-
-collect_directories() {
-  local root="$1"
-  local mode="$2"
-  local entry path
-  local -a items=()
-  local -a details=()
-
-  [[ -d "$root" ]] || return 1
-  while IFS= read -r -d '' entry; do
-    path="${entry#*|}"
-    case "$mode" in
-      camera)
-        [[ -f "${path}/session.yaml" && -d "${path}/images" ]] || continue
-        local image_count
-        image_count=$(find "${path}/images" -maxdepth 1 -type f -print 2>/dev/null | wc -l)
-        items+=("$path")
-        details+=("${image_count} 个图像")
-        ;;
-      extrinsic)
-        [[ -f "${path}/session.yaml" ]] || continue
-        local extrinsic_image_count
-        extrinsic_image_count=$(find "${path}/images" -maxdepth 1 -type f -print 2>/dev/null | wc -l)
-        items+=("$path")
-        details+=("${extrinsic_image_count} 个图像")
-        ;;
-    esac
-  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d \
-    -printf '%T@|%p\0' 2>/dev/null | sort -z -rn)
-
-  SELECTED_PATH=""
-  if [[ "${#items[@]}" -eq 0 ]]; then
-    return 1
-  fi
-
-  echo
-  local index
-  for index in "${!items[@]}"; do
-    printf '  %d. %s  (%s)\n' "$((index + 1))" "$(basename "${items[index]}")" \
-      "${details[index]}"
-    printf '     %s\n' "${items[index]}"
-  done
-  echo "  q. 返回主菜单"
-  local choice
-  if ! read -r -p "请选择数据编号: " choice; then
-    return 2
-  fi
-  case "$choice" in
-    q|Q) return 2 ;;
+# Build only the serial/geometry dependencies shared by the two IMU tools.
+# Compiler messages go to stderr because the caller captures the binary path.
+build_imu_binary() {
+  local binary="$1" source build_dir
+  case "$binary" in
+    mv-imu-axis-capture) source=imu_axis_capture_main.cpp; build_dir=build-imu-axis ;;
+    mv-imu-drift) source=imu_drift_main.cpp; build_dir=build-imu-drift ;;
+    *) return 1 ;;
   esac
-  if [[ ! "$choice" =~ ^[0-9]+$ ]] || ((choice < 1 || choice > ${#items[@]})); then
-    echo "无效的数据编号。" >&2
-    return 2
-  fi
-  SELECTED_PATH="${items[choice-1]}"
+  mkdir -p "$build_dir/bin" || return $?
+  "${CXX:-c++}" -std=c++20 -O2 -Wall -Wextra -Wpedantic -pthread \
+    -DPROJECT_ROOT_PATH="\"${PROJECT_ROOT}\"" -DSPDLOG_FMT_EXTERNAL -Isrc -I/usr/include/eigen3 \
+    "test/imu/$source" src/hal/serial/controller_link.cpp src/hal/imu/serial_imu.cpp \
+    src/runtime/real_geometry_config.cpp src/core/logger.cpp \
+    -lyaml-cpp -lspdlog -lfmt -o "$build_dir/bin/$binary" >&2 || return $?
+  printf '%s/bin/%s\n' "$PROJECT_ROOT/$build_dir" "$binary"
 }
 
-collect_solution_directories() {
-  local root="$1"
-  local entry path session_dir
-  local -a entries=()
-  [[ -d "$root" ]] || return 1
-  while IFS= read -r -d '' entry; do
-    path="${entry#*|}"
-    session_dir=$(dirname "$(dirname "$path")")
-    [[ -f "${session_dir}/session.yaml" ]] || continue
-    entries+=("$entry")
-  done < <(find "$root" -mindepth 3 -maxdepth 3 -type d \
-    -printf '%T@|%p\0' 2>/dev/null | sort -z -rn)
-
-  SELECTED_PATH=""
-  [[ "${#entries[@]}" -gt 0 ]] || return 1
-  echo
-  local index
-  for index in "${!entries[@]}"; do
-    path="${entries[index]#*|}"
-    printf '  %d. %s  (extrinsics.yaml + report.yaml)\n' "$((index + 1))" "$(basename "$path")"
-    printf '     会话: %s\n' "$(basename "$(dirname "$(dirname "$path")")")"
-    printf '     %s\n' "$path"
-  done
-  echo "  q. 返回主菜单"
-  local choice
-  if ! read -r -p "请选择结果编号: " choice; then
-    return 2
+resolve_binary() {
+  local kind="$1" binary="$2" build_dir
+  if build_dir=$(resolve_build_dir "$kind" "$binary"); then
+    printf '%s/bin/%s\n' "$build_dir" "$binary"
+  elif [[ -n "$explicit_build_dir" ]]; then
+    return 1
+  elif [[ "$binary" == mv-imu-* ]]; then
+    build_imu_binary "$binary"
+  else
+    echo "未找到 $binary，请先构建对应 CMake 目标。" >&2
+    return 1
   fi
-  case "$choice" in
-    q|Q) return 2 ;;
+}
+
+command_error() {
+  echo "参数错误: $2" >&2
+  print_group_help "$1" >&2
+  return 2
+}
+
+validate_command() {
+  local group="$1" action="${2:-}" key value
+  shift
+  [[ $# -gt 0 ]] || { command_error "$group" "必须指定动作"; return 2; }
+  shift
+  case "$group:$action" in
+    intrinsic:capture|real-extrinsics:capture|simulation-extrinsics:capture)
+      [[ $# -eq 0 ]] || { command_error "$group" "capture 不接受额外参数"; return 2; } ;;
+    intrinsic:solve|real-extrinsics:solve|simulation-extrinsics:solve|imu-drift:analyze)
+      [[ $# -eq 1 && -n "$1" && "$1" != -* ]] || {
+        command_error "$group" "必须指定一个会话目录"; return 2;
+      } ;;
+    simulation-extrinsics:visualize)
+      [[ $# -ge 1 && $# -le 2 && -n "$1" && "$1" != -* ]] &&
+        { [[ $# -eq 1 ]] || [[ "$2" == --once ]]; } || {
+          command_error "$group" "必须指定结果目录，可选 --once"; return 2;
+        } ;;
+    imu-axis:capture)
+      [[ $# -le 2 ]] && { [[ $# -eq 0 ]] || [[ "$1" != -* ]]; } &&
+        { [[ $# -lt 2 ]] || [[ -n "$2" && "$2" != -* ]]; } || {
+          command_error "$group" "仅接受可选设备和新输出目录"; return 2;
+        } ;;
+    imu-drift:capture)
+      while [[ $# -gt 0 ]]; do
+        [[ $# -ge 2 ]] || { command_error "$group" "选项缺少值"; return 2; }
+        key="$1"; value="$2"; shift 2
+        case "$key" in
+          --device|--note|--motor-state|--thermal-state) ;;
+          --duration)
+            [[ "$value" =~ ^[+]?[0-9]+([.][0-9]*)?([eE][+-]?[0-9]+)?$ ||
+               "$value" =~ ^[+]?[.][0-9]+([eE][+-]?[0-9]+)?$ ]] &&
+              awk -v duration="$value" 'BEGIN { seconds = duration + 0; exit !(seconds > 0 && seconds <= 86400) }' || {
+                command_error "$group" "duration 必须在 (0,86400] 秒范围内"; return 2;
+              } ;;
+          *) command_error "$group" "未知选项: $key"; return 2 ;;
+        esac
+      done ;;
+    *) command_error "$group" "不支持的动作: $action"; return 2 ;;
   esac
-  if [[ ! "$choice" =~ ^[0-9]+$ ]] || ((choice < 1 || choice > ${#entries[@]})); then
-    echo "无效的结果编号。" >&2
-    return 2
-  fi
-  SELECTED_PATH="${entries[choice-1]#*|}"
 }
 
-menu_camera_capture() {
-  local binary
-  binary=$(camera_binary_or_report) || return 0
-  run_tool_from_menu "相机内参采集" "$binary" capture
+# Both menu and explicit commands use this dispatcher; tool exit codes propagate.
+run_command() {
+  local group="$1" action="${2:-}" binary kind=camera launcher
+  validate_command "$@" || return $?
+  shift 2
+  case "$group" in
+    intrinsic|real-extrinsics) binary=mv-camera-calibration ;;
+    simulation-extrinsics) binary=mv-extrinsic-calibration; kind=extrinsic ;;
+    imu-axis) binary=mv-imu-axis-capture ;;
+    imu-drift) binary=mv-imu-drift ;;
+  esac
+  binary=$(resolve_binary "$kind" "$binary") || return $?
+  case "$group:$action" in
+    real-extrinsics:*) "$binary" "extrinsics-$action" "$@" ;;
+    imu-axis:capture) "$binary" "$@" ;;
+    simulation-extrinsics:capture)
+      launcher="$SCRIPT_DIR/run_simulation_vision.sh"
+      [[ -x "$launcher" ]] || { echo "仿真启动脚本不可执行: $launcher" >&2; return 1; }
+      env VISION_BIN="$binary" SKIP_CAMERA_BACKEND_CHECK=1 "$launcher" capture ;;
+    *) "$binary" "$action" "$@" ;;
+  esac
 }
 
-menu_extrinsic_capture() {
-  local binary
-  binary=$(extrinsic_binary_or_report) || return 0
-  local launcher="${SCRIPT_DIR}/run_simulation_vision.sh"
-  if [[ ! -x "$launcher" ]]; then
-    echo "仿真启动脚本不可执行: ${launcher}" >&2
-    return 0
+# Python parses YAML; a temporary NUL-delimited list preserves arbitrary path spaces.
+select_session() {
+  local mode="$1" listing status index choice
+  local -a records=()
+  listing=$(mktemp)
+  if python3 "$SCRIPT_DIR/internal/calibration_menu_support.py" "$mode" > "$listing"; then
+    mapfile -d '' -t records < "$listing"
+    unlink "$listing"
+  else
+    status=$?
+    unlink "$listing"
+    echo "会话列表读取失败，状态码: $status" >&2
+    return 1
   fi
-  echo "将启动 Talos 仿真并进入仿真外参采集。"
-  run_tool_from_menu "仿真外参采集" env VISION_BIN="$binary" \
-    SKIP_CAMERA_BACKEND_CHECK=1 "$launcher"
+  SELECTED_PATH=""
+  if [[ "${#records[@]}" -eq 0 ]]; then
+    echo "没有找到可用会话或结果。" >&2
+    return 1
+  fi
+  for ((index=0; index<${#records[@]}; index+=2)); do
+    printf '  %d. %s  (%s)\n     %s\n' "$((index / 2 + 1))" \
+      "$(basename "${records[index]}")" "${records[index+1]}" "${records[index]}"
+  done
+  echo "  q. 返回上级菜单"
+  read -r -p "请选择编号: " choice || return 1
+  [[ "$choice" != q && "$choice" != Q ]] || return 1
+  if [[ ! "$choice" =~ ^[0-9]+$ || "${#choice}" -gt 8 ]]; then
+    echo "无效编号。" >&2
+    return 1
+  fi
+  local number=$((10#$choice))
+  if ((number < 1 || number > ${#records[@]} / 2)); then
+    echo "无效编号。" >&2
+    return 1
+  fi
+  SELECTED_PATH="${records[(number-1)*2]}"
 }
 
-menu_camera_solve() {
-  local binary
-  binary=$(camera_binary_or_report) || return 0
-  local selection_status=0
-  collect_directories "${ARTIFACTS_ROOT}/camera_calibration" camera || selection_status=$?
-  if [[ "$selection_status" -eq 1 ]]; then
-    echo "没有找到可用于相机内参解算的采集目录。" >&2
-    pause_menu
-    return 0
-  fi
-  [[ "$selection_status" -eq 0 ]] || return 0
-  run_tool_from_menu "相机内参解算: ${SELECTED_PATH}" "$binary" solve "$SELECTED_PATH"
-}
-
-menu_extrinsic_solve() {
-  local binary
-  binary=$(extrinsic_binary_or_report) || return 0
-  local selection_status=0
-  collect_directories "${ARTIFACTS_ROOT}/extrinsic_calibration" extrinsic || selection_status=$?
-  if [[ "$selection_status" -eq 1 ]]; then
-    echo "没有找到可用于仿真外参解算的采集目录。" >&2
-    pause_menu
-    return 0
-  fi
-  [[ "$selection_status" -eq 0 ]] || return 0
-  run_tool_from_menu "仿真外参解算: ${SELECTED_PATH}" "$binary" solve "$SELECTED_PATH"
-}
-
-menu_extrinsic_visualize() {
-  local binary
-  binary=$(extrinsic_binary_or_report) || return 0
-  local selection_status=0
-  collect_solution_directories "${ARTIFACTS_ROOT}/extrinsic_calibration" || selection_status=$?
-  if [[ "$selection_status" -eq 1 ]]; then
-    echo "没有找到完整的外参解算结果。" >&2
-    pause_menu
-    return 0
-  fi
-  [[ "$selection_status" -eq 0 ]] || return 0
-  run_tool_from_menu "Foxglove 外参三维验收: ${SELECTED_PATH}" \
-    "$binary" visualize "$SELECTED_PATH"
+menu_solve() {
+  local mode="$1" description="$2" group="$3" action="$4"
+  select_session "$mode" || return 0
+  run_tool_from_menu "$description" run_command "$group" "$action" "$SELECTED_PATH"
 }
 
 menu_imu_capture() {
   local device output_dir
-  if ! read -r -p "串口设备 [/dev/ttyUSB0]: " device; then
-    return 0
-  fi
-  device="${device:-/dev/ttyUSB0}"
-  if ! read -r -p "输出目录（留空使用默认目录）: " output_dir; then
-    return 0
-  fi
+  read -r -p "串口设备（留空使用当前车辆 profile）: " device || return 0
+  read -r -p "输出目录（留空使用默认目录）: " output_dir || return 0
   if [[ -n "$output_dir" ]]; then
-    run_tool_from_menu "IMU 轴向数据采集" "$SCRIPT_DIR/capture_imu_axes.sh" "$device" "$output_dir"
+    run_tool_from_menu "IMU 安装轴向采集" run_command imu-axis capture "$device" "$(absolute_path "$output_dir")"
+  elif [[ -n "$device" ]]; then
+    run_tool_from_menu "IMU 安装轴向采集" run_command imu-axis capture "$device"
   else
-    run_tool_from_menu "IMU 轴向数据采集" "$SCRIPT_DIR/capture_imu_axes.sh" "$device"
+    run_tool_from_menu "IMU 安装轴向采集" run_command imu-axis capture
   fi
+}
+
+menu_drift_capture() {
+  local device duration motor thermal note
+  read -r -p "串口设备（留空使用当前车辆 profile）: " device || return 0
+  read -r -p "采集时长，秒 [900]: " duration || return 0
+  read -r -p "电机状态 [unspecified]: " motor || return 0
+  read -r -p "冷/热机状态 [unspecified]: " thermal || return 0
+  read -r -p "实验备注（可留空）: " note || return 0
+  local -a args=(capture --duration "${duration:-900}" --motor-state "${motor:-unspecified}"
+                --thermal-state "${thermal:-unspecified}" --note "$note")
+  [[ -z "$device" ]] || args+=(--device "$device")
+  run_tool_from_menu "IMU 静止漂移采集" run_command imu-drift "${args[@]}"
+}
+
+menu_drift_analyze() {
+  select_session drift || return 0
+  run_tool_from_menu "IMU 漂移离线分析" run_command imu-drift analyze "$SELECTED_PATH"
+}
+
+submenu() {
+  local group="$1" choice
+  while :; do
+    case "$group" in
+      intrinsic) printf '\n相机内参\n1. 采集\n2. 解算已有会话\n' ;;
+      real) printf '\n实机相机—云台外参\n1. 采集\n2. 审核并解算已有会话\n' ;;
+      simulation) printf '\n仿真相机—云台外参\n1. 采集\n2. 解算已有会话\n3. Foxglove 三维验收\n' ;;
+      imu) printf '\nIMU 检查\n1. 安装轴向采集\n2. 静止漂移采集\n3. 漂移数据离线分析\n' ;;
+    esac
+    echo "q. 返回主菜单"
+    read -r -p "请选择功能: " choice || return 0
+    case "$group:$choice" in
+      *:q|*:Q) return 0 ;;
+      intrinsic:1) run_tool_from_menu "相机内参采集" run_command intrinsic capture ;;
+      intrinsic:2) menu_solve intrinsic "相机内参解算" intrinsic solve ;;
+      real:1) run_tool_from_menu "实机外参采集" run_command real-extrinsics capture ;;
+      real:2) menu_solve real "实机外参审核解算" real-extrinsics solve ;;
+      simulation:1) run_tool_from_menu "仿真外参采集" run_command simulation-extrinsics capture ;;
+      simulation:2) menu_solve simulation "仿真外参解算" simulation-extrinsics solve ;;
+      simulation:3) menu_solve simulation-solutions "Foxglove 外参验收" simulation-extrinsics visualize ;;
+      imu:1) menu_imu_capture ;;
+      imu:2) menu_drift_capture ;;
+      imu:3) menu_drift_analyze ;;
+      *) echo "无效选项。" >&2 ;;
+    esac
+  done
 }
 
 interactive_menu() {
@@ -291,101 +332,63 @@ interactive_menu() {
     cat <<'EOF'
 
 ========================================
-        MiracleVision 标定工具
+        标定与 IMU 工具
 ========================================
-1. 相机内参采集
-2. 仿真外参采集
-3. 相机内参解算
-4. 仿真外参解算
-5. 仿真外参 Foxglove 三维验收
-6. IMU 轴向数据采集
+1. 相机内参
+2. 实机相机—云台外参
+3. 仿真相机—云台外参
+4. IMU 检查
 q. 退出
 EOF
-    if ! read -r -p "请选择功能: " choice; then
-      echo
-      return 0
-    fi
+    read -r -p "请选择功能: " choice || return 0
     case "$choice" in
-      1) menu_camera_capture ;;
-      2) menu_extrinsic_capture ;;
-      3) menu_camera_solve ;;
-      4) menu_extrinsic_solve ;;
-      5) menu_extrinsic_visualize ;;
-      6) menu_imu_capture ;;
+      1) submenu intrinsic ;;
+      2) submenu real ;;
+      3) submenu simulation ;;
+      4) submenu imu ;;
       q|Q) return 0 ;;
-      *) echo "无效选项，请输入 1-6 或 q。" >&2 ;;
+      *) echo "无效选项，请输入 1-4 或 q。" >&2 ;;
     esac
   done
 }
 
-if [[ "${1:-}" == "--help" ]]; then
+if [[ "${1:-}" == --help && $# -eq 1 ]]; then
   print_help
   exit 0
 fi
 
-if [[ "$#" -eq 0 ]]; then
-  if [[ ! -t 0 && "${CALIBRATION_MENU:-0}" != "1" ]]; then
+if [[ "${1:-}" == --build-dir ]]; then
+  if [[ $# -lt 2 || -z "$2" || "$2" == -* ]]; then
+    echo "--build-dir 必须指定目录。" >&2
+    exit 2
+  fi
+  explicit_build_dir="$2"
+  shift 2
+fi
+
+if [[ $# -eq 0 ]]; then
+  if [[ ! -t 0 && "${CALIBRATION_MENU:-0}" != 1 ]]; then
     echo "无参数模式需要交互式终端；自动化请使用显式命令行参数。" >&2
     exit 2
   fi
+  python3 "$SCRIPT_DIR/internal/calibration_menu_support.py" --help > /dev/null
   interactive_menu
   exit 0
 fi
 
-# 兼容原有显式命令：build-directory 后跟 capture/solve，或直接 simulation。
-BUILD_DIR="${PROJECT_ROOT}/build-camera"
-MODE=""
-if [[ "$#" -gt 0 ]]; then
-  case "$1" in
-    simulation|sim|extrinsic)
-      MODE="simulation"
-      shift
-      ;;
-    *)
-      BUILD_DIR="$1"
-      shift
-      ;;
-  esac
+case "$1" in
+  intrinsic|real-extrinsics|simulation-extrinsics|imu-axis|imu-drift) ;;
+  --help)
+    [[ $# -eq 1 ]] && { print_help; exit 0; }
+    echo "--help 不接受额外参数。" >&2
+    exit 2 ;;
+  *)
+    echo "未知功能组或已移除的旧命令形式: $1" >&2
+    print_help >&2
+    exit 2 ;;
+esac
+if [[ $# -eq 2 && "$2" == --help ]]; then
+  print_group_help "$1"
+  exit 0
 fi
-if [[ -z "$MODE" ]]; then
-  MODE="${1:-capture}"
-  if [[ "$#" -gt 0 ]]; then
-    shift
-  fi
-fi
-BUILD_DIR=$(absolute_path "$BUILD_DIR")
-
-if [[ "$MODE" == "simulation" ]]; then
-  if [[ "$#" -gt 0 && "$1" == "capture" ]]; then
-    shift
-  fi
-  if [[ "$#" -gt 0 ]]; then
-    echo "Simulation mode accepts no arguments other than optional capture" >&2
-    exit 2
-  fi
-  EXTRINSIC_BIN="${BUILD_DIR}/bin/mv-extrinsic-calibration"
-  if [[ ! -x "$EXTRINSIC_BIN" ]]; then
-    echo "Extrinsic capture executable not found: ${EXTRINSIC_BIN}" >&2
-    echo "  cmake --build \"${BUILD_DIR}\" --parallel 4 --target mv-extrinsic-calibration" >&2
-    exit 1
-  fi
-  SIMULATION_LAUNCHER="${SCRIPT_DIR}/run_simulation_vision.sh"
-  [[ -x "$SIMULATION_LAUNCHER" ]] || {
-    echo "Simulation launcher is not executable: ${SIMULATION_LAUNCHER}" >&2
-    exit 1
-  }
-  export VISION_BIN="$EXTRINSIC_BIN"
-  export SKIP_CAMERA_BACKEND_CHECK=1
-  if [[ -z "${SIMULATOR_ROOT:-}" && -d "${PROJECT_ROOT}/../bevy_robomaster_simulator" ]]; then
-    export SIMULATOR_ROOT="${PROJECT_ROOT}/../bevy_robomaster_simulator"
-  fi
-  exec "$SIMULATION_LAUNCHER"
-fi
-
-CALIBRATION_BIN="${BUILD_DIR}/bin/mv-camera-calibration"
-if [[ ! -x "$CALIBRATION_BIN" ]]; then
-  echo "Camera calibration executable not found: ${CALIBRATION_BIN}" >&2
-  echo "  cmake --build \"${BUILD_DIR}\" --parallel 4 --target mv-camera-calibration" >&2
-  exit 1
-fi
-exec "$CALIBRATION_BIN" "$MODE" "$@"
+run_command "$@"

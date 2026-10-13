@@ -9,7 +9,7 @@ using ControlStepResult = FireControlResult;
 /** @brief 单一调用方拥有的同步控制链；Step 与 AcknowledgePublication 必须交替调用。 */
 class ControlSession final {
  public:
-  ControlSession(FireControlConfig config, GimbalTrajectoryPlannerConfig planner);
+  ControlSession(FireControlConfig config, GimbalControlConfig planner);
   ControlSession(const ControlSession&) = delete;
   ControlSession& operator=(const ControlSession&) = delete;
   ControlSession(ControlSession&&) = delete;
@@ -65,6 +65,7 @@ class ControlSession final {
   std::uint64_t cycle_{0};
   bool awaiting_ack_{false};
   std::optional<std::chrono::steady_clock::time_point> last_step_time_;
+  std::optional<std::chrono::steady_clock::time_point> last_friction_target_time_;
   std::deque<hal::GimbalCommand> sent_commands_;
   std::vector<modules::PlannedGimbalPoint> last_successful_trajectory_;
   std::size_t last_successful_command_index_{1};

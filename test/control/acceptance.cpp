@@ -1,12 +1,19 @@
+#include "hal/serial/attitude_wire.h"
+#include "hal/serial/serial_gimbal_command_sink.hpp"
 #include "modules/fire_control/control_session.hpp"
 #include "modules/fire_control/fire_only_policy_adapter.hpp"
+#include "runtime/gimbal_tuning_reload.hpp"
 #include "runtime/referee_observation_adapter.hpp"
+#include "runtime/serial_gimbal_control_adapter.hpp"
 
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <thread>
 
+#include <filesystem>
 #include <numbers>
 using namespace mv;
 using namespace mv::modules;
@@ -49,14 +56,403 @@ hal::GimbalFeedback Feedback(int ms) {
   f.timestamp = At(ms);
   return f;
 }
+
+/** @brief 验证真实运行时适配器的速率/停止路径，不打开硬件设备。 */
+class FakeRateChannel final : public hal::IGimbalRateCommandSink {
+ public:
+  bool healthy{true};
+  bool send_succeeds{true};
+  hal::GimbalActuatorTelemetry actual;
+  hal::GimbalCommand target;
+  hal::GimbalRateCommand rate;
+  bool SendRate(const hal::GimbalCommand& next,
+                const hal::GimbalRateCommand& next_rate) noexcept override {
+    target = next;
+    rate = next_rate;
+    actual.command_valid = healthy && send_succeeds && next.valid && next_rate.valid;
+    return healthy && send_succeeds;
+  }
+  bool IsHealthy() const noexcept override { return healthy; }
+  bool ExternalControlEnabled() const noexcept override { return healthy; }
+  std::uint64_t HeartbeatTimestampNs() const noexcept override { return 1; }
+  hal::GimbalActuatorTelemetry ActuatorTelemetry() const noexcept override { return actual; }
+};
+
 int main(int argc, char** argv) {
   try {
     if (argc != 2)
       return 2;
     auto cfg = ParseFireControlConfig(YAML::LoadFile(std::string(argv[1]) + "/fire_control.yaml"));
-    auto pcfg = ParseGimbalTrajectoryPlannerConfig(
-        YAML::LoadFile(std::string(argv[1]) + "/gimbal_trajectory_planner.yaml"));
+    auto pcfg = LoadGimbalControlConfig(std::filesystem::path(argv[1]).parent_path(), "talos");
     cfg.auto_fire = true;
+    auto yaml = YAML::LoadFile(std::string(argv[1]) + "/fire_control.yaml");
+    yaml.remove("test_bypass_referee");
+    Check(!ParseFireControlConfig(yaml).test_bypass_referee, "referee checks default on");
+    yaml["test_bypass_referee"] = true;
+    Check(ParseFireControlConfig(yaml).test_bypass_referee, "explicit referee bypass parsed");
+    // Existing competition checks must not inherit the deployed bench-mode setting.
+    cfg.test_bypass_referee = false;
+    {
+      auto config_yaml = YAML::LoadFile(std::string(argv[1]) + "/fire_control.yaml");
+      config_yaml["timing"].remove("friction_hold_s");
+      Check(ParseFireControlConfig(config_yaml).friction_hold_s == 1.0,
+            "friction hold defaults to one second");
+      for (double bad : {-0.1, 10.1, std::numeric_limits<double>::infinity()}) {
+        config_yaml["timing"]["friction_hold_s"] = bad;
+        bool rejected = false;
+        try {
+          static_cast<void>(ParseFireControlConfig(config_yaml));
+        } catch (const std::exception&) {
+          rejected = true;
+        }
+        Check(rejected, "invalid friction hold rejected");
+      }
+      for (int enabled = 0; enabled < 2; ++enabled) {
+        for (int fire = 0; fire < 2; ++fire) {
+          for (int friction = 0; friction < 2; ++friction) {
+            const auto flags = AvGimbalCommandFlags(enabled, fire, friction);
+            Check(((flags & AV_GIMBAL_FLAG_FIRE_REQUEST) != 0) == (enabled && fire),
+                  "wire feeder bit independently gated");
+            Check(
+                ((flags & AV_GIMBAL_FLAG_FRICTION_REQUEST) != 0) == (enabled && (fire || friction)),
+                "wire friction bit independently gated");
+          }
+        }
+      }
+      auto direct = pcfg;
+      direct.mode = GimbalControlMode::PID;
+      direct.mpc.reset();
+      auto shooter_cfg = cfg;
+      shooter_cfg.friction_hold_s = 1.0;
+      ControlSession session(shooter_cfg, direct);
+      const auto step = [&](int ms, TrackerState state, bool enabled = true, bool healthy = true,
+                            bool sent = true, int action = 1, int source_ms = -1) {
+        auto input = Sample(source_ms < 0 ? ms : source_ms);
+        input.prediction.state = state;
+        input.external_control_enabled = enabled;
+        // Match the real serial sink: IMU feedback continues even without images.
+        hal::GimbalActuatorTelemetry actuator;
+        actuator.valid = true;
+        actuator.mode = hal::GimbalActuatorMode::PHYSICAL;
+        actuator.state_timestamp_ns = 1000000000ULL + ms * 1000000ULL;
+        auto result = session.Step(input, actuator, healthy, At(ms), actuator.state_timestamp_ns,
+                                   PolicyDecision{action});
+        session.AcknowledgePublication(result, sent, At(ms));
+        return result.output.command;
+      };
+      auto command = step(0, TrackerState::TEMP_LOST);
+      Check(!command.friction_wheel && !command.fire, "no spin-up from prediction-only startup");
+      command = step(10, TrackerState::DETECTING);
+      Check(command.friction_wheel && !command.fire,
+            "visible aim target spins friction before fire");
+      command = step(20, TrackerState::TRACKING, true, true, true, 2);
+      Check(command.friction_wheel && command.fire, "accepted shot requests friction and feeder");
+      command = step(30, TrackerState::TEMP_LOST);
+      Check(command.friction_wheel && !command.fire, "loss cancels feeder immediately");
+      command = step(900, TrackerState::TEMP_LOST);
+      Check(command.friction_wheel && !command.valid && !command.fire,
+            "friction hold outlives motion extrapolation without feeding");
+      command = step(1020, TrackerState::TEMP_LOST);
+      Check(!command.friction_wheel && !command.fire, "friction expires at one second exactly");
+      Check(step(1030, TrackerState::TRACKING).friction_wheel, "reacquisition spins up again");
+      Check(!step(1040, TrackerState::TEMP_LOST, false).friction_wheel,
+            "control disable immediately clears hold");
+      Check(!step(1050, TrackerState::TEMP_LOST).friction_wheel,
+            "reenabling while lost does not restore previous hold");
+      Check(step(1060, TrackerState::TRACKING).friction_wheel, "new target restores spin-up");
+      Check(!step(1070, TrackerState::TEMP_LOST, true, false).friction_wheel,
+            "unhealthy link cancels hold");
+      Check(!step(1080, TrackerState::TEMP_LOST).friction_wheel,
+            "reconnection while lost cannot reuse hold");
+      Check(!step(1090, TrackerState::TRACKING, true, true, false).friction_wheel,
+            "send failure cancels friction request");
+      Check(!step(1100, TrackerState::TEMP_LOST).friction_wheel,
+            "send failure clears hold history");
+      Check(step(1110, TrackerState::TRACKING).friction_wheel, "target after error spins up");
+      session.Reset();
+      Check(!step(1120, TrackerState::TEMP_LOST).friction_wheel, "session reset clears hold");
+      Check(step(1140, TrackerState::TRACKING).friction_wheel, "camera recovery spins up");
+      Check(step(1200, TrackerState::TRACKING, true, true, true, 1, 1140).friction_wheel,
+            "short camera gap retains spin-up");
+      Check(!step(2150, TrackerState::TRACKING, true, true, true, 1, 1140).friction_wheel,
+            "reusing an old tracking snapshot cannot keep friction running forever");
+    }
+    {
+      const auto root = std::filesystem::path(argv[1]).parent_path();
+      auto pid_config = LoadGimbalControlConfig(root, "mindvision");
+      Check(pid_config.mode == GimbalControlMode::PID && pid_config.pid && !pid_config.mpc,
+            "real deployment loads PID without MPC parameters");
+      Check(pcfg.mode == GimbalControlMode::MPC && pcfg.mpc && !pcfg.pid,
+            "Talos deployment loads MPC without PID parameters");
+      GimbalReferencePlanner pid_planner(pid_config);
+      std::vector<AimReferencePoint> reference(static_cast<std::size_t>(pcfg.horizon_steps));
+      for (auto& point : reference) {
+        point.yaw = .03;
+        point.pitch = .2;
+      }
+      auto plan = pid_planner.Plan(Feedback(0), reference);
+      Check(plan.output.valid && plan.output.command.yaw == reference[1].yaw &&
+                plan.output.command.pitch == reference[1].pitch &&
+                plan.output.command.yaw_velocity == 0.,
+            "PID selects the direct next reference");
+      Check(plan.diagnostics.yaw_iterations == 0 && plan.diagnostics.pitch_iterations == 0 &&
+                plan.diagnostics.warm_start_action == GimbalWarmStartAction::NONE,
+            "PID has no solver or warm start");
+      pid_planner.RequestWarmStartRebase();
+      Check(pid_planner.Plan(Feedback(0), reference).output.valid,
+            "PID target rebase stays direct");
+      reference[1].pitch = std::numeric_limits<double>::quiet_NaN();
+      Check(!pid_planner.Plan(Feedback(0), reference).output.valid,
+            "PID rejects nonfinite targets");
+      Check(!pid_planner.Plan(Feedback(0), {}).output.valid, "PID rejects empty references");
+      auto common = YAML::LoadFile((root / "modules/gimbal_control.yaml").string());
+      auto pid_yaml = YAML::LoadFile((root / "modules/gimbal_control/pid.yaml").string());
+      auto bad = YAML::Clone(common);
+      bad["modes"]["mindvision"] = "bang_bang";
+      bool rejected = false;
+      try {
+        (void)ParseGimbalControlConfig(bad, "mindvision", pid_yaml);
+      } catch (const std::exception&) {
+        rejected = true;
+      }
+      Check(rejected, "removed experimental mode is rejected");
+      bad = YAML::Clone(common);
+      bad["test_pid_bypass"] = true;
+      rejected = false;
+      try {
+        (void)ParseGimbalControlConfig(bad, "mindvision", pid_yaml);
+      } catch (const std::exception&) {
+        rejected = true;
+      }
+      Check(rejected, "legacy mode switches are rejected instead of silently falling back");
+      auto invalid_pid = YAML::Clone(pid_yaml);
+      invalid_pid["pitch"]["integral_stop_error_rad"] = .001;
+      rejected = false;
+      try {
+        (void)ParsePidRateControllerConfig(invalid_pid);
+      } catch (const std::exception&) {
+        rejected = true;
+      }
+      Check(rejected, "invalid integral thresholds rejected");
+      invalid_pid = YAML::Clone(pid_yaml);
+      invalid_pid["yaw"]["ki"] = -1.;
+      rejected = false;
+      try {
+        (void)ParsePidRateControllerConfig(invalid_pid);
+      } catch (const std::exception&) {
+        rejected = true;
+      }
+      Check(rejected, "negative PID gain rejected");
+
+      const auto directory =
+          std::filesystem::temp_directory_path() /
+          ("mv-gimbal-reload-" +
+           std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+      std::filesystem::create_directories(directory / "modules/gimbal_control");
+      std::filesystem::create_directories(directory / "hal/serial");
+      struct Cleanup {
+        std::filesystem::path directory;
+        ~Cleanup() {
+          std::error_code ec;
+          std::filesystem::remove_all(directory, ec);
+        }
+      } cleanup{directory};
+      const auto save = [&](const std::filesystem::path& relative, const std::string& text) {
+        const auto path = directory / relative;
+        {
+          std::ofstream output(path.string() + ".new");
+          output << text;
+        }
+        std::filesystem::rename(path.string() + ".new", path);
+      };
+      auto transport_yaml = YAML::LoadFile((root / "hal/serial/gimbal.yaml").string());
+      save("modules/gimbal_control.yaml", YAML::Dump(common));
+      save("modules/gimbal_control/pid.yaml", YAML::Dump(pid_yaml));
+      save("hal/serial/gimbal.yaml", YAML::Dump(transport_yaml));
+      Check(LoadGimbalControlConfig(directory, "mindvision") == pid_config,
+            "PID loads with no MPC file at all");
+      runtime::GimbalTuningSnapshot initial{
+          pid_config, hal::ParseSerialGimbalCommandSinkConfig(transport_yaml)};
+      runtime::GimbalTuningReload reload(directory, initial);
+      const auto wait_pending = [&]() {
+        std::optional<runtime::GimbalTuningSnapshot> pending;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        do {
+          pending = reload.TakePending();
+          if (pending)
+            break;
+          std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        } while (std::chrono::steady_clock::now() < deadline);
+        return pending;
+      };
+      auto next = YAML::Clone(pid_yaml);
+      next["pitch"]["kp"] = initial.control.pid->pitch.kp + 1.;
+      save("modules/gimbal_control/pid.yaml", YAML::Dump(next));
+      auto pending = wait_pending();
+      Check(pending && pending->control.pid->pitch.kp == initial.control.pid->pitch.kp + 1. &&
+                pending->control.pid->yaw == initial.control.pid->yaw,
+            "complete hot update preserves untouched axis");
+      Check(!reload.TakePending(), "update is consumed once");
+      save("modules/gimbal_control/pid.yaml", YAML::Dump(next) + "\n# comment\n");
+      std::this_thread::sleep_for(std::chrono::milliseconds(750));
+      Check(!reload.TakePending(), "comment save does not reset PID");
+      save("modules/gimbal_control/pid.yaml", "pitch: [");
+      std::this_thread::sleep_for(std::chrono::milliseconds(750));
+      Check(!reload.TakePending(), "broken YAML preserves live parameters");
+      save("modules/gimbal_control/pid.yaml", YAML::Dump(next));
+      bad = YAML::Clone(common);
+      bad["rate_limits"]["max_pitch_rate_rad_s"] = 5.;
+      save("modules/gimbal_control.yaml", YAML::Dump(bad));
+      std::this_thread::sleep_for(std::chrono::milliseconds(750));
+      Check(!reload.TakePending(), "out-of-range rate rejected");
+      bad = YAML::Clone(common);
+      bad["reference"]["dt_s"] = .02;
+      save("modules/gimbal_control.yaml", YAML::Dump(bad));
+      std::this_thread::sleep_for(std::chrono::milliseconds(750));
+      Check(!reload.TakePending(), "reference topology change requires restart");
+      save("modules/gimbal_control.yaml", YAML::Dump(common));
+      bad = YAML::Clone(transport_yaml);
+      bad["fire_output_enabled"] = !initial.transport.fire_output_enabled;
+      save("hal/serial/gimbal.yaml", YAML::Dump(bad));
+      std::this_thread::sleep_for(std::chrono::milliseconds(750));
+      Check(!reload.TakePending(), "transport enable changes require restart");
+      save("hal/serial/gimbal.yaml", YAML::Dump(transport_yaml));
+      save("modules/gimbal_control/pid.yaml", YAML::Dump(pid_yaml));
+      pending = wait_pending();
+      Check(pending && *pending == initial, "valid tuning recovers after rejection");
+      auto mpc_yaml = YAML::LoadFile((root / "modules/gimbal_control/mpc.yaml").string());
+      auto mpc_common = YAML::Clone(common);
+      mpc_common["modes"]["mindvision"] = "mpc";
+      save("modules/gimbal_control.yaml", YAML::Dump(mpc_common));
+      save("modules/gimbal_control/mpc.yaml", YAML::Dump(mpc_yaml));
+      std::filesystem::remove(directory / "modules/gimbal_control/pid.yaml");
+      const auto mpc_config = LoadGimbalControlConfig(directory, "mindvision");
+      Check(mpc_config.mpc && !mpc_config.pid, "MPC loads with no PID file");
+      runtime::GimbalTuningReload mpc_reload(directory, {mpc_config, initial.transport});
+      auto changed_mpc = YAML::Clone(mpc_yaml);
+      changed_mpc["follower"]["yaw_kp"] = mpc_config.follower.yaw_kp + 1.;
+      save("modules/gimbal_control/mpc.yaml", YAML::Dump(changed_mpc));
+      std::this_thread::sleep_for(std::chrono::milliseconds(750));
+      const auto FOLLOWER_UPDATE = mpc_reload.TakePending();
+      Check(FOLLOWER_UPDATE &&
+                FOLLOWER_UPDATE->control.follower.yaw_kp == mpc_config.follower.yaw_kp + 1.,
+            "MPC follower hot updates independently");
+      changed_mpc["planner"]["cost"]["q_yaw"][0] = 100.;
+      save("modules/gimbal_control/mpc.yaml", YAML::Dump(changed_mpc));
+      std::this_thread::sleep_for(std::chrono::milliseconds(750));
+      Check(!mpc_reload.TakePending(), "MPC solver edits require restart");
+    }
+    {
+      VariableIntegralRatePidConfig p;
+      VariableIntegralRatePid pid;
+      p.kp = 2.;
+      p.ki = 1.;
+      p.kd = .5;
+      p.derivative_filter_tau_s = 0.;
+      p.deadband_rad = 0.;
+      p.integral_full_error_rad = .02;
+      p.integral_stop_error_rad = .10;
+      auto o = pid.Step(.01, .1, .01, 3., p);
+      Check(std::abs(o.p - .02) < 1e-12 && std::abs(o.d + .05) < 1e-12 &&
+                std::abs(o.i - .0001) < 1e-12 && o.integral_weight == 1.,
+            "PID term units and measured-rate derivative sign");
+      o = pid.Step(.06, 0., .01, 3., p);
+      Check(std::abs(o.integral_weight - .5) < 1e-12 && std::abs(o.i - .0004) < 1e-12,
+            "variable integral tapers linearly at intermediate error");
+      o = pid.Step(.10, 0., .01, 3., p);
+      Check(o.i == 0. && o.integral_weight == 0., "large error clears integral");
+      p.integral_limit_rad_s = .001;
+      for (int n = 0; n < 100; ++n)
+        o = pid.Step(.01, 0., .01, 3., p);
+      Check(std::abs(o.i - .001) < 1e-12, "integral contribution clamp");
+      p.deadband_rad = .002;
+      o = pid.Step(.001, .3, .01, 3., p);
+      Check(o.rate_command == 0. && o.i == 0., "deadband outputs zero and clears I");
+      p.kp = 100.;
+      o = pid.Step(.02, 0., .01, .5, p);
+      Check(o.rate_command == .5 && o.i == 0., "positive saturation blocks winding up");
+      o = pid.Step(-.02, 0., .01, .5, p);
+      Check(o.rate_command == -.5 && o.i == 0., "negative saturation blocks winding up");
+      p.kp = 0.;
+      static_cast<void>(pid.Step(.01, 0., .01, 3., p));
+      o = pid.Step(.01, 0., .2, 3., p);
+      Check(o.i == 0., "long scheduling gap resets integral instead of integrating gap");
+      p.ki = 0.;
+      p.derivative_filter_tau_s = .03;
+      pid.Reset();
+      static_cast<void>(pid.Step(.03, 0., .01, 3., p));
+      o = pid.Step(.03, 1., .01, 3., p);
+      Check(std::abs(o.d + .125) < 1e-12, "measured-rate D is low-pass filtered");
+      pid.Reset();
+      o = pid.Step(.08, 0., .01, 3., p);
+      Check(o.d == 0., "reference step does not create derivative kick");
+      o = pid.Step(std::numeric_limits<double>::quiet_NaN(), 0., .01, 3., p);
+      Check(o.rate_command == 0., "nonfinite PID input produces zero");
+    }
+    {
+      const auto CONFIG =
+          LoadGimbalControlConfig(std::filesystem::path(argv[1]).parent_path(), "mindvision");
+      auto channel = std::make_unique<FakeRateChannel>();
+      auto* observed = channel.get();
+      observed->actual.valid = true;
+      observed->actual.actual_yaw = .10;
+      observed->actual.actual_pitch = .20;
+      runtime::SerialGimbalControlAdapter adapter(std::move(channel), {CONFIG, {}});
+      hal::GimbalCommand target;
+      target.valid = true;
+      target.yaw = .11;
+      target.pitch = .21;
+      target.target_distance_m = 4.;
+      Check(adapter.Send(target), "runtime adapter sends PID rates");
+      Check(std::abs(observed->rate.yaw_rate_rad_s - .10) < 1e-12 &&
+                std::abs(observed->rate.pitch_rate_rad_s - .085) < 1e-12,
+            "PID uses direct send-stage feedback rather than projected feedback");
+      Check(adapter.ActuatorTelemetry().serial_pid_active,
+            "queued PID terms remain available through angle sink telemetry");
+      target.valid = false;
+      target.friction_wheel = true;
+      Check(adapter.Send(target) && !observed->rate.valid && observed->target.friction_wheel,
+            "invalid motion preserves friction-only intent with zero-rate transport");
+      Check(!adapter.ActuatorTelemetry().serial_pid_active, "stop clears PID telemetry");
+      target.valid = true;
+      observed->send_succeeds = false;
+      Check(!adapter.Send(target) && !adapter.ActuatorTelemetry().serial_pid_active,
+            "send failure resets PID and reports failure");
+      observed->send_succeeds = true;
+      observed->healthy = false;
+      Check(!adapter.Send(target) && !observed->rate.valid,
+            "unhealthy feedback requests stopped transport");
+      observed->healthy = true;
+      Check(adapter.Send(target), "same adapter recovers without mode fallback");
+      target.yaw = std::numeric_limits<double>::quiet_NaN();
+      Check(!adapter.Send(target), "adapter rejects malformed aim before transport");
+
+      PidRateControllerConfig tuning;
+      tuning.yaw.ki = tuning.pitch.ki = 1.;
+      tuning.yaw.kp = tuning.pitch.kp = 0.;
+      hal::GimbalActuatorTelemetry actual;
+      actual.valid = true;
+      target.yaw = target.pitch = .01;
+      PidRateController controller(tuning, {});
+      const auto FIRST = controller.Step(target, actual, .01);
+      tuning.pitch.kp = 2.;
+      controller.ApplyTuning(tuning, {});
+      const auto SECOND = controller.Step(target, actual, .01);
+      Check(std::abs(SECOND.yaw.i - 2. * FIRST.yaw.i) < 1e-12 &&
+                std::abs(SECOND.pitch.i - FIRST.pitch.i) < 1e-12,
+            "changing pitch tuning resets pitch only and preserves yaw integral");
+      auto limits = GimbalRateLimits{};
+      limits.max_yaw_rate_rad_s = 2.;
+      controller.ApplyTuning(tuning, limits);
+      const auto THIRD = controller.Step(target, actual, .01);
+      Check(std::abs(THIRD.yaw.i - FIRST.yaw.i) < 1e-12 &&
+                std::abs(THIRD.pitch.i - 2. * FIRST.pitch.i) < 1e-12,
+            "changing yaw rate limit resets yaw only");
+      const auto MPC_RATE = FollowMpcRate(target, actual, pcfg.follower, pcfg.rate_limits);
+      Check(MPC_RATE.valid && std::abs(MPC_RATE.yaw_rate_rad_s - .01) < 1e-12 &&
+                std::abs(MPC_RATE.pitch_rate_rad_s - .07) < 1e-12,
+            "MPC follower preserves deployed proportional and feed-forward law");
+    }
     auto run = [&](FireControl& c, const ControlInputSnapshot& s, int ms, int action) {
       return c.Step(s, Feedback(ms), At(ms),
                     1000000000ULL + static_cast<std::uint64_t>(ms) * 1000000ULL,
@@ -128,7 +524,34 @@ int main(int argc, char** argv) {
       auto o = run(c, s, 400, 2).output;
       Check(o.command.valid && !o.command.fire && !o.shot_accepted,
             "referee failure tracks but blocks shot");
+      Check(!c.Observe(s, Feedback(400), At(400)).action_mask[2],
+            "referee failure masks firing in competition mode");
+      auto bench_cfg = cfg;
+      bench_cfg.test_bypass_referee = true;
+      FireControl bench(bench_cfg, pcfg);
+      Check(bench.Observe(s, Feedback(400), At(400)).action_mask[2],
+            "bench mode unmasks referee-only failure");
+      auto bench_out = run(bench, s, 400, 2).output;
+      Check(bench_out.command.fire && bench_out.shot_accepted,
+            "bench mode bypasses referee-only failure at final gate");
       Check(run(c, Sample(410), 410, 2).output.shot_accepted, "referee recovery");
+    }
+    for (int mode = 0; mode < 3; ++mode) {
+      auto bench_cfg = cfg;
+      bench_cfg.test_bypass_referee = true;
+      if (mode == 0)
+        bench_cfg.auto_fire = false;
+      FireControl bench(bench_cfg, pcfg);
+      auto s = Sample(400);
+      s.referee.valid = false;
+      if (mode == 1)
+        s.external_control_enabled = false;
+      if (mode == 2)
+        s.prediction.state = TrackerState::TEMP_LOST;
+      Check(!bench.Observe(s, Feedback(400), At(400)).action_mask[2],
+            "bench mode retains non-referee action gates");
+      Check(!run(bench, s, 400, 2).output.command.fire,
+            "bench mode retains non-referee final gates");
     }
     {
       FireControl c(cfg, pcfg);
@@ -244,7 +667,7 @@ int main(int argc, char** argv) {
     }
     {
       auto p = pcfg;
-      p.max_iterations = 1;
+      p.mpc->max_iterations = 1;
       ControlSession session(cfg, p);
       for (int k = 0; k < 13; ++k) {
         const int MS = 1000 + k * 10;

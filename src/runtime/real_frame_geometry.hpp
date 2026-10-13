@@ -17,6 +17,10 @@ class RealFrameGeometry final {
   /** @brief 时间或姿态不可用时保持平台运动学为空，使预测器重置历史状态。 */
   void Attach(frame::FramePacket& packet);
   [[nodiscard]] const std::string& Status() const noexcept { return status_; }
+  [[nodiscard]] hal::SerialImu& Imu() noexcept { return imu_; }
+  [[nodiscard]] const geometry::GimbalExtrinsics& Extrinsics() const noexcept {
+    return config_.extrinsics;
+  }
 
  private:
   RealGeometryConfig config_;  ///< 先校验部署外参，再启动串口接收。

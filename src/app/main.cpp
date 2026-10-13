@@ -4,20 +4,22 @@
 #include "core/logger.hpp"
 #include "hal/camera/camera_factory.hpp"
 #include "hal/gimbal/talos/talos_gimbal_command_sink.hpp"
+#include "hal/serial/serial_gimbal_command_sink.hpp"
 #include "modules/armor_corner_refiner/armor_corner_refiner.hpp"
 #include "modules/armor_detector/armor_detector_config.hpp"
 #include "modules/armor_light_detector/armor_light_detector_config.hpp"
 #include "modules/armor_pnp/armor_pnp_config.hpp"
 #include "modules/armor_predictor/armor_predictor_config.hpp"
 #include "modules/fire_control/fire_control_config.hpp"
-#include "modules/gimbal_trajectory_planner/gimbal_trajectory_planner_config.hpp"
+#include "modules/gimbal_control/gimbal_control_config.hpp"
 #include "runtime/control_runtime.hpp"
+#include "runtime/real_frame_geometry.hpp"
 #include "runtime/runtime_diagnostics_sink.hpp"
 #include "runtime/runtime_error_policy.hpp"
 #include "runtime/runtime_supervisor.hpp"
+#include "runtime/serial_gimbal_control_adapter.hpp"
 #include "runtime/vision_pipeline.hpp"
 #include "runtime/vision_runtime.hpp"
-#include "runtime/real_frame_geometry.hpp"
 #include "runtime/vision_tuning.hpp"
 #include "tool/debug/debug_window.hpp"
 #include "tool/foxglove/foxglove_config.hpp"
@@ -27,12 +29,14 @@
 #include "tool/web/web_debug_config.hpp"
 #include "tool/web/web_debug_server.hpp"
 
+#include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <memory>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -321,13 +325,17 @@ int Run() {
     runtime::IRuntimeDiagnosticsSink* diagnostics_sink =
         diagnostics_fanout.Empty() ? nullptr : &diagnostics_fanout;
 
+    /* RealFrameGeometry owns the sole USART session.  Declare it before the
+     * control runtime so the serial command sink is destroyed first. */
+    std::unique_ptr<runtime::RealFrameGeometry> real_geometry;
+    if (CAMERA_SELECTION.backend == "mindvision")
+      real_geometry = std::make_unique<runtime::RealFrameGeometry>(CONFIG_ROOT, camera->Info());
+
     std::unique_ptr<runtime::ControlRuntime> control_runtime;
     if (CAMERA_SELECTION.backend == "talos") {
       const auto FIRE_YAML = ConfigLoader::LoadFile(CONFIG_ROOT / "modules/fire_control.yaml");
-      const auto PLANNER_YAML =
-          ConfigLoader::LoadFile(CONFIG_ROOT / "modules/gimbal_trajectory_planner.yaml");
       const auto FIRE_CONFIG = modules::ParseFireControlConfig(FIRE_YAML);
-      const auto PLANNER_CONFIG = modules::ParseGimbalTrajectoryPlannerConfig(PLANNER_YAML);
+      const auto PLANNER_CONFIG = modules::LoadGimbalControlConfig(CONFIG_ROOT, "talos");
       auto command_sink = std::make_unique<hal::TalosGimbalCommandSink>();
       if (!command_sink->Open(CAMERA_CONFIG)) {
         MV_LOG_ERROR("App", "Talos command sink initialization failed");
@@ -349,11 +357,71 @@ int Run() {
         return 7;
       }
       MV_LOG_INFO("Control", "Talos 100 Hz trajectory planning and fire control started");
+    } else if (CAMERA_SELECTION.backend == "mindvision") {
+      const auto FIRE_YAML = ConfigLoader::LoadFile(CONFIG_ROOT / "modules/fire_control.yaml");
+      const auto SERIAL_GIMBAL_YAML =
+          ConfigLoader::LoadFile(CONFIG_ROOT / "hal/serial/gimbal.yaml");
+      const auto FIRE_CONFIG = modules::ParseFireControlConfig(FIRE_YAML);
+      if (FIRE_CONFIG.test_bypass_referee) {
+        MV_LOG_WARN("Control",
+                    "TEST MODE: test_bypass_referee=true; referee validity, freshness and "
+                    "permission checks are bypassed; target and aiming gates remain active");
+      }
+      const auto SERIAL_GIMBAL_CONFIG = hal::ParseSerialGimbalCommandSinkConfig(SERIAL_GIMBAL_YAML);
+      const auto PLANNER_CONFIG = modules::LoadGimbalControlConfig(CONFIG_ROOT, "mindvision");
+      MV_LOG_INFO("Control", "MindVision control mode={}; fire_output_enabled={}",
+                  modules::GimbalControlModeName(PLANNER_CONFIG.mode),
+                  SERIAL_GIMBAL_CONFIG.fire_output_enabled);
+      if (!SERIAL_GIMBAL_CONFIG.enabled) {
+        MV_LOG_WARN("Control", "MindVision serial gimbal control is disabled by configuration");
+      } else {
+        hal::ImuHealth imu_health;
+        auto last_wait_log = std::chrono::steady_clock::time_point{};
+        while (g_stop_requested == 0) {
+          imu_health = real_geometry->Imu().Health();
+          if (imu_health.connected && imu_health.synchronized && imu_health.sample_age_ms >= 0.0 &&
+              imu_health.sample_age_ms <= 100.0)
+            break;
+          const auto NOW = std::chrono::steady_clock::now();
+          if (last_wait_log.time_since_epoch().count() == 0 ||
+              NOW - last_wait_log >= std::chrono::seconds(1)) {
+            MV_LOG_WARN("Control", "waiting for serial gimbal: reason={} sync={} age_ms={:.1f}",
+                        imu_health.reason, imu_health.synchronized, imu_health.sample_age_ms);
+            last_wait_log = NOW;
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        if (g_stop_requested != 0)
+          return 0;
+        auto rate_channel = std::make_unique<hal::SerialGimbalCommandSink>(
+            real_geometry->Imu(), real_geometry->Extrinsics(), SERIAL_GIMBAL_CONFIG);
+        auto command_sink = std::make_unique<runtime::SerialGimbalControlAdapter>(
+            std::move(rate_channel),
+            runtime::GimbalTuningSnapshot{PLANNER_CONFIG, SERIAL_GIMBAL_CONFIG}, CONFIG_ROOT);
+        try {
+          control_runtime = std::make_unique<runtime::ControlRuntime>(
+              FIRE_CONFIG, PLANNER_CONFIG, std::move(command_sink), diagnostics_sink, supervisor);
+          control_runtime->Start();
+        } catch (const std::exception& error) {
+          static_cast<void>(
+              supervisor.Report(runtime::RuntimeFaultCode::CONTROL_THREAD_EXCEPTION, error.what()));
+          MV_LOG_ERROR("App", "serial gimbal control runtime initialization failed: {}",
+                       error.what());
+          return 7;
+        } catch (...) {
+          static_cast<void>(supervisor.Report(runtime::RuntimeFaultCode::CONTROL_THREAD_EXCEPTION,
+                                              "unknown serial control initialization exception"));
+          MV_LOG_ERROR("App",
+                       "serial gimbal control runtime initialization failed: unknown exception");
+          return 7;
+        }
+        MV_LOG_INFO("Control",
+                    "MindVision 100 Hz real gimbal control started; fire_output_enabled={} "
+                    "auto_fire={} test_bypass_referee={}",
+                    SERIAL_GIMBAL_CONFIG.fire_output_enabled, FIRE_CONFIG.auto_fire,
+                    FIRE_CONFIG.test_bypass_referee);
+      }
     }
-
-    std::unique_ptr<runtime::RealFrameGeometry> real_geometry;
-    if (CAMERA_SELECTION.backend == "mindvision")
-      real_geometry = std::make_unique<runtime::RealFrameGeometry>(CONFIG_ROOT, camera->Info());
 
     runtime::VisionRuntime vision_runtime(*camera, *pipeline, control_runtime.get(), window.get(),
                                           diagnostics_sink, simulation_evaluator.get(), supervisor,

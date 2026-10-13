@@ -49,7 +49,7 @@ RealFrameGeometry::RealFrameGeometry(const std::filesystem::path& root,
               config_.extrinsics.gimbal_q_imu.y(), config_.extrinsics.gimbal_q_imu.z());
   MV_LOG_WARN("Geometry",
               "real rotation-only reference; placeholder_extrinsics={} camera_matches={} "
-              "camera time is software-estimated; no real actuator output",
+              "camera time is software-estimated; serial actuator output is separately gated",
               config_.placeholder, camera_matches_);
 }
 
@@ -93,8 +93,12 @@ void RealFrameGeometry::Attach(frame::FramePacket& packet) {
         geometry::ResolveGimbalAngularVelocity(HEALTH.gyro_rad_s, config_.extrinsics);
     MV_LOG_INFO("Geometry",
         "{} crc={} dropped={} offset_us={:.1f} rtt_us={:.1f} "
+        "rx_age_ms={:.1f} attitude_rx_age_ms={:.1f} progress_age_ms={:.1f} "
+        "packet={} sample={} duplicates={} generation={} "
         "gyro_imu_rad_s=[{:.4f},{:.4f},{:.4f}] gyro_gimbal_rad_s=[{:.4f},{:.4f},{:.4f}]",
         status_, HEALTH.crc_errors, HEALTH.dropped_packets, HEALTH.offset_us, HEALTH.rtt_us,
+        HEALTH.receive_age_ms, HEALTH.attitude_receive_age_ms, HEALTH.sample_progress_age_ms,
+        HEALTH.packet_sequence, HEALTH.sample_sequence, HEALTH.duplicate_samples, HEALTH.generation,
         HEALTH.gyro_rad_s.x(), HEALTH.gyro_rad_s.y(), HEALTH.gyro_rad_s.z(),
         GYRO_GIMBAL.x(), GYRO_GIMBAL.y(), GYRO_GIMBAL.z());
   }

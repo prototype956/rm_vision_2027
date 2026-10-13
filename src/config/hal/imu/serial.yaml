@@ -1,7 +1,7 @@
 schema_version: 1
 enabled: true
 # 必须填写实际 USB 转串口路径，推荐 /dev/serial/by-id/...；空值仅运行检测。
-device: "/dev/ttyUSB0"
+device: "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0"
 baud: 460800
 startup_sync_ms: 100
 sync_ms: 1000

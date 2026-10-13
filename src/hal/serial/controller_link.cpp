@@ -1,5 +1,6 @@
 #include "hal/serial/controller_link.hpp"
 
+#include "core/logger.hpp"
 #include "hal/serial/attitude_wire.h"
 
 #include <algorithm>
@@ -7,6 +8,7 @@
 #include <cerrno>
 #include <cmath>
 #include <deque>
+#include <mutex>
 #include <random>
 #include <stdexcept>
 #include <thread>
@@ -31,6 +33,15 @@ struct ControllerLink::Impl {
   struct Sync {
     double host_us, offset_us, rtt_us;
   };
+  struct GimbalCommand {
+    float yaw_rate_rad_s{0.0F};
+    float pitch_rate_rad_s{0.0F};
+    bool enabled{false};
+    bool fire{false};
+    bool friction{false};
+    bool pending{false};
+    std::uint64_t generation{0};
+  };
   ControllerLinkConfig config;
   UpdateCallback callback;
   ControllerLinkState health;
@@ -39,10 +50,17 @@ struct ControllerLink::Impl {
   int fd{-1};
   std::uint64_t session{0}, pending_t1{0};
   std::uint32_t request{0}, pending_request{0};
+  std::uint32_t command_sequence{0};
   bool acknowledged{false};
   double last_rx_us{0}, last_sync_us{0}, rate_start{0}, input_last_us{0};
   std::uint64_t rate_count{0};
   std::vector<std::uint8_t> input;
+  std::mutex command_mutex;
+  GimbalCommand command;
+  std::uint64_t sent_command_generation{0};
+
+  bool QueueGimbalCommand(float yaw_rate_rad_s, float pitch_rate_rad_s,
+                          bool enabled, bool fire, bool friction) noexcept;
 
   Impl(ControllerLinkConfig c, UpdateCallback update)
       : config(std::move(c)), callback(std::move(update)) {
@@ -74,7 +92,25 @@ struct ControllerLink::Impl {
     if (session == 0) session = 1;
     last_rx_us = NowUs(); last_sync_us = 0;
     rate_start = NowUs(); rate_count = 0; health.rate_hz = 0;
+    health.last_receive_us = 0;
+    health.last_attitude_receive_us = 0;
+    {
+      std::lock_guard lock(command_mutex);
+      command.pending = false;
+      ++command.generation;
+      sent_command_generation = command.generation;
+    }
     (void)callback(health, std::nullopt);
+  }
+  /** @brief Worker-only reconnect; never replay a command from the old session. */
+  void Reconnect(const char* reason, double& retry_at) {
+    MV_LOG_WARN("ControllerLink", "reconnecting reason={} generation={}", reason,
+                health.generation);
+    if (fd >= 0) close(fd);
+    fd = -1;
+    health.connected = false;
+    Reset(reason);
+    retry_at = NowUs() + 1000000;
   }
   bool Open() {
     fd = open(config.device.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
@@ -91,26 +127,54 @@ struct ControllerLink::Impl {
     return true;
   }
   // 仅收发线程写串口，在限定时间内处理部分写入；t1 在首次写入前记录。
-  bool Send(std::uint8_t type, std::uint64_t t1) {
+  bool Write(const std::uint8_t* bytes, std::size_t size) {
+    std::size_t sent = 0;
+    const double DEADLINE = NowUs() + 20000;
+    while (sent < size && NowUs() < DEADLINE) {
+      const auto N = write(fd, bytes + sent, size - sent);
+      if (N > 0) sent += static_cast<std::size_t>(N);
+      else if (N < 0 && errno != EAGAIN && errno != EINTR) return false;
+      else { pollfd p{fd, POLLOUT, 0}; poll(&p, 1, 2); }
+    }
+    return sent == size;
+  }
+  bool SendRequest(std::uint8_t type, std::uint64_t t1) {
     std::array<std::uint8_t, AV_MAX_FRAME> bytes{};
     pending_request = ++request;
     const auto SIZE = AvBegin(bytes.data(), type, type == AV_SYNC ? 8 : 0,
                               pending_request, session);
     if (type == AV_SYNC) AvWrite(bytes.data() + AV_HEADER, t1, 8);
     AvFinish(bytes.data(), SIZE);
-    std::size_t sent = 0;
-    const double DEADLINE = NowUs() + 20000;
-    while (sent < SIZE && NowUs() < DEADLINE) {
-      const auto N = write(fd, bytes.data() + sent, SIZE - sent);
-      if (N > 0) sent += static_cast<std::size_t>(N);
-      else if (N < 0 && errno != EAGAIN && errno != EINTR) return false;
-      else { pollfd p{fd, POLLOUT, 0}; poll(&p, 1, 2); }
+    return Write(bytes.data(), SIZE);
+  }
+  bool SendPendingCommand() {
+    GimbalCommand snapshot;
+    {
+      std::lock_guard lock(command_mutex);
+      if (!command.pending || command.generation == sent_command_generation) return true;
+      snapshot = command;
     }
-    return sent == SIZE;
+    std::array<std::uint8_t, AV_MAX_FRAME> bytes{};
+    const auto SIZE = AvBegin(bytes.data(), AV_GIMBAL_COMMAND, AV_GIMBAL_COMMAND_PAYLOAD,
+                              ++command_sequence, session);
+    AvPutFloat(bytes.data() + AV_HEADER + AV_GIMBAL_YAW_RATE_OFF, snapshot.yaw_rate_rad_s);
+    AvPutFloat(bytes.data() + AV_HEADER + AV_GIMBAL_PITCH_RATE_OFF, snapshot.pitch_rate_rad_s);
+    const std::uint16_t FLAGS =
+        AvGimbalCommandFlags(snapshot.enabled, snapshot.fire, snapshot.friction);
+    AvWrite(bytes.data() + AV_HEADER + AV_GIMBAL_FLAGS_OFF, FLAGS, 2);
+    AvWrite(bytes.data() + AV_HEADER + AV_GIMBAL_RESERVED_OFF, 0U, 2);
+    AvFinish(bytes.data(), SIZE);
+    if (!Write(bytes.data(), SIZE)) return false;
+    {
+      std::lock_guard lock(command_mutex);
+      sent_command_generation = snapshot.generation;
+    }
+    return true;
   }
   // 仅收发线程调用；先处理会话及同步，将其他合法帧交给消费方。
   void Dispatch(const std::vector<std::uint8_t>& f, double t4) {
     if (AvRead(f.data() + 10, 8) != session) return;
+    health.last_receive_us = t4;
     const auto TYPE = f[3];
     const auto LEN = AvRead(f.data() + 4, 2);
     const auto SEQ = static_cast<std::uint32_t>(AvRead(f.data() + 6, 4));
@@ -141,8 +205,12 @@ struct ControllerLink::Impl {
       if (health.synchronized) health.reason = "awaiting_attitude";
     } else if (acknowledged) {
       // 此层只识别消息信封，不解释姿态载荷或依赖 Eigen。
-      if (TYPE == AV_ATTITUDE && LEN == 42) {
+      const bool IS_ATTITUDE_FRAME =
+          (TYPE == AV_ATTITUDE && LEN == AV_ATTITUDE_PAYLOAD) ||
+          (TYPE == AV_CALIBRATION_SAMPLE && LEN == AV_CALIBRATION_PAYLOAD);
+      if (IS_ATTITUDE_FRAME) {
         last_rx_us = t4;
+        health.last_attitude_receive_us = t4;
         ++rate_count;
         if (t4 - rate_start >= 1000000) {
           health.rate_hz = static_cast<double>(rate_count) * 1e6 / (t4 - rate_start);
@@ -174,13 +242,17 @@ struct ControllerLink::Impl {
         const double NOW = NowUs();
         if (NOW - last_rx_us > config.timeout_ms * 1000.0 ||
             (health.synchronized && !syncs.empty() &&
-             NOW - syncs.back().host_us > config.timeout_ms * 1000.0)) Reset("link_timeout");
+             NOW - syncs.back().host_us > config.timeout_ms * 1000.0)) {
+          Reconnect("link_timeout", retry_at);
+          continue;
+        }
         const int PERIOD = health.synchronized ? config.sync_ms : config.startup_sync_ms;
         if (NOW - last_sync_us >= PERIOD * 1000.0) {
           pending_t1 = acknowledged ? static_cast<std::uint64_t>(NowUs()) : 0;
-          io_ok = Send(acknowledged ? AV_SYNC : AV_HELLO, pending_t1);
+          io_ok = SendRequest(acknowledged ? AV_SYNC : AV_HELLO, pending_t1);
           last_sync_us = NOW;
         }
+        if (io_ok && health.synchronized) io_ok = SendPendingCommand();
       }
       pollfd p{fd, POLLIN, 0};
       const int READY = poll(&p, 1, 5);
@@ -211,17 +283,44 @@ struct ControllerLink::Impl {
         } else if (N == 0 || (errno != EAGAIN && errno != EINTR)) io_ok = false;
       }
       if (!io_ok) {
-        close(fd); fd = -1;
-        health.connected = false; Reset("serial_disconnected");
-        retry_at = NowUs() + 1000000;
+        Reconnect("serial_disconnected", retry_at);
+        continue;
       }
-      (void)callback(health, std::nullopt);
+      // Frequency must decay during silence instead of displaying the old 200 Hz.
+      if (health.last_attitude_receive_us > 0 &&
+          NowUs() - health.last_attitude_receive_us > 1000000)
+        health.rate_hz = 0;
+      if (!callback(health, std::nullopt))
+        Reconnect("attitude_health_recovery", retry_at);
     }
   }
 };
 
+bool ControllerLink::Impl::QueueGimbalCommand(float yaw_rate_rad_s,
+                                               float pitch_rate_rad_s,
+                                               bool enabled, bool fire, bool friction) noexcept {
+  if (!std::isfinite(yaw_rate_rad_s) || !std::isfinite(pitch_rate_rad_s) ||
+      std::abs(yaw_rate_rad_s) > 4.0F || std::abs(pitch_rate_rad_s) > 4.0F)
+    return false;
+  std::lock_guard lock(command_mutex);
+  command.yaw_rate_rad_s = enabled ? yaw_rate_rad_s : 0.0F;
+  command.pitch_rate_rad_s = enabled ? pitch_rate_rad_s : 0.0F;
+  command.enabled = enabled;
+  command.fire = enabled && fire;
+  command.friction = enabled && (friction || fire);
+  command.pending = true;
+  ++command.generation;
+  return true;
+}
+
 ControllerLink::ControllerLink(ControllerLinkConfig config, UpdateCallback callback)
     : impl_(std::make_unique<Impl>(std::move(config), std::move(callback))) {}
 ControllerLink::~ControllerLink() = default;
+
+bool ControllerLink::QueueGimbalCommand(float yaw_rate_rad_s, float pitch_rate_rad_s,
+                                        bool enabled, bool fire, bool friction) noexcept {
+  return impl_ && impl_->QueueGimbalCommand(yaw_rate_rad_s, pitch_rate_rad_s, enabled, fire,
+                                           friction);
+}
 
 }  // namespace mv::hal::serial

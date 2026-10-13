@@ -1,0 +1,5 @@
+# 物理发射机构已拆除；保留当前串口输出配置，修改需重启。
+schema_version: 1
+enabled: true
+fire_output_enabled: true
+max_feedback_age_ms: 100.0

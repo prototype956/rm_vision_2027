@@ -27,8 +27,10 @@ SIMULATOR_NICE="${SIMULATOR_NICE:-5}"
 STARTUP_TIMEOUT_SEC="${STARTUP_TIMEOUT_SEC:-15}"
 RUSTC_BIN="${RUSTC_BIN:-rustc}"
 
-MAIN_CONFIG="${VISION_ROOT}/src/config/app/main.yaml"
-TALOS_CONFIG="${VISION_ROOT}/src/config/hal/camera/talos.yaml"
+config_root="${RM_VISION_CONFIG_ROOT:-${VISION_ROOT}/src/config}"
+[[ "$config_root" = /* ]] || config_root="${VISION_ROOT}/${config_root}"
+MAIN_CONFIG="${config_root}/app/main.yaml"
+TALOS_CONFIG="${config_root}/hal/camera/talos.yaml"
 
 SIMULATOR_PID=""
 VISION_PID=""
@@ -152,7 +154,8 @@ done
 echo "[launcher] Talos ready; starting vision"
 (
   cd -- "${VISION_ROOT}"
-  exec taskset -c "${VISION_CPUSET}" "${VISION_BIN}"
+  # 标定工具显式传入 capture；主程序的无参数启动不受影响。
+  exec taskset -c "${VISION_CPUSET}" "${VISION_BIN}" "$@"
 ) &
 VISION_PID=$!
 

@@ -14,7 +14,7 @@ MindVision 实机验收程序，以及支持 OpenVINO/TensorRT 的深圳大学 R
 - `mv-vision-main`：根据配置选择 MindVision 实机或 Talos 仿真相机，同步执行
   YOLO 0526 检测并显示叠加结果。
 - `mv-camera-test`：MindVision 长时间稳定性、重复启停和拔线验收程序。
-- `mv-camera-calibration`：MindVision 原图采集与离线棋盘格检测、内参求解和质量验收工具。
+- `mv-camera-calibration`：MindVision 内参标定及单 yaw 相机外参采集、离线审核和求解工具。
 - `mv-armor-detector-test`：MindVision、GPU 检测器与可选 Foxglove 输出的长时实机
   验收程序。
 - `mv-armor-detector-video-test`：离线视频检测、可视化、逐帧耗时和性能验收程序。
@@ -136,10 +136,12 @@ taskset -c 0-7 ./build-openvino/bin/mv-vision-main
 ./build-openvino/bin/mv-armor-detector-video-test
 ```
 
-`scripts/calibrate_camera.sh` 无参数时进入统一标定菜单，可选择相机内参采集/解算、仿真
-外参采集/解算、Foxglove 三维验收和 IMU 轴向采集。内参和外参解算会自动列出
-`artifacts/` 下已有数据目录，按最新修改时间排序供选择。原有带构建目录和模式参数的命令
-继续保留，适合自动化调用。
+`scripts/calibrate_camera.sh` 无参数时进入统一标定与 IMU 菜单，按相机内参、实机外参、
+仿真外参和 IMU 检查分组。它提供采集、已有会话解算、仿真 Foxglove 验收、IMU 轴向
+采集及静止漂移采集/分析；会话按类型筛选并按修改时间倒序显示。
+菜单需要 Python 3 和 PyYAML；非交互模式使用 `<功能组> <动作>`，
+例如 `./scripts/calibrate_camera.sh imu-drift analyze <会话目录>`。入口、配置和构建说明见
+[`docs/tool/CALIBRATION.md`](docs/tool/CALIBRATION.md)。
 
 Intel GPU 的登录会话需具有 `render`、`video` 组，且 OpenVINO 必须能看到 `GPU` 或
 `GPU.<index>`；NVIDIA 部署应能通过 CUDA 访问配置的 GPU。检测器不会回退 CPU，也不应使用 `sudo` 运行。相机预览按 `Q`、
@@ -154,7 +156,9 @@ Foxglove 连接、话题与 MCAP 使用方法见
 [`docs/runtime/ERROR_POLICY.md`](docs/runtime/ERROR_POLICY.md)。
 坐标轴、变换方向和 Talos 同帧契约见
 [`docs/modules/COORDINATE_SYSTEMS.md`](docs/modules/COORDINATE_SYSTEMS.md)。
-相机内参标定流程见
+云台 PID / MPC 模式、独立配置及热更新见
+[`docs/modules/GIMBAL_CONTROL.md`](docs/modules/GIMBAL_CONTROL.md)。
+相机内参及单 yaw 外参标定流程见
 [`docs/tool/CAMERA_CALIBRATION.md`](docs/tool/CAMERA_CALIBRATION.md)。
 仿真外参标定的原图与同帧真值采集见
 [`docs/tool/EXTRINSIC_CALIBRATION.md`](docs/tool/EXTRINSIC_CALIBRATION.md)。
@@ -211,7 +215,7 @@ src/config/
 │   ├── modules/
 │   │   └── armor_detector/# 双后端 YOLO 0526 检测模块
 │   └── tool/
-│       ├── calibration/   # MindVision 棋盘格内参标定
+│       ├── calibration/   # MindVision 棋盘格内参及单 yaw 外参标定
 │       ├── debug/         # OpenCV 调试窗口与装甲可视化
 │       └── foxglove/      # 按 image/armor/spatial/simulation 分层的视觉调试发布
 ├── test/

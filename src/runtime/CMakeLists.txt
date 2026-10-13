@@ -7,7 +7,6 @@ add_library(mv-runtime STATIC
     vision_tuning.cpp
     vision_runtime.cpp
     real_frame_geometry.cpp
-    real_geometry_config.cpp
 )
 
 target_include_directories(mv-runtime
@@ -17,6 +16,8 @@ target_include_directories(mv-runtime
 
 target_link_libraries(mv-runtime
     PUBLIC
+        mv-runtime-gimbal-control
+        mv-real-geometry-config
         mv-hal-imu
         mv-hal-camera
         mv-hal-gimbal
@@ -27,7 +28,7 @@ target_link_libraries(mv-runtime
         mv-modules-armor-pnp
         mv-modules-armor-predictor
         mv-modules-fire-control
-        mv-modules-gimbal-trajectory-planner
+        mv-modules-gimbal-control
     PRIVATE
         mv-core
         mv-tool-armor-overlay

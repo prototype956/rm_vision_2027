@@ -5,7 +5,7 @@
 #include "modules/fire_control/fire_control_config.hpp"
 #include "modules/fire_control/fire_control_output.hpp"
 #include "modules/fire_control/gimbal_feedback_estimator.hpp"
-#include "modules/gimbal_trajectory_planner/gimbal_trajectory_planner.hpp"
+#include "modules/gimbal_control/gimbal_reference_planner.hpp"
 
 #include <array>
 #include <chrono>
@@ -171,8 +171,7 @@ struct FireControlDiagnostics {
   double reference_pitch_step{0.0};
   double target_linear_speed_mps{0.0};
   double target_spin_rate_rad_s{0.0};
-  double control_compute_time_us{
-      0.0};  ///< 控制步进及发布状态维护，不包含传输发送。
+  double control_compute_time_us{0.0};  ///< 控制步进及发布状态维护，不包含传输发送。
   double referee_age_s{0.0};
   double control_period_s{0.0};
   double deadline_lateness_us{0.0};
@@ -190,8 +189,7 @@ struct FireControlDiagnostics {
 /** @brief 单周期火控的正式输出与诊断输出。 */
 struct FireControlResult {
   std::uint64_t cycle_id{0};
-  const void* session_owner{
-      nullptr};  ///< 进程内确认标识，不属于观测数据。
+  const void* session_owner{nullptr};  ///< 进程内确认标识，不属于观测数据。
   std::optional<PolicyDecision> decision;
   FireControlOutput output;
   FireControlDiagnostics diagnostics;

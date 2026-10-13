@@ -10,12 +10,40 @@
 #include <stdint.h>
 #include <string.h>
 #define AV_HEADER 18U
-#define AV_MAX_FRAME 96U
+#define AV_MAX_FRAME 128U
 #define AV_HELLO 1U
 #define AV_ACK 2U
 #define AV_SYNC 3U
 #define AV_SYNC_REPLY 4U
 #define AV_ATTITUDE 5U
+#define AV_CALIBRATION_SAMPLE 6U
+#define AV_GIMBAL_COMMAND 7U
+#define AV_ATTITUDE_PAYLOAD 42U
+#define AV_CALIBRATION_PAYLOAD 96U
+#define AV_GIMBAL_COMMAND_PAYLOAD 12U
+#define AV_GIMBAL_YAW_RATE_OFF 0U
+#define AV_GIMBAL_PITCH_RATE_OFF 4U
+#define AV_GIMBAL_FLAGS_OFF 8U
+#define AV_GIMBAL_RESERVED_OFF 10U
+#define AV_GIMBAL_FLAG_ENABLE (1U << 0)
+#define AV_GIMBAL_FLAG_FIRE_REQUEST (1U << 1)
+#define AV_GIMBAL_FLAG_FRICTION_REQUEST (1U << 2)
+/* Legacy FIRE implies friction; FRICTION alone never feeds. ENABLE gates both. */
+static inline uint16_t AvGimbalCommandFlags(int enabled, int fire, int friction) {
+    return enabled ? (uint16_t)(AV_GIMBAL_FLAG_ENABLE |
+        (fire ? AV_GIMBAL_FLAG_FIRE_REQUEST : 0U) |
+        ((friction || fire) ? AV_GIMBAL_FLAG_FRICTION_REQUEST : 0U)) : 0U;
+}
+#define AV_CAL_SMALL_DIRECTION_OFF 68U
+#define AV_CAL_FLAGS_OFF 69U
+#define AV_CAL_GYRO_CAL_OFF 70U
+#define AV_CAL_PAYLOAD_VERSION_OFF 71U
+#define AV_CAL_PITCH_DIRECTION_OFF 92U
+#define AV_CAL_PITCH_FLAGS_OFF 93U
+#define AV_CAL_RESERVED_OFF 94U
+#define AV_CAL_PAYLOAD_VERSION 2U
+#define AV_CAL_REQUIRED_FLAGS 0xf7U
+#define AV_CAL_REQUIRED_PITCH_FLAGS 0x1fU
 static inline uint64_t AvRead(const uint8_t *p, unsigned n) {
     uint64_t v = 0; unsigned i;
     for (i = 0; i < n; ++i) v |= (uint64_t)p[i] << (8U * i);

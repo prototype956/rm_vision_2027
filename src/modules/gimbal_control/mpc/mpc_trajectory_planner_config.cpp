@@ -1,4 +1,4 @@
-#include "modules/gimbal_trajectory_planner/gimbal_trajectory_planner_config.hpp"
+#include "modules/gimbal_control/mpc/mpc_trajectory_planner_config.hpp"
 
 #include "core/config.hpp"
 
@@ -25,7 +25,8 @@ std::array<double, 2> ReadPair(const YAML::Node& node, const char* key,
 
 }  // namespace
 
-GimbalTrajectoryPlannerConfig ParseGimbalTrajectoryPlannerConfig(const YAML::Node& root) {
+MpcTrajectoryPlannerConfig ParseMpcTrajectoryPlannerConfig(const YAML::Node& root,
+                                                           GimbalReferenceTiming timing) {
   constexpr char CONTEXT[] = "gimbal trajectory planner config";
   ConfigLoader::RejectUnknownKeys(
       root, {"schema_version", "timing", "normalization", "limits", "cost", "solver"}, CONTEXT);
@@ -37,7 +38,7 @@ GimbalTrajectoryPlannerConfig ParseGimbalTrajectoryPlannerConfig(const YAML::Nod
   const auto LIMITS = root["limits"];
   const auto COST = root["cost"];
   const auto SOLVER = root["solver"];
-  ConfigLoader::RejectUnknownKeys(TIMING, {"dt_s", "horizon_steps", "command_lookahead_s"},
+  ConfigLoader::RejectUnknownKeys(TIMING, {"command_lookahead_s"},
                                   "gimbal trajectory planner config.timing");
   ConfigLoader::RejectUnknownKeys(NORMALIZATION, {"angle_scale_rad"},
                                   "gimbal trajectory planner config.normalization");
@@ -51,9 +52,9 @@ GimbalTrajectoryPlannerConfig ParseGimbalTrajectoryPlannerConfig(const YAML::Nod
       SOLVER, {"max_iterations", "rho", "absolute_primal_tolerance", "absolute_dual_tolerance"},
       "gimbal trajectory planner config.solver");
 
-  GimbalTrajectoryPlannerConfig config;
-  config.dt_s = ConfigLoader::Require<double>(TIMING, "dt_s", CONTEXT);
-  config.horizon_steps = ConfigLoader::Require<int>(TIMING, "horizon_steps", CONTEXT);
+  MpcTrajectoryPlannerConfig config;
+  config.dt_s = timing.dt_s;
+  config.horizon_steps = timing.horizon_steps;
   config.command_lookahead_s =
       ConfigLoader::Require<double>(TIMING, "command_lookahead_s", CONTEXT);
   config.normalization_angle_scale_rad =

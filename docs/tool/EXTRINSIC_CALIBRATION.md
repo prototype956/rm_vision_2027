@@ -13,7 +13,7 @@
 确认当前图像：
 
 ```bash
-./build-openvino/bin/mv-extrinsic-calibration solve \
+./scripts/calibrate_camera.sh --build-dir build-openvino simulation-extrinsics solve \
   artifacts/extrinsic_calibration/<timestamp>
 ```
 
@@ -37,32 +37,28 @@ cmake --build build-openvino --parallel 4 --target mv-extrinsic-calibration
 ./scripts/calibrate_camera.sh
 ```
 
-选择 `2` 可启动仿真外参采集，选择 `4` 会从
-`artifacts/extrinsic_calibration/` 列出已有采集会话并进入外参解算，选择 `5` 会从已有
-`solutions/` 结果中选择一个并启动 Foxglove 三维验收。目录按最新修改时间倒序显示。
+进入主项 `3`「仿真相机—云台外参」，子项 `1` 采集、`2` 解算、`3` Foxglove 三维验收。
+会话列表读取配置中的 `output_dir`，按修改时间倒序显示；验收仅列出具有成功报告和
+外参文件的结果。入口与数据类型筛选详见 [统一标定与 IMU 入口](CALIBRATION.md)。
+所有模式支持 `RM_VISION_CONFIG_ROOT`，未设置或为空使用默认配置；相对配置/数据路径
+按项目根目录解释。离线解算仍按现有规则用配置核对会话棋盘参数。
 
 也可以使用下面的显式命令，适合自动化或不使用菜单的场景。
 
-先启动 Talos v7 仿真器，再启动采集程序。独立程序直接读取
-`hal/camera/talos.yaml` 和 `tool/extrinsic_calibration.yaml`，不读取主程序的 backend：
-
-```bash
-./build-openvino/bin/mv-extrinsic-calibration capture
-```
-
-也可以使用统一标定脚本启动仿真器和采集程序。它会把 `VISION_BIN` 设置为
+统一入口会启动仿真器和采集程序，把 `VISION_BIN` 设置为
 `mv-extrinsic-calibration`，并跳过只针对主视觉程序的 `main.yaml` backend 检查；Talos
-共享内存、动态库和仿真器就绪检查仍然执行，因此不需要临时修改配置文件：
+共享内存、动态库和仿真器就绪检查仍然执行，因此不需要临时修改配置文件。
+采集程序读取 `hal/camera/talos.yaml` 和 `tool/extrinsic_calibration.yaml`：
 
 ```bash
-./scripts/calibrate_camera.sh build-openvino simulation
+./scripts/calibrate_camera.sh --build-dir build-openvino simulation-extrinsics capture
 ```
 
 仿真器默认自动选择仓库同级的 `bevy_robomaster_simulator`，也可以显式指定路径：
 
 ```bash
 SIMULATOR_ROOT="$(pwd)/../bevy_robomaster_simulator" \
-  ./scripts/calibrate_camera.sh build-openvino simulation
+  ./scripts/calibrate_camera.sh --build-dir build-openvino simulation-extrinsics capture
 ```
 
 ## 采集操作
@@ -108,7 +104,7 @@ solutions/<timestamp>/
 从 `report.yaml` 读取每帧 `world_t_gimbal` 和仿真真值外参，并发布两个独立话题：
 
 ```bash
-./build-openvino/bin/mv-extrinsic-calibration visualize \
+./scripts/calibrate_camera.sh --build-dir build-openvino simulation-extrinsics visualize \
   artifacts/extrinsic_calibration/20261006_160142/solutions/20261006_172133
 ```
 

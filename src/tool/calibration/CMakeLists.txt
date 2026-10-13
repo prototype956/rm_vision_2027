@@ -1,5 +1,7 @@
 add_library(mv-tool-calibration STATIC
     calibration.cpp
+    calibration_io.cpp
+    handeye_calibration.cpp
 )
 
 target_include_directories(mv-tool-calibration
@@ -12,9 +14,11 @@ target_link_libraries(mv-tool-calibration
     PUBLIC
         mv-core
         mv-hal-camera
+        mv-real-geometry-config
         opencv_core
         yaml-cpp
     PRIVATE
+        opencv_imgcodecs
         opencv_calib3d
         opencv_imgproc
 )
@@ -22,6 +26,7 @@ target_link_libraries(mv-tool-calibration
 add_executable(mv-camera-calibration
     calibration_main.cpp
     calibration_application.cpp
+    handeye_application.cpp
 )
 
 target_link_libraries(mv-camera-calibration

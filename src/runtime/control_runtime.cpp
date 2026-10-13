@@ -23,7 +23,7 @@ std::uint64_t SystemNowNs() noexcept {
 }  // namespace
 
 ControlRuntimeImpl::ControlRuntimeImpl(modules::FireControlConfig fire_config,
-                                       modules::GimbalTrajectoryPlannerConfig planner_config,
+                                       modules::GimbalControlConfig planner_config,
                                        std::unique_ptr<hal::IGimbalCommandSink> sink,
                                        IRuntimeDiagnosticsSink* diagnostics,
                                        RuntimeSupervisor& supervisor)
@@ -92,7 +92,7 @@ bool ControlRuntimeImpl::SendStop() noexcept {
 }
 
 ControlRuntime::ControlRuntime(modules::FireControlConfig fire_config,
-                               modules::GimbalTrajectoryPlannerConfig planner_config,
+                               modules::GimbalControlConfig planner_config,
                                std::unique_ptr<hal::IGimbalCommandSink> sink,
                                IRuntimeDiagnosticsSink* diagnostics, RuntimeSupervisor& supervisor)
     : impl_(std::make_unique<ControlRuntimeImpl>(fire_config, planner_config, std::move(sink),

@@ -7,6 +7,7 @@ target_link_libraries(mv-vision-main
         mv-core
         mv-hal-camera
         mv-hal-gimbal-talos
+        mv-hal-gimbal-serial
         mv-runtime
         mv-modules-armor-detector
         mv-modules-armor-corner-refiner

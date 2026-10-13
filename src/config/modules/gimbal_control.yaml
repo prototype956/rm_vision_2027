@@ -1,0 +1,14 @@
+schema_version: 1
+modes:
+  mindvision: mpc
+  talos: mpc # Talos 保持角度命令协议，本轮只支持 MPC。
+reference:
+  dt_s: 0.01
+  horizon_steps: 50
+# 反馈估计限速与实机输出限速独立，保留原值。
+feedback_limits:
+  max_yaw_velocity_rad_s: 3.0
+  max_pitch_velocity_rad_s: 3.0
+rate_limits: # 支持热更新；模式、参考及反馈限制需重启。
+  max_yaw_rate_rad_s: 3.0
+  max_pitch_rate_rad_s: 4.0

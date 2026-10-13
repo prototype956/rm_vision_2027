@@ -105,6 +105,8 @@ std::string_view GimbalCommandSourceName(GimbalCommandSource source) noexcept {
   switch (source) {
     case GimbalCommandSource::MPC:
       return "mpc";
+    case GimbalCommandSource::PID:
+      return "pid";
     case GimbalCommandSource::TRAJECTORY_FALLBACK:
       return "trajectory_fallback";
     case GimbalCommandSource::STOP:
@@ -113,7 +115,7 @@ std::string_view GimbalCommandSourceName(GimbalCommandSource source) noexcept {
   return "stop";
 }
 
-FireControl::FireControl(FireControlConfig config, GimbalTrajectoryPlannerConfig planner_config)
+FireControl::FireControl(FireControlConfig config, GimbalControlConfig planner_config)
     : rule_(config), config_(config), planner_(planner_config) {}
 
 void FireControl::Reset() {
@@ -255,16 +257,19 @@ FireControlResult FireControl::Step(const ControlInputSnapshot& input,
                 std::chrono::duration<double>(now - input.referee.received_at).count()
           : std::numeric_limits<double>::infinity();
   output.external_control_enabled = input.external_control_enabled;
+  output.control_mode = planner_.Config().mode;
   output.auto_fire_enabled = config_.auto_fire;
   diagnostics.target_linear_speed_mps = input.prediction.velocity_world.norm();
   diagnostics.target_spin_rate_rad_s = std::abs(input.prediction.yaw_velocity_rad_s);
   const auto& planner_config = planner_.Config();
   diagnostics.trajectory_dt_s = planner_config.dt_s;
   diagnostics.bullet_speed_mps = config_.bullet_speed_mps;
-  diagnostics.max_yaw_velocity_rad_s = planner_config.max_yaw_velocity_rad_s;
-  diagnostics.max_pitch_velocity_rad_s = planner_config.max_pitch_velocity_rad_s;
-  diagnostics.max_yaw_acceleration_rad_s2 = planner_config.max_yaw_acceleration_rad_s2;
-  diagnostics.max_pitch_acceleration_rad_s2 = planner_config.max_pitch_acceleration_rad_s2;
+  diagnostics.max_yaw_velocity_rad_s = planner_config.feedback_max_yaw_velocity_rad_s;
+  diagnostics.max_pitch_velocity_rad_s = planner_config.feedback_max_pitch_velocity_rad_s;
+  diagnostics.max_yaw_acceleration_rad_s2 =
+      (planner_config.mpc ? planner_config.mpc->max_yaw_acceleration_rad_s2 : 50.0);
+  diagnostics.max_pitch_acceleration_rad_s2 =
+      (planner_config.mpc ? planner_config.mpc->max_pitch_acceleration_rad_s2 : 100.0);
   const auto SOURCE_TIME = input.prediction.source_steady_time
                                ? input.prediction.source_steady_time
                                : (!input.prediction.source_capture_timestamp_ns
@@ -452,10 +457,16 @@ FireControlResult FireControl::Step(const ControlInputSnapshot& input,
                     .pitch_velocity = output.plan.command.pitch_velocity,
                     .pitch_acceleration = output.plan.command.pitch_acceleration,
                     .target_distance_m = output.ballistic.distance_m};
-  output.command_source = GimbalCommandSource::MPC;
+  output.command_source = planner_.Config().mode == GimbalControlMode::PID
+                              ? GimbalCommandSource::PID
+                              : GimbalCommandSource::MPC;
   const auto HEURISTIC =
       decision ? FireRejectReason::NONE : rule_.Evaluate(input, feedback, result);
-  const auto REFEREE_REASON = RefereeRejectReason(input.referee, now, config_.max_referee_age_s);
+  // Explicit bench mode does not fabricate valid referee observations.
+  const auto REFEREE_REASON =
+      config_.test_bypass_referee
+          ? FireRejectReason::NONE
+          : RefereeRejectReason(input.referee, now, config_.max_referee_age_s);
   if (!config_.auto_fire) {
     output.reject_reason = FireRejectReason::AUTO_FIRE_DISABLED;
   } else if (!input.external_control_enabled) {

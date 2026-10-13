@@ -4,7 +4,7 @@
 
 namespace mv::modules {
 
-/** @brief 单个 MPC 离散时刻求得的双轴角度、角速度和控制输入。 */
+/** @brief 单个输出采样点的双轴角度、角速度和控制输入。 */
 struct PlannedGimbalPoint {
   double yaw{0.0};
   double yaw_velocity{0.0};

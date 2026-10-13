@@ -16,7 +16,8 @@ RuntimeErrorPolicy ParseRuntimeErrorPolicy(const YAML::Node& root) {
   const auto OPTIONAL = root["optional_components"];
   ConfigLoader::RejectUnknownKeys(CAMERA, {"no_valid_frame_timeout_ms"},
                                   "runtime error policy.camera");
-  ConfigLoader::RejectUnknownKeys(CONTROL, {"command_sink_unhealthy_timeout_ms"},
+  ConfigLoader::RejectUnknownKeys(CONTROL, {"command_sink_unhealthy_timeout_ms",
+                                          "command_sink_wait_for_recovery"},
                                   "runtime error policy.control");
   ConfigLoader::RejectUnknownKeys(OPTIONAL,
                                   {"evaluation_disable_after_consecutive_errors",
@@ -30,6 +31,9 @@ RuntimeErrorPolicy ParseRuntimeErrorPolicy(const YAML::Node& root) {
   RuntimeErrorPolicy policy;
   policy.camera_no_valid_frame_timeout = std::chrono::milliseconds(CAMERA_TIMEOUT_MS);
   policy.command_sink_unhealthy_timeout = std::chrono::milliseconds(COMMAND_TIMEOUT_MS);
+  if (CONTROL["command_sink_wait_for_recovery"])
+    policy.command_sink_wait_for_recovery =
+        ConfigLoader::Require<bool>(CONTROL, "command_sink_wait_for_recovery", CONTEXT);
   policy.evaluation_disable_after_consecutive_errors =
       ConfigLoader::Require<int>(OPTIONAL, "evaluation_disable_after_consecutive_errors", CONTEXT);
   policy.debug_window_disable_after_consecutive_errors = ConfigLoader::Require<int>(

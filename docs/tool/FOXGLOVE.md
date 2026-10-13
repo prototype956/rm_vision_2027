@@ -226,11 +226,24 @@ python3 "$MCAP_ANALYZE" frames artifacts/foxglove/example.mcap \
 Talos 帧不在新话题发布 TF，继续使用控制链 `/vision/transforms`，避免两个时间基准
 同时更新相同 child。无需 ROS 或 robot_state_publisher。
 
-当前车辆 IMU 名义安装旋转已固定为 `diag(-1,-1,1)`；平移仍为占位值，三个原点重合
-属于预期。重叠时可分别切换坐标轴显示，其他车辆应先选择对应部署 profile。
+当前车辆 IMU 名义安装旋转已固定为 `diag(-1,-1,1)`。相机外参已使用 2026-10-10 手眼结果：
+相机光学中心相对云台原点约为 `[0.1454, 0.0008, 0.1586] m`，所以 `camera_optical` 与
+`gimbal` 不再重合。其他车辆应先选择并标定自己的部署 profile。
 这里只显示最终刚体关系，不显示大 yaw、小 yaw、pitch 的独立机械关节，也不增加未经测量的
 IMU/枪口坐标轴。world 是惯性方向、随相机移动原点的近似，不代表导航位置。
 IMU 失效时停止发布新 TF；Foxglove 可能保留最后一帧坐标轴，因此应同时查看 TF 时间是否
 持续更新以及主程序 IMU 状态，不能仅凭画面存在判断链路在线。
 
 面板选项参考 [Foxglove 3D 官方说明](https://docs.foxglove.dev/docs/visualization/panels/3d)。
+
+世界网格看起来倾斜并不等价于外参错误：网格固定在 `world` 的 IMU 惯性方向，当前没有用地面
+测量或导航系统把它校正为实际地板平面；Foxglove 观察相机也可以自由旋转。验收应优先检查
+固定目标在小 yaw/pitch 运动时是否保持同一世界位置、TF 是否持续更新以及 `IMU:ok sync=true`。
+2026-10-10 当前车辆已经通过这项固定目标检查，未观察到明显抖动。
+
+## 云台控制模式
+
+`/vision/control/tracking` 的 `control_mode` 明确标记 `pid` 或 `mpc`，命令来源也区分
+PID、MPC、轨迹回退和停止。历史 `mpc_valid`、`raw_mpc_*` 字段保留兼容；PID 模式下
+表示直接参考输出，不表示 MPC 求解器正在运行。参数路径见
+[云台 PID / MPC 控制](../modules/GIMBAL_CONTROL.md)。

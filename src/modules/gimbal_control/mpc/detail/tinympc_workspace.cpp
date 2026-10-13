@@ -1,4 +1,4 @@
-#include "modules/gimbal_trajectory_planner/detail/tinympc_workspace.hpp"
+#include "modules/gimbal_control/mpc/detail/tinympc_workspace.hpp"
 
 #include "tinympc/admm.hpp"
 #include "tinympc/tiny_api.hpp"

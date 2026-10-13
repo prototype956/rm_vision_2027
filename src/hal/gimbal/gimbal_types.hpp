@@ -5,6 +5,23 @@
 
 namespace mv::hal {
 
+/** @brief 控制算法交给实机传输层的双轴速率，单位 rad/s。 */
+struct GimbalRateCommand {
+  bool valid{false};
+  double yaw_rate_rad_s{0.0};
+  double pitch_rate_rad_s{0.0};
+};
+
+/** @brief Host rate-PID terms for the last queued serial command (not MCU acknowledgement). */
+struct GimbalRatePidTerms {
+  double error_rad{0.0};
+  double p{0.0};
+  double i{0.0};
+  double d{0.0};
+  double integral_weight{0.0};
+  double rate_command{0.0};  ///< Clamped output, rad/s.
+};
+
 /** @brief Talos 发布端使用的云台执行器模型。 */
 enum class GimbalActuatorMode : std::uint8_t {
   LEGACY = 0,    ///< 未提供执行器模型信息的兼容值，不应作为有效遥测使用。
@@ -20,6 +37,11 @@ enum class GimbalActuatorMode : std::uint8_t {
  * pitch 加速度、pitch 机械限位、命令超时和积分追赶超限。
  */
 struct GimbalActuatorTelemetry {
+  bool serial_friction_queued{false};  ///< Host queue state, not measured wheel speed/MCU ACK.
+  bool serial_feeder_queued{false};
+  bool serial_pid_active{false};
+  GimbalRatePidTerms yaw_pid{};
+  GimbalRatePidTerms pitch_pid{};
   bool valid{false};  ///< 整个快照是否通过协议版本、模式和有限性校验。
   std::uint64_t state_timestamp_ns{0};  ///< 执行器状态采样的 Unix epoch 纳秒时间。
   std::uint64_t consumed_command_timestamp_ns{0};  ///< 最近消费命令自身携带的时间戳。
@@ -51,7 +73,8 @@ struct GimbalFeedback {
 /**
  * @brief 火控向云台后端提交的一条目标状态和开火建议。
  *
- * valid=false 表示停止外部跟随；此时后端忽略其余运动字段并禁止开火。
+ * valid=false 表示停止外部跟随；此时后端忽略其余运动字段并禁止拨弹。
+ * friction_wheel is independent: serial can retain friction with zero motion rates.
  */
 struct GimbalCommand {
   std::uint64_t source_round_id{0};              ///< Talos 来源图像回合。
@@ -67,6 +90,7 @@ struct GimbalCommand {
   double pitch_velocity{0.0};      ///< 目标俯仰角速度，单位为弧度每秒。
   double pitch_acceleration{0.0};  ///< 目标俯仰角加速度，单位为 rad/s^2。
   double target_distance_m{-1.0};  ///< 瞄准目标距离，单位为米；有效命令必须非负。
+  bool friction_wheel{false};      ///< Independent spin-up/brief target-loss hold request.
 };
 
 }  // namespace mv::hal

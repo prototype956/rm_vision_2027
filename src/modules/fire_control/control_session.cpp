@@ -85,9 +85,10 @@ ProjectedKinematics ProjectKinematics(const modules::ControlInputSnapshot& input
 }
 
 }  // namespace
-ControlSession::ControlSession(FireControlConfig config, GimbalTrajectoryPlannerConfig planner)
+ControlSession::ControlSession(FireControlConfig config, GimbalControlConfig planner)
     : fire_control_(config, planner),
-      feedback_estimator_(planner.max_yaw_velocity_rad_s, planner.max_pitch_velocity_rad_s),
+      feedback_estimator_(planner.feedback_max_yaw_velocity_rad_s,
+                          planner.feedback_max_pitch_velocity_rad_s),
       PLANNER_DT_S(planner.dt_s) {}
 void ControlSession::Reset() {
   fire_control_.Reset();
@@ -103,6 +104,7 @@ void ControlSession::Reset() {
   round_.reset();
   awaiting_ack_ = false;
   last_step_time_.reset();
+  last_friction_target_time_.reset();
   last_successful_command_index_ = 1;
   last_successful_target_distance_m_ = -1;
   last_successful_plan_time_ = {};
@@ -217,10 +219,9 @@ ControlStepResult ControlSession::StepImpl(
   if (!state.last_external_control ||
       *state.last_external_control != input.external_control_enabled) {
     if (input.external_control_enabled) {
-      MV_LOG_INFO("Control", "Talos external auto-aim subscription enabled");
+      MV_LOG_INFO("Control", "external auto-aim control enabled");
     } else {
-      MV_LOG_WARN("Control",
-                  "Talos external auto-aim subscription is disabled; press F5 in simulation");
+      MV_LOG_WARN("Control", "external auto-aim control is disabled");
     }
     feedback_estimator_.ClearRuntimeActuator();
     ClearPublishedProjection(input.external_control_enabled ? "external_control_enabled"
@@ -382,6 +383,36 @@ ControlStepResult ControlSession::StepImpl(
     }
   }
 
+  // Only an actually visible, valid aim reference refreshes spin-up. TEMP_LOST,
+  // fallback trajectories and repeated old camera frames cannot extend the hold.
+  const bool SHOOTER_CONTEXT_OK =
+      output.command_sink_healthy && output.external_control_enabled && FEEDBACK.valid &&
+      FEEDBACK.timestamp <= now && std::isfinite(FEEDBACK.yaw) && std::isfinite(FEEDBACK.pitch) &&
+      std::isfinite(FEEDBACK.yaw_velocity) && std::isfinite(FEEDBACK.pitch_velocity) &&
+      std::chrono::duration<double>(now - FEEDBACK.timestamp).count() <=
+          fire_control_.Config().max_prediction_age_s &&
+      output.reject_reason != FireRejectReason::NUMERICAL_INVALID;
+  const bool VISIBLE_AIM = output.command.valid && !output.fallback_active &&
+                           (sample.prediction.state == TrackerState::DETECTING ||
+                            sample.prediction.state == TrackerState::TRACKING);
+  const auto SOURCE_TIME = sample.prediction.source_steady_time
+                               ? sample.prediction.source_steady_time
+                               : (!sample.prediction.source_capture_timestamp_ns
+                                      ? std::optional(sample.prediction.source_receive_steady_time)
+                                      : std::nullopt);
+  if (!SHOOTER_CONTEXT_OK) {
+    last_friction_target_time_.reset();
+  } else if (VISIBLE_AIM && SOURCE_TIME && *SOURCE_TIME <= now &&
+             (!last_friction_target_time_ || *SOURCE_TIME > *last_friction_target_time_)) {
+    last_friction_target_time_ = *SOURCE_TIME;
+  }
+  const bool HOLD_FRICTION =
+      last_friction_target_time_ && now >= *last_friction_target_time_ &&
+      std::chrono::duration<double>(now - *last_friction_target_time_).count() <
+          fire_control_.Config().friction_hold_s;
+  output.command.friction_wheel = SHOOTER_CONTEXT_OK && (VISIBLE_AIM || HOLD_FRICTION);
+  // Existing aiming/referee/pulse gates still exclusively determine feeder fire.
+
   output.command.source_round_id = sample.prediction.source_round_id;
   output.command.source_frame_sequence = sample.prediction.sequence;
   output.command.source_capture_timestamp_ns =
@@ -402,6 +433,8 @@ void ControlSession::AcknowledgePublication(ControlStepResult& result, bool send
   output.command_publish_succeeded = send_succeeded && output.command.valid;
   output.published_valid = output.command_publish_succeeded;
   if (!send_succeeded) {
+    last_friction_target_time_.reset();
+    output.command.friction_wheel = false;
     output.command_sink_healthy = false;
     output.command.valid = false;
     output.command.fire = false;
@@ -415,7 +448,8 @@ void ControlSession::AcknowledgePublication(ControlStepResult& result, bool send
   if (output.command_publish_succeeded) {
     feedback_estimator_.ObservePublishedCommand(output.command, now, false);
     control_projection_active_ = true;
-    if (output.command_source == modules::GimbalCommandSource::MPC) {
+    if (output.command_source == modules::GimbalCommandSource::MPC ||
+        output.command_source == modules::GimbalCommandSource::PID) {
       last_successful_trajectory_ = output.plan.trajectory;
       last_successful_command_index_ = static_cast<std::size_t>(output.plan.command_index);
       last_successful_target_distance_m_ = output.command.target_distance_m;

@@ -1,0 +1,35 @@
+# MPC 求解参数需重启；follower 参数支持实机热更新。
+schema_version: 1
+planner:
+  schema_version: 1
+  timing:
+    command_lookahead_s: 0.05
+  normalization:
+    angle_scale_rad: 0.1
+  limits:
+    max_yaw_velocity_rad_s: 3.0
+    max_pitch_velocity_rad_s: 3.0
+    max_yaw_acceleration_rad_s2: 50.0
+    max_pitch_acceleration_rad_s2: 100.0
+  cost:
+    q_yaw:
+    - 9.0e6
+    - 0.0
+    q_pitch:
+    - 200.0
+    - 40.0
+    r_yaw: 1.0
+    r_pitch: 1.0
+  solver:
+    max_iterations: 50
+    rho: 1.0
+    absolute_primal_tolerance: 0.05
+    absolute_dual_tolerance: 0.05
+follower:
+  yaw_kp: 1.0
+  pitch_kp: 7.0
+  pitch_near_target_kp: 7.0
+  pitch_near_target_error_rad: 0.016
+  yaw_velocity_ff_gain: 0.7
+  pitch_velocity_ff_gain: 0.0
+  pitch_velocity_damping_gain: 0.0
